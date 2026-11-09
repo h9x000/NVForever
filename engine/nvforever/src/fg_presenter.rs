@@ -13,13 +13,19 @@
 //!
 //! Pacing follows the design of AMD's `FrameInterpolationSwapchainVK` (FidelityFX SDK 1.1.4,
 //! MIT; read as reference, no code taken): wait for the frame's GPU work, then space the
-//! presents by half the mean real frame time over the last 10 frames, less 0.1 x its variance
-//! and a 0.1 ms margin, the average started again after a gap of more than 100 ms; the wait
-//! sleeps, then spins its last millisecond. The spacing is never less than one refresh, and the
-//! real frame rate is capped slightly below half the refresh rate (`frame_gen::real_frame_cap`),
-//! as AMD advises, so two presents never fall within one refresh. A frame that reaches the
-//! presenter when the next is already waiting is shown without its generated frame, so the
-//! presenter catches up at once instead of keeping a frame of delay.
+//! presents by half the mean real frame time over the last 10 frames, less 0.1 x its standard
+//! deviation and a 0.1 ms margin, the average started again after a gap of more than 100 ms
+//! [documented: `FrameInterpolationSwapchainVK.cpp` 1251-1268, `varianceFactor` 0.1 and
+//! `safetyMarginInSec` 0.0001 in `FrameInterpolationSwapchainVK.h` 216-217; its `getVariance`
+//! returns the square root of the variance, `FrameInterpolationSwapchainVK_Helpers.h` 373-391].
+//! Two choices are NVForever's own: AMD presents back to back until 10 frames are in (its
+//! average is 0 until then), where this one averages the frames it has; and AMD's wait spins on
+//! the performance counter throughout (`FrameInterpolationSwapchainVK_Helpers.cpp` 29-36),
+//! where this one sleeps, then spins its last millisecond. The spacing is never less than one
+//! refresh, and the real frame rate is capped slightly below half the refresh rate
+//! (`frame_gen::real_frame_cap`), as AMD advises, so two presents never fall within one refresh.
+//! A frame that reaches the presenter when the next is already waiting is shown without its
+//! generated frame, so the presenter catches up at once instead of keeping a frame of delay.
 //!
 //! wgpu 30 lets one acquired image exist per surface and holds a device-wide lock across each
 //! present (`command_indices`, written), which stops submits from every thread while a present
@@ -28,6 +34,15 @@
 //! thread's submit: the real frame's goes out about 1 ms after the next frame is handed over
 //! [observed 2026-11-08, 4K at 160 Hz, 78 real fps: each present held 1-1.6 ms in the driver,
 //! the render thread kept the cap].
+//!
+//! This thread never configures the surface: wgpu-core 30's `configure_surface` waits for the
+//! GPU and fails with a validation error when another thread submits meanwhile
+//! [documented: `wgpu-core-30.0.1/src/device/resource.rs` 5338-5351], and the render thread
+//! keeps submitting. An outdated surface's images are skipped and the surface is marked for
+//! the render thread, which reconfigures it before its next frame (bevy_render
+//! `SurfaceGuard::acquire`, `create_surfaces`). A presenter whose thread could not start or has
+//! ended (a panic) is noticed when the next frame is handed over: frame_gen drops it and the
+//! window is presented from the render thread again (`frame_gen::hand_to_presenter`).
 //!
 //! Measured against presenting from the render thread (h9x000/NVForever#1, 4K, the owner's
 //! settings): 77.7-78.0 real fps at the cap of 78 with a frame of about 8 ms and with 4 ms more
@@ -69,7 +84,7 @@ pub(crate) struct Shared {
     copied: Mutex<u64>,
     copied_changed: Condvar,
     /// Spent waiting for the presents' times, and frames that could not be presented (an
-    /// occluded window), since last read.
+    /// occluded or outdated window), since last read.
     pub(crate) paced_nanos: AtomicU64,
     pub(crate) skipped: AtomicU64,
     /// Generated frames left out to catch up (the presenter a whole frame behind), since last
@@ -89,18 +104,8 @@ pub(crate) struct Shared {
 }
 
 impl Shared {
-    fn copied(&self, index: u64) {
-        let mut copied = self.copied.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
-        if *copied < index {
-            *copied = index;
-        }
-        self.copied_changed.notify_all();
-    }
-}
-
-impl Presenter {
-    pub(crate) fn start(surface: SharedSurface, device: wgpu::Device, queue: wgpu::Queue, presents: Arc<Mutex<Vec<Instant>>>, generated_shown: Arc<AtomicU64>) -> Self {
-        let shared = Arc::new(Shared {
+    fn new(presents: Arc<Mutex<Vec<Instant>>>, generated_shown: Arc<AtomicU64>) -> Self {
+        Self {
             copied: Mutex::new(0),
             copied_changed: Condvar::new(),
             paced_nanos: AtomicU64::new(0),
@@ -111,39 +116,63 @@ impl Presenter {
             gpu_polls: AtomicU64::new(0),
             presents,
             generated_shown,
-        });
+        }
+    }
+
+    fn copied(&self, index: u64) {
+        let mut copied = self.copied.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
+        if *copied < index {
+            *copied = index;
+        }
+        self.copied_changed.notify_all();
+    }
+}
+
+impl Presenter {
+    /// The window's presenter, its thread started; the error when the thread could not be.
+    pub(crate) fn start(surface: SharedSurface, device: wgpu::Device, queue: wgpu::Queue, presents: Arc<Mutex<Vec<Instant>>>, generated_shown: Arc<AtomicU64>) -> std::io::Result<Self> {
+        let shared = Arc::new(Shared::new(presents, generated_shown));
         let (jobs, received) = mpsc::channel();
         let thread_shared = shared.clone();
         let thread = std::thread::Builder::new()
             .name("nvf-frame-gen-present".into())
-            .spawn(move || run(&received, &surface, &device, &queue, &thread_shared))
-            .map_err(|e| bevy::log::error!("frame generation: no presenter thread: {e}"))
-            .ok();
+            .spawn(move || run(&received, &surface, &device, &queue, &thread_shared))?;
         bevy::log::info!("frame generation: presenting on a thread of its own, paced half a real frame apart");
-        Self { jobs: thread.is_some().then_some(jobs), thread, shared, sent: 0 }
+        Ok(Self { jobs: Some(jobs), thread: Some(thread), shared, sent: 0 })
     }
 
     pub(crate) fn shared(&self) -> &Shared {
         &self.shared
     }
 
+    /// Whether its thread is still there to present: it has not ended (a panic, as nothing else
+    /// ends it while it is handed frames).
+    pub(crate) fn running(&self) -> bool {
+        self.thread.as_ref().is_some_and(|t| !t.is_finished())
+    }
+
     /// Hand over this frame's images (each a view of a texture it may read until the frame
     /// after next), with one refresh of the monitor. Waits while the presenter is more than
-    /// `STAND_INS - 1` frames behind, so nothing it has still to copy is drawn over.
-    pub(crate) fn send(&mut self, frames: Vec<wgpu::TextureView>, refresh: Duration) {
-        let Some(jobs) = &self.jobs else { return };
+    /// `STAND_INS - 1` frames behind, so nothing it has still to copy is drawn over. `false`:
+    /// the thread has ended and the frame was not handed over (an ended thread never signals,
+    /// so the wait looks for that every 10 ms rather than running to its 250 ms limit).
+    pub(crate) fn send(&mut self, frames: Vec<wgpu::TextureView>, refresh: Duration) -> bool {
+        let Some(jobs) = &self.jobs else { return false };
         self.sent += 1;
         let needed = self.sent.saturating_sub(STAND_INS as u64 - 1);
         let started = Instant::now();
         let deadline = started + Duration::from_millis(250);
         let mut copied = self.shared.copied.lock().unwrap_or_else(std::sync::PoisonError::into_inner);
         while *copied < needed {
+            if !self.running() {
+                return false;
+            }
             let Some(left) = deadline.checked_duration_since(Instant::now()) else { break };
-            copied = self.shared.copied_changed.wait_timeout(copied, left).unwrap_or_else(std::sync::PoisonError::into_inner).0;
+            copied = self.shared.copied_changed.wait_timeout(copied, left.min(Duration::from_millis(10))).unwrap_or_else(std::sync::PoisonError::into_inner).0;
         }
         drop(copied);
         let sent = Instant::now();
-        let _ = jobs.send(Job { index: self.sent, frames, sent, held: sent - started, refresh });
+        jobs.send(Job { index: self.sent, frames, sent, held: sent - started, refresh }).is_ok()
     }
 }
 
@@ -207,7 +236,7 @@ fn run(received: &mpsc::Receiver<Job>, surface: &SharedSurface, device: &wgpu::D
         let (_, view_format) = guard.formats();
         let count = frames.len();
         for (i, source) in frames.iter().enumerate() {
-            let Some(image) = guard.acquire(device) else {
+            let Some(image) = guard.acquire() else {
                 shared.skipped.fetch_add(1, Ordering::Relaxed);
                 continue;
             };
@@ -304,20 +333,23 @@ impl Pacer {
         self.last = Some(now);
     }
 
-    /// Half the mean interval, less 0.1 x its variance and 0.1 ms, never below 0.
+    /// Half the mean interval, less 0.1 x its standard deviation and 0.1 ms, never below 0.
     fn spacing(&self) -> Duration {
         spacing(self.intervals.iter().copied())
     }
 }
 
+/// AMD's `getAverage() * 0.5 - getVariance() * varianceFactor`, less `safetyMarginInSec`, where
+/// `getVariance` is the standard deviation (the square root of the variance), in seconds here;
+/// over the intervals there are, where AMD's is 0 until it has 10.
 fn spacing(intervals: impl Iterator<Item = f64> + Clone) -> Duration {
     let n = intervals.clone().count();
     if n == 0 {
         return Duration::ZERO;
     }
     let mean = intervals.clone().sum::<f64>() / n as f64;
-    let variance = intervals.map(|i| (i - mean) * (i - mean)).sum::<f64>() / n as f64;
-    Duration::from_secs_f64((mean * 0.5 - variance * 0.1 - 0.0001).max(0.0))
+    let deviation = (intervals.map(|i| (i - mean) * (i - mean)).sum::<f64>() / n as f64).sqrt();
+    Duration::from_secs_f64((mean * 0.5 - deviation * 0.1 - 0.0001).max(0.0))
 }
 
 #[cfg(test)]
@@ -330,9 +362,38 @@ mod tests {
         let s = spacing(frames.iter().copied()).as_secs_f64();
         assert!((s - (0.00625 - 0.0001)).abs() < 1e-9, "{s}");
         assert_eq!(spacing([].iter().copied()), Duration::ZERO);
-        // Uneven frames: the variance takes a little more off.
+        // Uneven frames: a tenth of the standard deviation (2.5 ms here) comes off as well, as
+        // AMD's `getVariance` (a square root) gives it: 6.25 - 0.25 - 0.1 ms.
         let uneven = spacing([0.010, 0.015].iter().copied()).as_secs_f64();
-        assert!(uneven < 0.00625 - 0.0001 && uneven > 0.006, "{uneven}");
+        assert!((uneven - 0.0059).abs() < 1e-9, "{uneven}");
+        // Never below zero.
+        assert_eq!(spacing([0.0001].iter().copied()), Duration::ZERO);
+    }
+
+    #[test]
+    fn a_presenter_whose_thread_ended_takes_no_frames_and_does_not_hold_the_render_thread() {
+        let (jobs, received) = mpsc::channel::<Job>();
+        let thread = std::thread::spawn(move || {
+            let _ = received.recv();
+            // Unwinds as a panic does, without the panic hook's message.
+            std::panic::resume_unwind(Box::new("the presenter's panic"));
+        });
+        let mut presenter = Presenter { jobs: Some(jobs), thread: Some(thread), shared: Arc::new(Shared::new(Default::default(), Default::default())), sent: 0 };
+        assert!(presenter.running());
+        assert!(presenter.send(Vec::new(), Duration::ZERO), "handed over while the thread runs");
+        let deadline = Instant::now() + Duration::from_secs(10);
+        while presenter.running() && Instant::now() < deadline {
+            std::thread::sleep(Duration::from_millis(1));
+        }
+        assert!(!presenter.running(), "a thread that panicked is not running");
+        // Behind (two frames handed over and not copied): the wait for the copies ends at once.
+        presenter.sent = 5;
+        let started = Instant::now();
+        assert!(!presenter.send(Vec::new(), Duration::ZERO), "nothing handed over");
+        assert!(started.elapsed() < Duration::from_millis(100), "{:?}", started.elapsed());
+        // Not behind: the closed channel says so.
+        presenter.sent = 0;
+        assert!(!presenter.send(Vec::new(), Duration::ZERO));
     }
 
     #[test]

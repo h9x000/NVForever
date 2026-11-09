@@ -59,7 +59,7 @@ per-view visibility filter of pending entries were tried with it and dropped: th
 
 ## bevy_render 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
-Early finishing of command encoders (#1427, docs/design/frame-rate-audit.md §5). One
+Early finishing of command encoders (#1427, docs/design/frame-rate-audit.md §5). First
 change, in `src/renderer/render_context.rs`, each part marked by a comment starting
 `NVForever early finish`: when a render system is done (`RenderContextState`'s
 `SystemBuffer::queue`), each encoder it recorded is handed to the compute threads to be
@@ -93,6 +93,25 @@ the frame's recording time) in a new main-world resource, `RenderDiagnosticsReco
 store's measurements keep upstream's import time (frame telemetry exports it as such,
 docs/design/frame-telemetry.md). `nvforever/src/perf_overlay/split.rs` uses the pairs to
 read only the measurements of frames recorded in its window and since its row began to show.
+Third change (#1778, docs/design/latency-reduction.md): Bevy's `raw_vulkan_init` feature,
+which the engine turns on so `anti_lag.rs` can add a device extension, no longer changes which
+backend starts or which validation wgpu runs. Each part is marked by a comment starting
+`NVForever (2026-11-09)`:
+
+- `src/renderer/mod.rs` `initialize_renderer`: the raw Vulkan instance is created only when
+  the backends include Vulkan, otherwise `Instance::new`, as without the feature. Upstream
+  creates it whatever the backends say, so `WGPU_BACKEND=dx12` or `gl` was ignored.
+- `src/settings.rs` `WgpuSettings::default`: upstream, the feature also removes
+  `InstanceFlags::VALIDATION_INDIRECT_CALL` in every release build, on every backend. Left
+  out: the flag goes only when the backends don't include DX12, as without the feature. On
+  DX12 the built-ins `num_workgroups`, `vertex_index` and `instance_index` read wrong in
+  indirect calls without it [documented: wgpu-types 30.0.1 `instance.rs`], and release builds
+  on Vulkan with the default backends keep the validation (and its GPU time) they had before.
+
+Still as upstream: when the backends include Vulkan, the instance is Vulkan-only whenever
+Vulkan starts, so a Vulkan instance with no adapter that can draw to the window stops the start
+instead of falling back to DX12. Drop this change when a Bevy release makes the feature follow
+the backends.
 
 Window images for another thread (2026-11-08, frame generation's presenter,
 docs/design/frame-generation.md "Presentation and pacing", h9x000/NVForever#1). In
@@ -102,11 +121,26 @@ docs/design/frame-generation.md "Presentation and pacing", h9x000/NVForever#1). 
   for it and points the window's view at a stand-in texture of the window's size instead
   (`STAND_INS` = 3, used in turn, so a thread may still read the last two).
 - `SharedSurface` (`SurfaceData::shared`): the window's surface and its configuration behind
-  a lock, for one other thread to take images from and present (`SurfaceGuard::acquire`
-  reconfigures once on `Outdated`; `present`). `create_surfaces` reconfigures under the same
-  lock, so never while that thread holds an image (wgpu allows one per surface).
+  a lock, for one other thread to take images from and present (`SurfaceGuard::acquire`,
+  `present`). `create_surfaces` reconfigures under the same lock, so never while that thread
+  holds an image (wgpu allows one per surface).
 - `SWAPCHAIN_WAITS`: the time spent in the swapchain's acquires and presents, for frame
   generation's log line.
+
+Review fixes (2026-11-09, h9x000/NVForever#6), marked `NVForever (2026-11-09)`:
+
+- The thread never configures the surface. `SurfaceGuard::acquire` returns no image on
+  `Outdated` and marks the surface (`SurfaceShare::outdated`); `need_surface_configuration`
+  and `create_surfaces` then reconfigure it on the render thread, under the lock, whether or
+  not the window's size changed (alt-tab, a display mode or HDR change), and clear the mark.
+  Before, `acquire` configured the surface itself, and wgpu-core 30's `configure_surface` waits
+  for the GPU and fails with `GpuWaitTimeout`, a validation error, when another thread submits
+  meanwhile (`wgpu-core-30.0.1/src/device/resource.rs` 5338-5351); the render thread keeps
+  submitting.
+- `SurfaceData` keeps a clone of the window's `RawHandleWrapper` and `SharedSurface` holds
+  one, dropped after its surface, so the window outlives every holder of the surface
+  (`create_surface_unsafe`'s contract, which upstream keeps by removing `RawHandleWrapper` and
+  `SurfaceData` together).
 
 Upstream Bevy has no way for a thread other than the render thread to present a window.
 

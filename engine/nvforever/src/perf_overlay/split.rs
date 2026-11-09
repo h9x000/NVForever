@@ -99,7 +99,7 @@ impl Acc {
     fn add(&self, generation: u8, took: Duration) -> bool {
         let us = took.as_micros().min(u128::from(US_MAX)) as u64;
         self.0
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |w| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |w| {
                 let (g, frames, sum) = unpack(w);
                 (g == generation).then(|| pack(g, frames.saturating_add(1), sum.saturating_add(us)))
             })
