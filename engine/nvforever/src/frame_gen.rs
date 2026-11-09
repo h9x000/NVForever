@@ -116,8 +116,8 @@ pub fn real_frame_cap(refresh_millihertz: Option<u32>) -> u32 {
 }
 
 /// Generated frames presented since the start, shared by the render world (which counts them)
-/// and the main world's frame-rate counter (`fps_counter.rs`, which shows frames presented and
-/// real frames apart).
+/// and the main world's performance overlay (`perf_overlay/`, whose FPS row shows frames
+/// presented and real frames apart).
 #[derive(Resource, Clone, Default)]
 pub struct GeneratedFrames(pub std::sync::Arc<AtomicU64>);
 
