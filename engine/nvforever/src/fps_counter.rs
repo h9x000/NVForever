@@ -5,7 +5,10 @@
 //! original [engineering choice, issue #1087].
 //!
 //! The times are wall-clock (`Time<Real>`), so a paused game or a slowed clock still
-//! reads the frame rate the player sees. The text changes twice a second so it can be
+//! reads the frame rate the player sees. With frame generation running, the rate is the
+//! frames shown, the game's own ("rendered") and the generated ones between them
+//! (`frame_gen::GeneratedFrames`), with the rendered rate beside it; the times are the
+//! rendered frames'. The text changes twice a second so it can be
 //! read; a number that changed every frame would only flicker.
 
 use std::sync::Arc;
@@ -35,10 +38,14 @@ struct FpsText;
 #[derive(Default)]
 struct Window {
     times: Vec<f32>,
+    /// Frame generation's count of generated frames when this window began.
+    generated_from: Option<u64>,
     logged: bool,
     /// The CPU/GPU sampler, started the first time the counter shows.
     usage: Option<Arc<usage::Shared>>,
     usage_logged: bool,
+    /// When the reading was last logged (`NVF_FPS_LOG`).
+    last_log: f32,
 }
 
 pub struct FpsCounterPlugin(pub bool);
@@ -79,9 +86,11 @@ fn show(counter: Res<FpsCounter>, mut text: Query<(&mut Visibility, &mut Text), 
     }
 }
 
-fn count(counter: Res<FpsCounter>, time: Res<Time<Real>>, mut text: Query<&mut Text, With<FpsText>>, mut w: Local<Window>) {
+fn count(counter: Res<FpsCounter>, time: Res<Time<Real>>, generated: Option<Res<crate::frame_gen::GeneratedFrames>>, mut text: Query<&mut Text, With<FpsText>>, mut w: Local<Window>) {
+    let generated_now = generated.map(|g| g.0.load(std::sync::atomic::Ordering::Relaxed));
     if !counter.show {
         w.times.clear();
+        w.generated_from = None;
         if let Some(u) = &w.usage {
             u.set_on(false);
         }
@@ -94,8 +103,15 @@ fn count(counter: Res<FpsCounter>, time: Res<Time<Real>>, mut text: Query<&mut T
     if dt > 0.0 {
         w.times.push(dt);
     }
+    if w.generated_from.is_none() {
+        w.generated_from = generated_now;
+    }
     let Some(r) = reading(&w.times, WINDOW) else { return };
+    // With frame generation, the frames shown: the real ones and those generated between.
+    let total: f32 = w.times.iter().sum();
+    let extra = generated_now.zip(w.generated_from).map_or(0, |(now, from)| now.saturating_sub(from));
     w.times.clear();
+    w.generated_from = generated_now;
     if !w.logged {
         w.logged = true;
         info!("fps counter: first reading {:.0} fps, {:.1} ms, slowest {:.1} ms", r.fps, r.mean_ms, r.worst_ms);
@@ -107,9 +123,35 @@ fn count(counter: Res<FpsCounter>, time: Res<Time<Real>>, mut text: Query<&mut T
         w.usage_logged = true;
         info!("fps counter: first usage reading{}", usage_text(cpu, gpu));
     }
-    for mut t in &mut text {
-        t.0 = format!("{:.0} FPS  {:.1} ms  (slowest {:.1}){}", r.fps, r.mean_ms, r.worst_ms, usage_text(cpu, gpu));
+    let rate = shown_rate(r.fps, extra, total);
+    let shown = format!("{rate}  {:.1} ms  (slowest {:.1}){}", r.mean_ms, r.worst_ms, usage_text(cpu, gpu));
+    if let Some(every) = *LOG_EVERY {
+        let now = time.elapsed_secs();
+        if now - w.last_log >= every {
+            w.last_log = now;
+            info!("fps counter: {shown}");
+        }
     }
+    for mut t in &mut text {
+        t.0.clone_from(&shown);
+    }
+}
+
+/// `NVF_FPS_LOG=<seconds>`: the counter's reading in the log that often, as shown on the
+/// screen (a measuring aid that, unlike `--log-frame-times`, leaves the display sync alone).
+static LOG_EVERY: std::sync::LazyLock<Option<f32>> =
+    std::sync::LazyLock::new(|| std::env::var("NVF_FPS_LOG").ok().and_then(|v| v.trim().parse::<f32>().ok()).filter(|v| *v > 0.0));
+
+/// The rate shown: frames a second, and with generated frames (`generated` of them over
+/// `seconds`) the frames shown and the real ones apart, so frame generation does not read as
+/// half the frame rate [design: the counter counted only the game's own frames, which
+/// frame generation caps at half the refresh rate, and players read that as FSR costing
+/// frames, 2026-11-08].
+fn shown_rate(real_fps: f32, generated: u64, seconds: f32) -> String {
+    if generated == 0 || seconds <= 0.0 {
+        return format!("{real_fps:.0} FPS");
+    }
+    format!("{:.0} FPS ({real_fps:.0} rendered)", real_fps + generated as f32 / seconds)
 }
 
 #[derive(Debug, PartialEq)]
@@ -371,6 +413,13 @@ mod tests {
         assert!((r.fps - 50.0 / 0.51).abs() < 0.01, "{r:?}");
         assert!((r.mean_ms - 10.2).abs() < 0.01, "{r:?}");
         assert!((r.worst_ms - 20.0).abs() < 0.01, "{r:?}");
+    }
+
+    #[test]
+    fn frame_generation_shows_the_frames_shown_and_the_rendered_apart() {
+        assert_eq!(shown_rate(72.0, 0, 0.5), "72 FPS");
+        assert_eq!(shown_rate(72.0, 36, 0.5), "144 FPS (72 rendered)");
+        assert_eq!(shown_rate(30.0, 15, 0.5), "60 FPS (30 rendered)");
     }
 
     #[test]

@@ -135,11 +135,15 @@ Limits and notes:
   takes the window's images again; switching it on starts a new one.
 - **`NVF_FG_PRESENTER=0`** presents from the render thread as before, for comparisons.
   `NVF_TEST_RENDER_STALL_MS=<ms>` holds the render thread that long each frame (a heavy frame
-  on a fast PC) and `NVF_SWAPCHAIN_LATENCY=<n>` sets the frames the swapchain may queue:
-  measuring aids.
+  on a fast PC), `NVF_SWAPCHAIN_LATENCY=<n>` sets the frames the swapchain may queue, and
+  `NVF_FPS_LOG=<s>` logs the frame-rate counter's reading: measuring aids.
 - **The cap on slower screens**: half the refresh rate is 30 real frames a second on a 60 Hz
   screen, which is little to interpolate from and to aim with; frame generation suits screens
   of 120 Hz and more.
+- **The frame-rate counter** (`--fps`, the settings row) shows the frames shown and the
+  game's own apart while frame generation runs ("160 FPS (80 rendered)"); it showed only the
+  game's own, which read as frame generation halving the frame rate [observed 2026-11-08,
+  1280x720 at 160 Hz, FSR Quality, Goodsprings].
 - **Swapchain depth**: Bevy's default (two frames queued). With the presenter, three gave the
   same as two (2026-11-08, 4K: 77.7 real fps, the first present 7.2-8.0 ms after handing over
   against 7.4-7.9); before it, three lowered the real rate (56 fps, 2026-11-07) and four gave the
