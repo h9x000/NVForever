@@ -13,7 +13,13 @@ every switch. It runs when:
 - FSR 3.1 upscaling is on, in any mode (Native AA too): it reads the depth and motion FSR gets;
 - vsync is on (Vertical sync or Variable refresh): the two frames are paced by the swapchain;
 - the GPU runs the passes: Vulkan with SPIR-V passthrough and read-write storage textures in
-  the formats they use (`frame_gen::FrameGenPlugin::finish`).
+  the formats they use (`frame_gen::FrameGenPlugin::finish`);
+- the GPU reads and writes the output image without a format in the shader: Vulkan 1.3, and
+  `R16G16B16A16_SFLOAT` with `STORAGE_READ_WITHOUT_FORMAT` and `STORAGE_WRITE_WITHOUT_FORMAT`
+  in `VkFormatProperties3` (`frame_gen::storage_without_format`). AMD declares the output
+  with no format, so two passes' SPIR-V needs the `StorageImage{Read,Write}WithoutFormat`
+  capabilities [observed: their `OpCapability`s], and wgpu-hal 30 does not enable the Vulkan
+  1.0 features that would allow them otherwise.
 
 Otherwise the row is dimmed with the reason ("Needs FSR 3.1", "Needs vsync", "Not on this GPU")
 and the log says `frame generation: on but not running (...)`. While it runs, real frames are
@@ -48,10 +54,10 @@ Per real frame, in the camera's render schedule (`Core3d`):
    texture. The real frame (with its HUD) is copied aside and the generated one replaces it
    in the main texture, so Bevy's blit puts the generated frame in the window's stand-in
    (below).
-4. In the render graph's `Finish` set, after Bevy submits the frame: the stand-in (the
-   generated frame) and the real frame are handed to the window's presenter thread
-   (`fg_presenter.rs`), which takes the window's images, copies them in and presents them,
-   paced ("Presentation and pacing").
+4. After Bevy's `render_system` has submitted the frame (and a screenshot's copy into the
+   stand-in, which it records after the render graph): the stand-in (the generated frame) and
+   the real frame are handed to the window's presenter thread (`fg_presenter.rs`), which takes
+   the window's images, copies them in and presents them, paced ("Presentation and pacing").
 
 Colours are the tonemapped frame, linear in [0, 1] (the window's sRGB view encodes them).
 AMD's passes are told it is scRGB with 0 and 80 nits as black and white, which they read as
@@ -98,11 +104,19 @@ acquire).
 
 **Pacing** follows the design of AMD's `FrameInterpolationSwapchainVK` (FidelityFX SDK 1.1.4,
 MIT; read as reference, no code taken): the two presents are spaced by half the mean real frame
-time of the last 10 frames, less 0.1 x its variance and 0.1 ms, never closer than one refresh;
-the spacing counts from when the last present was issued, not from when it returned. The wait
-sleeps and spins its last millisecond. The real frame rate is capped slightly below half the
-refresh rate (`frame_gen::real_frame_cap`: 1/40 under it, at least 1 fps; 78 at 160 Hz, 71 at
-144 Hz, 59 at 120 Hz), as AMD advises, so the two presents never fall within one refresh.
+time of the last 10 frames, less 0.1 x its standard deviation and 0.1 ms, never closer than one
+refresh; the average starts again after a gap of more than 100 ms [documented:
+`FrameInterpolationSwapchainVK.cpp` 1251-1268, with `varianceFactor` 0.1 and
+`safetyMarginInSec` 0.0001 from `FrameInterpolationSwapchainVK.h` 216-217; AMD's `getVariance`
+returns the square root of the variance, `FrameInterpolationSwapchainVK_Helpers.h` 373-391].
+The spacing counts from when the last present was issued, not from when it returned. Two
+choices are NVForever's own, not AMD's: until 10 frames are in, AMD's average is 0 and it
+presents back to back, where NVForever averages the frames it has; and AMD waits by spinning
+on the performance counter (`FrameInterpolationSwapchainVK_Helpers.cpp` 29-36), where
+NVForever sleeps and spins only its last millisecond. The real frame rate is capped slightly
+below half the refresh rate (`frame_gen::real_frame_cap`: 1/40 under it, at least 1 fps; 78 at
+160 Hz, 71 at 144 Hz, 59 at 120 Hz), as AMD advises, so the two presents never fall within one
+refresh.
 
 Limits and notes:
 
@@ -129,8 +143,29 @@ Limits and notes:
 - **Variable refresh** keeps vsync on (FIFO relaxed); the cap is the lower of the frame
   generation cap and the page's cap.
 - **Vsync off** is not supported: the second present would replace the first at once.
-- **Screenshots** (`--screenshot`, F12) read the stand-in, the generated frame, as they read
-  the window's first image before.
+- **Screenshots** (`--screenshot`, F12): Bevy points the camera's output at a screenshot
+  texture of its own, and only after the render graph copies it to the screenshot's buffer and
+  into the window's image (the stand-in, with the presenter) [documented: bevy_render 0.20.1,
+  `prepare_screenshots` in `view/window/screenshot.rs`, `render_system` in `renderer/mod.rs`].
+  On such a frame no generated frame is presented (`frame_gen::generate`, the camera's output
+  against the window's image): the passes still run, so the next frame interpolates from this
+  one, and the real frame is presented once, so the screenshot and the screen both show it.
+  The presenter is handed the frame after `render_system`, once that copy is in the stand-in;
+  `frame_gen::take_for_presenters` draws the real frame into the screenshot texture should a
+  generated one have been queued.
+- **An outdated window surface** (a resize, alt-tab, a display mode or HDR change): the
+  presenter skips its images and marks the surface; Bevy's `create_surfaces` reconfigures it on
+  the render thread before the next frame, size changed or not. The presenter never configures
+  the surface itself: wgpu-core 30's `configure_surface` waits for the GPU and reports a
+  validation error when another thread submits meanwhile
+  (`wgpu-core-30.0.1/src/device/resource.rs` 5338-5351), and the render thread keeps
+  submitting.
+- **A presenter thread that cannot start or stops** (a panic) is noticed when the next frame is
+  handed over: an error is logged once, the presenter is dropped and the window is presented
+  from the render thread, as with `NVF_FG_PRESENTER=0`, until the game restarts.
+- **Closing the window** ends its presenter at the next frame. The presenter keeps the window
+  as long as it holds the window's surface (Bevy's `RawHandleWrapper`, as the render world does),
+  so the surface is never left on a destroyed window.
 - **Switching it off** ends the presenter (it presents what it was handed first) before Bevy
   takes the window's images again; switching it on starts a new one.
 - **`NVF_FG_PRESENTER=0`** presents from the render thread as before, for comparisons.
@@ -150,7 +185,9 @@ Limits and notes:
 - **Unit tests** (`cargo test`): every optical-flow and frame-interpolation pass's binding table
   against its `.glsl` file's `#define`s and the callbacks header's declarations, and against the
   bindings the compiled SPIR-V declares; the `cbFI` block's std140 layout; the pyramid sizes; the
-  real-frame cap, the present-interval statistics, the switch's effect on latency reduction.
+  real-frame cap, the present-interval statistics, the switch's effect on latency reduction;
+  the presents' spacing (AMD's rule, with the standard deviation), and a presenter whose thread
+  ended (it takes no frames and does not hold the render thread).
 - **GPU harness** (`tools/fsr-validation`, `fg.rs`; numbers from 2026-11-07, RTX 5090, Vulkan
   validation layer on, no validation messages): a textured plane sliding at a known speed, the
   generated frame against the scene drawn at the true midpoint, mean absolute error per channel:
