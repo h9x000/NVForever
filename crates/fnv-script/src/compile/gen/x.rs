@@ -382,6 +382,14 @@ impl Gen<'_> {
             None => (None, w),
         };
         let is_local = head.is_none() && self.var(name).is_some();
+        // `let` inside an expression is the assignment it starts: `a && (let s += "+")`
+        // [observed: JustAssortedMods.esp 4.6, JLMInventoryEventHandler, shipped with
+        // compiled bytes]. Read as the catalogue's `Let` function it compiled to a call
+        // nothing builds, and the line was skipped when it ran ("not built yet: the
+        // extender function let", the owner's run of 2026-11-12).
+        if !is_local && head.is_none() && name.eq_ignore_ascii_case("let") && starts_operand(p.peek()) {
+            return self.xexpr(p, 0);
+        }
         if !is_local {
             if let Some(f) = self.xfunction(name) {
                 let on = match head {

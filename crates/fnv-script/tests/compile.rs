@@ -1591,3 +1591,12 @@ fn a_mods_variable_may_bear_an_extender_functions_name() {
     assert_eq!(warnings(&c, "variable_named_like_a_function"), ["break"]);
     assert!(compile(src, &table(), &World, None).errors().any(|d| d.kind == "variable_named_like_a_function"));
 }
+
+#[test]
+fn let_inside_an_expression_is_its_assignment() {
+    // [observed: JustAssortedMods.esp 4.6, `eval (…) && … && (let sItem += "+")`, shipped
+    // with compiled bytes.] Not a call of the catalogue's `Let`.
+    let (_, p) = build("short a\nshort b\nbegin GameMode\neval a && (let b += 1)\nlet b := 2\nend");
+    assert_eq!(call_args(&p, "let"), None, "{:?}", body(&p));
+    assert!(format!("{:?}", body(&p)[0]).contains("Assign"), "{:?}", body(&p)[0]);
+}
