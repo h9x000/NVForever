@@ -23170,6 +23170,18 @@ expect = [
 ]
 
 [[scenario]]
+name = "ext-connections-masters"
+kind = "tool"
+source = "docs/handoff/mod-testing-tools.md, docs/cli-contract.md (fnv.ext.connections/1): every function the base game's scripts can call has an implementation; a mod's broken connections are then the mod's own"
+areas = ["scripts", "extender"]
+paths = ["crates/fnv-game/src/connections.rs", "crates/fnv-game/src/functions/", "crates/fnv-game/src/source_compile.rs", "crates/fnvtool/src/ext_cmd.rs", "crates/fnv-script/src/compile/", "schemas/script/functions.json"]
+commands = [["ext", "connections", "{data}", "{masters}", "--schema", "schemas/fnv"]]
+expect = [
+  { json = "summary.broken_functions", equals = 0, label = "no stub, unhandled, unbuilt or unknown function in the masters' scripts" },
+  { json = "summary.units_kept_bytes", equals = 0, label = "no unit kept bytes the engine cannot run" },
+  { json = "not_probed.#", equals = 0 },
+]
+[[scenario]]
 name = "script-runner-tool"
 kind = "tool"
 source = "issue #1460, docs/spec-notes/ext-script-runner.md: JIP's Script Runner files of the fixture home's mods layer compiled and run headless (game restart, new game); --no-data-files keeps the Script Runner files the player installed in Data out (#2080)"

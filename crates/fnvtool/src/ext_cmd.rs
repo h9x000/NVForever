@@ -67,6 +67,28 @@ pub enum ExtCmd {
         #[arg(long)]
         detail: bool,
     },
+    /// Every function the load order's scripts can call and whether the engine has it,
+    /// without running the scripts (fnv.ext.connections/1; `fnv_game::connections`): per
+    /// plugin the units, the units that kept their bytes, the call sites and functions by
+    /// status (built, no_op, stub, unhandled, not_built, unknown) and the broken functions;
+    /// then every broken function over the load order, by the number of plugins calling
+    /// it. A numbered function is judged by what is registered for it, a function reached
+    /// by name by one call with placeholder arguments in a headless new game. Names and
+    /// counts only, no script text.
+    Connections {
+        #[command(flatten)]
+        lo: LoadOrderArgs,
+        /// Layer 1 schema directory (schemas/fnv).
+        #[arg(long)]
+        schema: PathBuf,
+        /// Function catalogue (default: ../script/functions.json next to --schema).
+        #[arg(long)]
+        functions: Option<PathBuf>,
+        /// Report only these plugins (file names, any case); the others are still loaded.
+        /// Default: every plugin of the load order.
+        #[arg(long = "only", value_name = "PLUGIN")]
+        only: Vec<String>,
+    },
     /// Run one probe set's quests headless (tools/capture/ext-probes/<set>) and collect
     /// the EXTPROBE lines they print, as the in-game collector does (fnv.ext.probes/1).
     Probes {
@@ -203,6 +225,24 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             let data = fnv_game::GameData::build(&order, &schema, table, &fjson, &refs);
             Ok(source_report(&data.source_units, order.plugins.iter().map(|p| p.name.clone()).collect(), detail))
         }
+        ExtCmd::Connections { lo, schema, functions, only } => {
+            let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
+            let ftext = std::fs::read_to_string(&fp).with_context(|| fp.display().to_string())?;
+            let fjson: Value = serde_json::from_str(&ftext).with_context(|| fp.display().to_string())?;
+            let table = FunctionTable::load(&fp).with_context(|| fp.display().to_string())?;
+            let plugins = open_load_order(&lo)?;
+            let order = LoadOrder::new(&plugins)?;
+            let schema = Schema::load_dir(&schema)?;
+            let forms = fnv_sim::FormStore::build(&order, &schema);
+            let refs = fnv_sim::RefTable::build(&order, &schema);
+            let data = fnv_game::GameData::build(&order, &schema, table, &fjson, &refs);
+            let world = fnv_sim::World::new(&forms, &refs, fnv_sim::SimConfig::default());
+            let mut g = fnv_game::game::Game::new(&data, world, fnv_game::game::GameConfig::default());
+            g.new_game();
+            let only = only.iter().map(|p| p.to_ascii_lowercase()).collect();
+            let report = fnv_game::connections::check(&mut g, &only);
+            Ok(connections_report(&report, order.plugins.iter().map(|p| p.name.clone()).collect()))
+        }
         ExtCmd::Probes { lo, schema, functions, probes, probes_dir, frames, risky, save } => {
             let fp = functions.unwrap_or_else(|| schema.join("..").join("script").join("functions.json"));
             let plans = probe_plans(&probes_dir.join(&probes), risky)?;
@@ -331,6 +371,34 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
 
 /// `ext report`'s document from what the game's source compile made of each unit. Error
 /// details (which may quote script text) only with `detail`.
+/// `ext connections`: [`fnv_game::connections::Report`] with its totals.
+pub(crate) fn connections_report(r: &fnv_game::connections::Report, order: Vec<String>) -> Value {
+    use fnv_game::connections::Status;
+    let mut by_status: std::collections::BTreeMap<Status, usize> = Default::default();
+    for p in &r.plugins {
+        for (s, n) in &p.by_status {
+            *by_status.entry(*s).or_default() += n;
+        }
+    }
+    let sum = |f: fn(&fnv_game::connections::PluginUse) -> usize| r.plugins.iter().map(f).sum::<usize>();
+    json!({
+        "format": "fnv.ext.connections/1",
+        "load_order": order,
+        "summary": {
+            "plugins": r.plugins.len(),
+            "units": sum(|p| p.units),
+            "units_kept_bytes": sum(|p| p.units_kept_bytes),
+            "unread_statements": sum(|p| p.unread_statements),
+            "call_sites": sum(|p| p.call_sites),
+            "functions_by_status_per_plugin": by_status,
+            "broken_functions": r.broken.len(),
+            "plugins_with_broken": r.plugins.iter().filter(|p| !p.broken.is_empty() || p.units_kept_bytes > 0).count(),
+        },
+        "broken": r.broken,
+        "not_probed": r.not_probed,
+        "per_plugin": r.plugins,
+    })
+}
 pub(crate) fn source_report(units: &[fnv_game::source_compile::SourceUnit], order: Vec<String>, detail: bool) -> Value {
     let per: Vec<Value> = order
         .iter()

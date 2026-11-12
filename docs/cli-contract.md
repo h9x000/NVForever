@@ -531,6 +531,41 @@ Script-extender use in a load order's scripts (task N2, docs/handoff/extender-co
 Over the ten masters every extender count is 0 (14,907 units, 3 without source), as the
 base game uses no extender (script-functions.md §2).
 
+## `fnvtool ext report <data_dir> <plugins…> --schema s [--functions f] [--detail]` → `fnv.ext.report/1`
+
+What the game makes of the load order's extender scripts when it starts
+(`fnv_game::source_compile`, `GameData::source_units`; docs/handoff/mod-testing-tools.md).
+No script text unless `--detail` is given, whose output stays private.
+
+- `summary`: `units_picked`, `units_from_source`, `units_kept_bytes`, `unknown_functions`
+  (`[{name, units}]`, the names with no catalogue entry).
+- `per_plugin`: `plugin`, `units_from_source`, `units_kept_bytes`, `failed` (`[{unit, line,
+  kind}]`, with `detail` under `--detail`), `unknown_functions`, `unknown_enum_names`.
+
+## `fnvtool ext connections <data_dir> <plugins…> --schema s [--functions f] [--only p…]` → `fnv.ext.connections/1`
+
+Every function the load order's scripts can call and whether the engine has it, without
+running the scripts (`fnv_game::connections`; docs/handoff/mod-testing-tools.md). Names
+and counts only.
+
+- A status is one of `built`, `no_op`, `stub`, `unhandled`, `not_built`, `unknown`; the
+  last four are broken. A numbered function is judged by what `fnv_game::functions`
+  registers for it; a function reached by name by one call with placeholder arguments in
+  a headless new game (the extender census's probe); a name with no catalogue entry is
+  `unknown`.
+- `summary`: `plugins`, `units`, `units_kept_bytes` (their calls are not counted),
+  `unread_statements`, `call_sites`, `functions_by_status_per_plugin` (a function counts
+  once per plugin calling it), `broken_functions`, `plugins_with_broken`.
+- `broken`: `[{name, origin, status, why?, plugins, units, calls}]`, by the number of
+  plugins calling it, then units.
+- `not_probed`: names for which no argument count compiled (reported as built).
+- `per_plugin`: `plugin`, `units`, `units_kept_bytes`, `unread_statements`, `call_sites`,
+  `functions`, `by_status`, `broken` (`[{name, opcode?, origin, status, why?, units,
+  calls}]`). `--only` limits the plugins reported; the whole load order is still loaded.
+
+Over the ten masters nothing is broken (80,627 units, 67,753 call sites) [observed
+2026-11-13].
+
 # Commands without a section above (listed 2026-10-25)
 
 Their JSON layouts are defined by the code and the spec notes named; `fnvtool <group>

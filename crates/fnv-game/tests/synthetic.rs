@@ -3970,7 +3970,7 @@ SetFunctionValue (Ar_DeepEquals aC aA)")), Ok(XVal::Num(0.0)));
 #[test]
 #[ignore]
 fn extender_census() {
-    const STATEMENTS: [&str; 8] = ["let", "while", "loop", "foreach", "break", "continue", "eval", "search"];
+    use fnv_game::connections::STATEMENTS;
     let root = concat!(env!("CARGO_MANIFEST_DIR"), "/../..");
     let doc: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(format!("{root}/schemas/script/functions.json")).unwrap()).unwrap();
     let fs = doc.as_array().or_else(|| doc["functions"].as_array()).unwrap();
@@ -4002,30 +4002,10 @@ fn extender_census() {
         if n.is_empty() || !n.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') || STATEMENTS.contains(&n.to_ascii_lowercase().as_str()) || !seen.insert(n.to_ascii_lowercase()) {
             continue;
         }
-        let args: Vec<&str> = x["params"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .map(|p| match p["kind"].as_str() {
-                Some("form" | "reference") => "PlayerREF",
-                Some("string") => "\"a\"",
-                Some("actor_value") => "Luck",
-                Some("axis") => "X",
-                _ => "0",
-            })
-            .collect();
-        let mut verdict = None;
-        for k in (0..=args.len()).rev() {
-            let before = g.events.len();
-            let r = g.run_query(&format!("Begin Function {{ }}\n{n} {}\nEnd\n", args[..k].join(" ")), fnv_game::game::RunCtx::default());
-            let said: Vec<String> = g.events[before..].iter().map(|e| format!("{e:?}")).collect();
-            if r.as_ref().is_err_and(|e| e.contains("did not compile")) {
-                verdict = Some(Err(said.join(" | ")));
-                continue;
-            }
-            verdict = Some(Ok(said.iter().any(|e| e.contains("not built")) || r.as_ref().is_err_and(|e| e.contains("not built"))));
-            break;
-        }
+        let kinds: Vec<&str> = x["params"].as_array().into_iter().flatten().map(|p| p["kind"].as_str().unwrap_or_default()).collect();
+        // One call with placeholder arguments (`fnv_game::connections::probe`, which
+        // `fnvtool ext connections` uses for a load order's own calls).
+        let verdict = Some(fnv_game::connections::probe(&mut g, n, &kinds).map(|built| !built));
         match verdict {
             Some(Ok(true)) => unbuilt.entry(x["origin"].as_str().unwrap_or("?").to_string()).or_default().push(n.to_string()),
             Some(Err(why)) => unknown.push(format!("{n} ({why})")),
@@ -4687,4 +4667,32 @@ fn plugin_questions_are_kept_only_when_asked_for() {
         read,
         [("isplugininstalled", "yUI", 0.0, true), ("getpluginversion", "JIP NVSE Plugin", 57.3, false), ("isdllloaded", "no_such", 0.0, true), ("ismodloaded", "Nothing.esp", 0.0, true), ("getmodindex", "Nothing.esp", 255.0, true)]
     );
+}
+
+/// The connection check's parts (`fnv_game::connections`, `fnvtool ext connections`): a
+/// function reached by name is probed as the census probes it, a numbered one is judged
+/// by its registration, and the report's call sites are every call the units hold.
+#[test]
+fn the_connection_check_probes_names_and_counts_every_call() {
+    use fnv_game::connections::{callees, check, opcode_status, probe, Status};
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let kinds = |g: &fnv_game::Game, name: &str| -> Vec<String> { g.data.table.unnumbered[name].params.iter().map(|p| p.kind.clone()).collect() };
+    let built = |g: &mut fnv_game::Game, name: &str| {
+        let k = kinds(g, &name.to_ascii_lowercase());
+        probe(g, name, &k.iter().map(String::as_str).collect::<Vec<_>>())
+    };
+    assert_eq!(built(&mut g, "Sv_Length"), Ok(true));
+    // A base-game function with no opcode in the catalogue, not built (the vanilla census).
+    assert_eq!(built(&mut g, "SetDefaultOpen"), Ok(false));
+    let get_distance = g.data.table.by_name("GetDistance").unwrap();
+    assert_eq!(opcode_status(&g.data.table, get_distance).0, Status::Built);
+    assert_eq!(opcode_status(&g.data.table, 0x0FFF).0, Status::Unhandled);
+    let total: usize = g.data.units.iter().map(|c| callees(&c.program).0.values().sum::<usize>()).sum();
+    assert!(total > 0, "the fixture's units call something");
+    let report = check(&mut g, &Default::default());
+    assert_eq!(report.plugins.iter().map(|p| p.call_sites).sum::<usize>(), total);
+    assert!(report.broken.iter().all(|b| b.status.broken()));
+    // Only the plugins asked for.
+    assert!(check(&mut g, &["no such plugin.esp".to_string()].into_iter().collect()).plugins.is_empty());
 }
