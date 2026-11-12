@@ -1880,3 +1880,17 @@ Fallout Behavior, Weapon Drawn, Continue During Combat).
     `Begin OnActivate player` door (IndDoorSmAnim01): does the block run for the NPC (a
     variable it sets), as the GECK wiki's OnActivate page (Bugs) has it, or not, as
     NVForever does?
+
+## Added 2026-11-12 (the versions the built-in extender plugins report)
+
+118. **What do GetPluginVersion and IsDLLLoaded answer for the plugins NVForever builds
+    but never read a version of?** (P2; ext-version.md §5, §6.) NVForever now reports SUP,
+    JIP PP LN, AnhNVSE, NX, UIO, CacheUI and hNVSE as installed, the first five at a
+    placeholder version (9999) because no page names one and none was read [design]. With
+    each plugin installed, one runtime query per name: `GetPluginVersion "SUP NVSE Plugin"`,
+    `"JIP PP LN"`, `"AnhNVSE"`, `"Extensions for NVSE"`, `"UI Organizer Plugin"`, `"CUI"`,
+    `"hNVSE"`; and for the plugins whose registered name no page gives (ITR, One111,
+    ppNVSE, vheyes-nvse), the name each prints in `nvse.log` and its version. In the same
+    run `IsDLLLoaded` with each plugin's file name without `.dll`, for
+    `fnv_game::nvse_plugins::DLLS`, which still lists only the five plugins of the first
+    probe install.
