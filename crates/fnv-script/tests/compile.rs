@@ -1754,3 +1754,12 @@ fn typeof_does_not_hide_invalid_indexing_or_direct_missing_access() {
         assert!(error.is_err(), "{expression}: {error:?}");
     }
 }
+
+#[test]
+fn let_inside_an_expression_is_its_assignment() {
+    // [observed: JustAssortedMods.esp 4.6, `eval (…) && … && (let sItem += "+")`, shipped
+    // with compiled bytes.] Not a call of the catalogue's `Let`.
+    let (_, p) = build("short a\nshort b\nbegin GameMode\neval a && (let b += 1)\nlet b := 2\nend");
+    assert_eq!(call_args(&p, "let"), None, "{:?}", body(&p));
+    assert!(format!("{:?}", body(&p)[0]).contains("Assign"), "{:?}", body(&p)[0]);
+}

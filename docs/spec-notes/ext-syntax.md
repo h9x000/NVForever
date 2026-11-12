@@ -198,6 +198,11 @@ container:ref`). The whole head may stand in one pair of parentheses, `foreach (
 source)` [observed: Unofficial Patch NVSE Plus and JSawyer Ultimate ship such lines with
 compiled bytes, the source a variable, a call and an `ar_List 0, 1, …`].
 
+**`let` inside an expression** is the assignment it starts: `a && (let s += "+")` assigns
+when the terms before it hold [observed: JustAssortedMods.esp 4.6 ships such a line with
+compiled bytes]. Read as the catalogue's `Let` function it compiled to a call nothing
+builds, and the line was skipped when it ran.
+
 **A comma after a function's name.** `rForm = ListGetNthForm, SomeList, iPos`: a comma
 between the name and a first argument the function cannot go without separates as a
 space does [observed: Unofficial Patch NVSE Plus ships that line with compiled bytes;
