@@ -189,7 +189,7 @@ low.
   - `"SUP NVSE Plugin"`, `"JIP PP LN"`, `"AnhNVSE"`, `"Extensions for NVSE"` (NX) and
     `"UI Organizer Plugin"` at 9999 [design: no page names a version and none was read;
     §4, too high is safer than too low; `fnv_script::vm::jip::UNOBSERVED_VERSION`], to be
-    replaced by the numbers read in the original (observer check 118). UIO has no script
+    replaced by the numbers read in the original (observer check 119). UIO has no script
     functions; the engine reads its `uio\public` lists itself (menu-xml.md), which is
     what a mod asking for it needs.
   - Still not reported: `"yUI"` (its two ySI trait functions are built, its menus are
@@ -211,4 +211,4 @@ low.
 The version/revision/beta split of 6.4.9; GetPluginVersion's name matching (case,
 spaces); plugins newer than the wiki's list; the versions of SUP, JIP PP LN, AnhNVSE, NX,
 UIO, CacheUI and hNVSE, the registered names and versions of ITR, One111, ppNVSE and
-vheyes-nvse, and IsDLLLoaded's file names for all of them (observer check 118).
+vheyes-nvse, and IsDLLLoaded's file names for all of them (observer check 119).
