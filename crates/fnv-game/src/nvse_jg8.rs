@@ -467,7 +467,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 .collect();
             let same = |h: &Handler| h.ev == ev && h.func == func && h.filters == filters;
             g.other.jg8.handlers.retain(|h| !same(h));
-            if num(args, 0, 1.0) != 0.0 {
+            if num(args, 0, 1.0) != 0.0 && !g.refuse_empty_handler(name, &func) {
                 g.other.jg8.handlers.push(Handler { ev, func, flag: num(args, 2, 0.0) as i64, filters });
             }
             zero

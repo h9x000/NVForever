@@ -3568,12 +3568,47 @@ CallWhile r ({} => (AuxVarSize \"*never\") < 1)
 End
 ", ctx).unwrap();
     g.frames(10);
-    let errors: Vec<String> = g.events.iter().filter_map(|e| match &e.kind {
-        EventKind::ScriptError { unit, error } if unit == "delayed call" => Some(error.clone()),
+    // Refused when registered (`Game::refuse_empty_handler`), so it never fires: one error,
+    // under the unit that registered it (here the query), none from the delayed call.
+    let errors: Vec<(String, String)> = g.events.iter().filter_map(|e| match &e.kind {
+        EventKind::ScriptError { unit, error } => Some((unit.clone(), error.clone())),
         _ => None,
     }).collect();
     assert_eq!(errors.len(), 1, "{errors:?}");
-    assert!(errors[0].ends_with("is not a function script"), "{errors:?}");
+    assert_eq!(errors[0].0, "query");
+    assert!(errors[0].1.starts_with("callwhile: no function to call"), "{errors:?}");
+}
+
+/// Every kind of handler the owner's Wabbajack run met with an empty function (about
+/// 35,000 "0x00000000 is not a function script" in four minutes) is refused when it is
+/// registered and reported once, whatever the number of registrations or frames.
+#[test]
+fn handlers_with_no_function_are_refused_once() {
+    let f = udf_fixture();
+    let mut g = game(&f);
+    g.new_game();
+    let ctx = || fnv_game::game::RunCtx { self_ref: Some(FormId::PLAYER_REF), ..Default::default() };
+    let src = "ref r
+Begin Function { }
+CallAfterSeconds 0 r
+SetGameMainLoopCallback r 1
+SetOnHitEventHandler r 1
+SetEventHandler \"OnHit\" r
+SetJohnnyOnDyingEventHandler 1 r
+SetJohnnyOnLimbGoneEventHandler 1 r
+End
+";
+    for _ in 0..3 {
+        g.run_query(src, ctx()).unwrap();
+    }
+    g.frames(10);
+    let errors: Vec<String> = g.events.iter().filter_map(|e| match &e.kind {
+        EventKind::ScriptError { error, .. } => Some(error.clone()),
+        _ => None,
+    }).collect();
+    assert_eq!(errors.len(), 6, "one each, registered three times: {errors:?}");
+    assert!(errors.iter().all(|e| e.contains("no function to call") && e.ends_with("not registered")), "{errors:?}");
+    assert!(!errors.iter().any(|e| e.contains("is not a function script")), "none fired: {errors:?}");
 }
 
 #[test]

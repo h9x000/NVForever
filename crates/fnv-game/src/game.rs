@@ -3158,6 +3158,29 @@ impl<'a> Game<'a> {
     /// whose function cannot run at all (no function script, no Function block) is
     /// reported once per handler kind and error, not on every frame it fires (#2280: up
     /// to 47,000 times a session in the player reports); other errors every time.
+    /// A handler or delayed call registered with no function (a reference still 0, so it
+    /// could never run): refused, and said once per registering unit and kind as a script
+    /// error of that unit, so the mod log names the mod [design: the original runs nothing
+    /// for it either; observed: about 35,000 errors "0x00000000 is not a function script"
+    /// in a Wabbajack list's four minutes, none saying which mod registered them]. `what`
+    /// names the kind (the function that registered it). True when refused.
+    pub(crate) fn refuse_empty_handler(&mut self, what: &str, func: &fnv_script::vm::XVal) -> bool {
+        use fnv_script::vm::XVal;
+        if !matches!(func, XVal::Ref(0)) && !matches!(func, XVal::Num(n) if *n == 0.0) {
+            return false;
+        }
+        let unit = match self.other.script {
+            Some(s) => format!("{}|SCPT 0x{:08X}", self.other.plugin, s.0),
+            None if !self.other.plugin.is_empty() => self.other.plugin.clone(),
+            None => "query".to_string(),
+        };
+        let error = format!("{what}: no function to call (a reference that is 0): not registered");
+        if self.unusable_reported.insert((unit.clone(), error.clone())) {
+            self.emit(EventKind::ScriptError { unit, error });
+        }
+        true
+    }
+
     pub(crate) fn handler_failed(&mut self, unit: String, error: String) {
         let unusable = error.ends_with(NOT_A_FUNCTION) || error.ends_with(NO_FUNCTION_BLOCK);
         if unusable && !self.unusable_reported.insert((unit.clone(), error.clone())) {
@@ -3309,6 +3332,9 @@ impl<'a> Game<'a> {
                         }
                         _ => return Ok(XVal::Num(0.0)),
                     }
+                }
+                if self.refuse_empty_handler("SetEventHandler", &h.func) {
+                    return Ok(XVal::Num(0.0));
                 }
                 self.ext.retain(&h.func);
                 self.handler_seq += 1;
@@ -6345,6 +6371,9 @@ impl Host for Exec<'_, '_> {
 
     fn event_call(&mut self, c: fnv_script::vm::EventCall) -> Result<fnv_script::vm::XVal, String> {
         let sender = self.unit.unit.plugin.clone();
+        // Who registers (`Game::refuse_empty_handler`), as for the extender's functions.
+        self.game.other.plugin = self.calling_plugin().unwrap_or_default();
+        self.game.other.script = self.current_script().map(FormId);
         self.game.event_call(c, &sender)
     }
 

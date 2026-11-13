@@ -133,6 +133,9 @@ impl Game<'_> {
     pub(crate) fn jip_set(&mut self, event: String, func: XVal, add: bool, filters: Vec<XVal>) -> bool {
         let same = |h: &JipHandler| h.event == event && h.func == func && h.filters == filters;
         if add {
+            if self.refuse_empty_handler(&format!("SetOn{event}EventHandler"), &func) {
+                return false;
+            }
             if self.jip.handlers.iter().any(same) {
                 return true;
             }
@@ -150,7 +153,7 @@ impl Game<'_> {
     /// SetGameMainLoopCallback func add [delay] [flags].
     pub(crate) fn jip_main_loop(&mut self, func: XVal, add: bool, delay: u64, flags: u32, on: Option<FormId>) {
         self.jip.main_loop.retain(|m| !(m.func == func && m.on == on));
-        if add {
+        if add && !self.refuse_empty_handler("SetGameMainLoopCallback", &func) {
             let delay = delay.max(1);
             self.jip.main_loop.push(MainLoop { func, on, delay, flags, due: self.frame + delay });
         }
