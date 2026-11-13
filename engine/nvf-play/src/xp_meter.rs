@@ -595,9 +595,9 @@ mod tests {
         app.world_mut().resource_mut::<Meter>().step(4.6);
         app.update();
         // [documented: interface.rs, set_marked; fnv-font, Font::lines] The fallback
-        // Text contains only placed glyphs (spaces are advances). Check its glyphs;
+        // Text holds its glyphs and, as spaces, the gaps between them. Check it;
         // the model's literal "LEVEL UP" is checked separately below.
-        assert_eq!(texts(app.world_mut()), ["LEVELUP"]);
+        assert_eq!(texts(app.world_mut()), ["LEVEL UP"]);
         let mut visuals = app.world_mut().query_filtered::<&Visibility, With<MeterVisual>>();
         assert!(visuals.iter(app.world()).all(|v| *v == Visibility::Hidden));
     }

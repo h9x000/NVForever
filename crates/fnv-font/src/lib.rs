@@ -129,6 +129,27 @@ impl Line {
     pub fn text_in(&self, page: fnv_util::text::CodePage) -> String {
         self.glyphs.iter().map(|g| page.char_of(g.code)).collect()
     }
+
+    /// [`Line::text`] with the spaces between its words: a line holds only the words'
+    /// characters, a space being a gap before the next word ([`Font::lines`]), so `font`
+    /// (the one it was set in) says how many spaces each gap is. For text drawn without
+    /// the game's font [observed: every message of a mod list drawn so lost its spaces].
+    pub fn text_spaced(&self, font: &Font) -> String {
+        let page = fnv_util::text::code_page();
+        let space = font.glyph(b' ').advance();
+        let mut out = String::new();
+        let mut end: Option<f32> = None;
+        for g in &self.glyphs {
+            if let Some(e) = end {
+                let gap = g.x - e;
+                let n = if space > 0.0 { (gap / space).round() as usize } else { usize::from(gap > 0.01) };
+                out.extend(std::iter::repeat_n(' ', n));
+            }
+            out.push(page.char_of(g.code));
+            end = Some(g.x + font.glyph(g.code).advance());
+        }
+        out
+    }
 }
 
 fn f32_at(b: &[u8], at: usize) -> f32 {
@@ -298,6 +319,21 @@ mod tests {
         assert_eq!(Tex::parse(&b), Err(TexError::Side(0, 1)));
         b[0..4].copy_from_slice(&u32::MAX.to_le_bytes());
         assert_eq!(Tex::parse(&b), Err(TexError::Side(u32::MAX, 1)));
+    }
+
+    #[test]
+    fn a_line_says_its_spaces() {
+        // The test file's letters are 10 wide with 1 after, a space 5.
+        let f = Font::parse(&file()).unwrap();
+        let line = |s: &str| f.lines(s, None).remove(0);
+        assert_eq!(line("ab cd").text_spaced(&f), "ab cd");
+        assert_eq!(line("ab  cd e").text_spaced(&f), "ab  cd e");
+        assert_eq!(line(" ab").text_spaced(&f), "ab", "spaces before the first word are not set");
+        // Without them, as before: the words run together.
+        assert_eq!(line("ab cd").glyphs.len(), 4);
+        // A wrapped text's break is no space of either line.
+        let lines = f.lines("ab cd", Some(30.0));
+        assert_eq!(lines.iter().map(|l| l.text_spaced(&f)).collect::<Vec<_>>(), ["ab", "cd"]);
     }
 
     #[test]
