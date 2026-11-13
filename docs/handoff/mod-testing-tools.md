@@ -72,8 +72,16 @@ the run stays a hand-played one. The log then has `mods:` lines:
   GetPluginVersion, IsDLLLoaded, IsModLoaded, GetModIndex). A "not there" is usually why a
   mod switches itself off;
 - the first of each failure in a mod's script: function not built, failed call, skipped
-  statement, script stopped early;
+  statement, script stopped early. In a script compiled from source (a mod's recompiled
+  script, a Script Runner file, a CompileScript file) the failure starts with `line N:`,
+  the line of the mod's text, so the cause can be read there;
 - under the pause menu's Mods page, MCM's list and option panel whenever they change;
+- `HUD piece …` blocks: each HUD element a mod adds (an injected or loose tile of
+  `HUDMainMenu` with everything under it) when it first shows, and again when its tiles
+  change while it shows (up to four times, half a second apart at least): each tile's
+  kind, `visible`, `x`, `y`, `width`, `height`, `alpha`, `depth`, `string`, `filename`.
+  A piece that draws wrong or empty is told from one never built: rows a script made show
+  up as tiles; missing ones were never made;
 - at exit, counts per mod and what was asked for and not there.
 
 ## How they fit
