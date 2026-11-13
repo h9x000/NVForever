@@ -147,13 +147,24 @@ green and blue and byte 3 against alpha. So in an English install the two are th
 picture, the `.tex` with 8 bits a channel. The files are 1 048 584 bytes, 8 more than
 512 x 512 x 4.
 
-**What NVForever draws** [design, #1439]: a font's `.tex` when its `.dds` is there too,
-else the `.dds` (`interface::font_tex`). This draws a Russian install's letters (§2.1),
-and an English install's fonts change only in getting 8 bits of alpha instead of 4.
-Which file the original reads is not known [hypothesis: the `.tex`, since a localized
-release changed only it]. A font with a `.tex` alone (font 9) is left undrawn, as §3.1
-says the original does. A `.tex` that does not parse (wrong size for its header) is
-skipped with a warning, and the `.dds` is drawn.
+**What NVForever draws** [design, #1439]: a font's `.tex`, else its `.dds`
+(`interface::font_tex`). This draws a Russian install's letters (§2.1), and an English
+install's fonts change only in getting 8 bits of alpha instead of 4. Which file the
+original reads is not known [hypothesis: the `.tex`, since a localized release changed
+only it, and UI mods ship fonts as a `.fnt` and a `.tex` with no `.dds`: Vanilla UI Plus'
+five, which the original draws, and Vanilla Fonts Revisited's 2048 x 2048 `.tex` for the
+game's own font names, observed in a Wabbajack list 2026-11-13]. Until 2026-11-13 the
+`.tex` was read only beside a `.dds`, and every text of such a list was drawn without the
+game's fonts. Font 9 (`NVFont_Test_0_lod_a`) is the one kept undrawn, as §3.1 says the
+original does; its `.tex` has letters (58,379 texels with alpha), so the missing `.dds`
+is not the reason [observed: the archive's file; the reason is not known]. A `.tex` that
+does not parse (wrong size for its header) is skipped with a warning, and the `.dds` is
+drawn.
+
+**Without the font, the spaces**: a set line holds its words' characters only, a space
+being a gap before the next word, so the text drawn with Bevy's font is read back with
+the spaces the gaps stand for (`fnv_font::Line::text_spaced`) [observed: every message of
+that list lost its spaces before].
 
 ## 3. Setting text
 

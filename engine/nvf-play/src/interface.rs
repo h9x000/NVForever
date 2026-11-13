@@ -428,11 +428,14 @@ fn texture_read(
 /// A font's picture from its `.tex` file, read before the `.dds` (docs/spec-notes/fonts.md
 /// §2.2): a Russian install's fonts describe the letters of their `.tex`, while the `.dds`
 /// beside it is the English one [observed: #1439]; in an English install the two are the
-/// same picture. Only where the `.dds` is there too, so a font with a `.tex` alone (font 9)
-/// still draws nothing, as in the original (§3.1). None, with a warning for a broken file,
-/// when there is none.
+/// same picture. Also where there is no `.dds` at all: UI mods ship fonts as a `.fnt` and a
+/// `.tex` only [observed: Vanilla UI Plus' five fonts, which the original draws; until
+/// then every text of a list with it was drawn without the game's fonts]. The one font kept
+/// undrawn is the game's own font 9 (`nvfont_test`), as in the original (§3.1): its `.tex`
+/// has letters, so the missing `.dds` is not why [observed: the archive's file, 58 379
+/// texels with alpha]. None, with a warning for a broken file, when there is none.
 pub fn font_tex(font: &Font, data: &GameData) -> Option<fnv_font::Tex> {
-    if !data.vfs.exists(&font.texture_path()) {
+    if font.texture.eq_ignore_ascii_case(UNDRAWN_TEXTURE) {
         return None;
     }
     let path = font.tex_path();
@@ -444,6 +447,9 @@ pub fn font_tex(font: &Font, data: &GameData) -> Option<fnv_font::Tex> {
         }
     }
 }
+
+/// Font 9's texture, which the original draws nothing with (fonts.md §3.1).
+const UNDRAWN_TEXTURE: &str = "NVFont_Test_0_lod_a";
 
 /// A `.tex` picture as an interface image, made as [`font_texture`] makes a `.dds` one.
 fn tex_image(path: &str, tex: fnv_font::Tex, images: &mut Assets<Image>) -> Option<(Handle<Image>, Vec2)> {
@@ -579,8 +585,9 @@ pub fn set_line(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, 
 /// [`set_line`] with `mark` on every coloured node (each glyph, or the stand-in text).
 pub fn set_marked(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, x: f32, base: f32, color: Color, mark: impl Bundle + Clone) {
     let Some((image, size)) = &face.image else {
-        // The codes are the run's code page's, not Latin-1 (`Ж` is 0xC6 in Windows-1251).
-        let text = line.text();
+        // The codes are the run's code page's, not Latin-1 (`Ж` is 0xC6 in Windows-1251),
+        // with the spaces between the words (a line holds only its words' characters).
+        let text = line.text_spaced(&face.font);
         let size = face.font.size * 0.75;
         p.spawn(Node { position_type: PositionType::Absolute, left: u(x), top: u(base - size), ..default() }).with_children(|n| {
             n.spawn((Text::new(text), TextFont { font_size: font_units(size), ..default() }, TextColor(color), mark));
