@@ -11,6 +11,12 @@
 //!   failed, a statement skipped, a script stopped early).
 //! - Under the pause menu's Mods page: where MCM's mod list stands, each time it changes
 //!   ([`mcm_list_line`]).
+//! - The HUD pieces mods add (an injected or loose tile of `HUDMainMenu`, with all under
+//!   it): when one first shows, and again when its tiles change while it shows (rows a
+//!   script builds), its tiles with their place, size, alpha, text and image
+//!   ([`hud_lines`]), so a piece that shows wrong or empty can be told from one not built.
+//! - A failure in a script compiled from source (a mod's, a Script Runner file, a
+//!   CompileScript file) names its source line (`line N:`).
 //! - At exit: the counts per mod, and what was asked for and not there.
 //!
 //! A mod is a plugin that is not one of the game's own files ([`GAME_PLUGINS`]). The
@@ -160,6 +166,99 @@ pub struct ModLog {
     asked: usize,
     /// MCM's list as last said ([`mcm_list_line`]).
     mcm_list: String,
+    /// Per mod HUD piece (its path): what was written of it ([`hud_lines`]).
+    hud: BTreeMap<String, HudSeen>,
+    /// Frames seen ([`frame`]).
+    frames: u32,
+}
+
+/// A mod's HUD piece as [`hud_lines`] last wrote it.
+#[derive(Debug, Default, Clone, Copy)]
+struct HudSeen {
+    /// Times written out.
+    dumps: u8,
+    /// The frame of the last writing.
+    at: u32,
+    /// Its tile count then.
+    tiles: usize,
+}
+
+/// How often one HUD piece is written out at most.
+const HUD_DUMPS: u8 = 4;
+/// Frames at least between two writings of one piece (a script building rows over a few
+/// frames is written once they stand).
+const HUD_AGAIN_FRAMES: u32 = 30;
+/// Most tiles written for one piece.
+const HUD_TILES: usize = 60;
+
+/// Whether a tile is shown: its own `visible` (none counts as shown), and its parents'.
+fn shown(ui: &fnv_ui::Ui, id: fnv_ui::TileId) -> bool {
+    let mut at = Some(id);
+    while let Some(t) = at {
+        let tile = ui.tile(t);
+        if tile.get("visible").is_some_and(|v| v.num() == 0.0) {
+            return false;
+        }
+        at = tile.parent;
+    }
+    true
+}
+
+/// One tile's line: its path under the piece, kind, and the traits that say where and
+/// what it draws.
+fn tile_line(ui: &fnv_ui::Ui, root: fnv_ui::TileId, id: fnv_ui::TileId, depth: usize) -> String {
+    let t = ui.tile(id);
+    let mut s = format!("{}{} {}", "  ".repeat(depth), if id == root { ui.path_of(id) } else { t.name.clone() }, t.kind);
+    for k in ["visible", "x", "y", "width", "height", "alpha", "depth"] {
+        if let Some(v) = t.get(k) {
+            s.push_str(&format!(" {k} {}", (v.num() * 100.0).round() / 100.0));
+        }
+    }
+    for k in ["string", "filename"] {
+        if let Some(v) = t.get(k) {
+            let text: String = v.text().chars().take(40).collect();
+            s.push_str(&format!(" {k} \"{text}\""));
+        }
+    }
+    s
+}
+
+/// The mod HUD pieces to write out this frame ([`ModLog`]'s `hud`): a piece when it first
+/// shows, and again while it shows when its tile count changed, [`HUD_AGAIN_FRAMES`] after
+/// the last writing at the soonest and [`HUD_DUMPS`] times at most; its tiles depth first,
+/// at most [`HUD_TILES`] [design: the owner's loot menu showed only a bar, and nothing said
+/// whether its rows were built, 2026-11-13].
+pub fn hud_lines(log: &mut ModLog, ui: &fnv_ui::Ui) -> Vec<String> {
+    let mut out = Vec::new();
+    let Some(menu) = ui.menu("HUDMainMenu") else { return out };
+    if !ui.has_mod_added_tiles(menu) {
+        return out;
+    }
+    let frame = log.frames;
+    for root in ui.mod_added_tiles(menu) {
+        let path = ui.path_of(root);
+        let seen = log.hud.entry(path.clone()).or_default();
+        if seen.dumps >= HUD_DUMPS || !shown(ui, root) {
+            continue;
+        }
+        let mut order = Vec::new();
+        let mut stack = vec![(root, 0usize)];
+        while let Some((id, depth)) = stack.pop() {
+            order.push((id, depth));
+            stack.extend(ui.tile(id).children.iter().rev().map(|&c| (c, depth + 1)));
+        }
+        let total = order.len();
+        let due = seen.dumps == 0 || (total != seen.tiles && frame >= seen.at + HUD_AGAIN_FRAMES);
+        if !due {
+            continue;
+        }
+        *seen = HudSeen { dumps: seen.dumps + 1, at: frame, tiles: total };
+        let lines: Vec<String> = order.iter().take(HUD_TILES).map(|&(id, depth)| tile_line(ui, root, id, depth)).collect();
+        let when = if seen.dumps == 1 { "shows" } else { "changed" };
+        out.push(format!("HUD piece {path} {when}: {total} tiles{}", if total > HUD_TILES { format!(" ({HUD_TILES} written)") } else { String::new() }));
+        out.extend(lines.into_iter().map(|l| format!("HUD   {l}")));
+    }
+    out
 }
 
 impl ModLog {
@@ -247,6 +346,10 @@ pub fn frame(log: &mut ModLog, game: &mut fnv_game::Game<'_>, events: &[Event]) 
     }
     for line in events.iter().filter_map(|e| log.event(e)) {
         warn!("mods: {line}");
+    }
+    log.frames = log.frames.wrapping_add(1);
+    for line in hud_lines(log, &game.ui_tree) {
+        info!("mods: {line}");
     }
 }
 
@@ -390,6 +493,41 @@ mod tests {
         let lines = load_lines(&order, [("A.esp|script 1", false)].iter().copied(), &[u]);
         assert!(lines.iter().any(|l| l == "A.esp: runs without 2 lines that do not compile: script 1 line 7: syntax, script 1 line 9: unknown_name"), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains("Secret")));
+    }
+
+    #[test]
+    fn a_mods_hud_piece_is_written_when_it_shows_and_changes() {
+        use fnv_ui::{MemSource, Ui};
+        let src = MemSource::default().with(
+            "menus\\hud.xml",
+            r#"<menu name="HUDMainMenu"> <template name="T"> <rect name="Piece"> <_shown> 0 </_shown> <visible> <copy src="me()" trait="_shown"/> </visible>
+                 <text name="Row0"> <x> 8 </x> <string> Caps </string> </text> </rect> </template> </menu>"#,
+        );
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "menus\\hud.xml").unwrap();
+        let piece = ui.add_from_template(&src, "HUDMainMenu", "T", Some("Loot")).unwrap();
+        ui.update();
+        let mut log = ModLog::default();
+        assert!(hud_lines(&mut log, &ui).is_empty(), "hidden: nothing yet");
+        ui.set_trait(piece, "_shown", fnv_ui::Value::Num(1.0));
+        ui.update();
+        let first = hud_lines(&mut log, &ui);
+        assert_eq!(first[0], "HUD piece HUDMainMenu/Loot shows: 2 tiles");
+        assert!(first.iter().any(|l| l.contains("Row0 text") && l.contains("x 8") && l.contains("string \"Caps\"")), "{first:?}");
+        log.frames += HUD_AGAIN_FRAMES;
+        assert!(hud_lines(&mut log, &ui).is_empty(), "unchanged: not again");
+        // A script builds a row: written again.
+        ui.add_from_template(&src, "HUDMainMenu/Loot", "T", Some("Row1")).unwrap();
+        ui.update();
+        let again = hud_lines(&mut log, &ui);
+        assert!(again[0].starts_with("HUD piece HUDMainMenu/Loot changed: "), "{again:?}");
+        assert!(again.iter().any(|l| l.contains("Row1 rect")), "{again:?}");
+        // Another row at once: not before half a second after that writing.
+        ui.add_from_template(&src, "HUDMainMenu/Loot", "T", Some("Row2")).unwrap();
+        ui.update();
+        assert!(hud_lines(&mut log, &ui).is_empty(), "not again before half a second");
+        log.frames += HUD_AGAIN_FRAMES;
+        assert!(!hud_lines(&mut log, &ui).is_empty());
     }
 
     #[test]
