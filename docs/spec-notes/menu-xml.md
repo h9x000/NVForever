@@ -26,7 +26,11 @@ lists counts and every spot the reader mended (`fnv.ui.menus/1`); `fnvtool ui tr
   needs it [hypothesis].
 - `menus\globals.xml` is one `<rect name="Strings">` of shared constants (line
   thickness, brightnesses, the Pip-Boy canvas size 1024 × 768, `_Has360Controller`),
-  read by other files as `globals()` [observed].
+  read by other files as `globals()` [observed]. `_Has360Controller` is the game's to
+  write while it runs: NVForever sets it to 1 while the controller is the input device,
+  else 0 (`tiles::write_controller`) [observed: Vanilla UI Plus's copy of the file sets 1
+  and notes that, unlike `&xbox;`, it "gets updated in-game"; MCM Extender makes MCM's
+  `_AltInput` of it, and with the file's 1 kept MCM took no mouse clicks, 2026-11-13].
 
 ### 1.1 Not strict XML
 
@@ -43,6 +47,9 @@ lists counts and every spot the reader mended (`fnv.ui.menus/1`); `fnvtool ui tr
    closes one `<onlyif>`.
 4. **A start tag cut short**: `<systemcolor</systemcolor>` in `hud_main_menu.xml` and
    `item_stats_display.xml`.
+5. **`+` in names**: Vanilla UI Plus names its traits `_VUI+…` (3,679 tags in a Wabbajack
+   list) and reads them back by those names, so `+` is part of a name [observed]; no other
+   character outside letters, digits, `_ - . :` is in that list's files.
 5. **An attribute missing its opening quote**: `name=item_listing_parent"` in
    `item_listing.xml`.
 
@@ -695,7 +702,7 @@ marked]:
 |---|---|---|
 | `parent()` | 2473 | the tile's parent |
 | `me()` | 1798 | the tile itself |
-| `sibling(name)` | 1660 | the tile of that name under the same parent |
+| `sibling(name)` | 1660 | the tile of that name under the same parent; for a menu's root, another menu's root, as `screen()` is the parent of all menus' roots [documented: UESP, Oblivion XML / Operators, Selectors; observed: Vanilla UI Plus's StartMenu reads `sibling(HUDMainMenu)`] |
 | `sibling()` | 2 | the tile just before it under the same parent |
 | `screen()` | 451 | the view: traits `width`, `height`, `cropx`, `cropy`, `resolutionconverter`, set by the engine. Width is 960 × window width/height, height 960 and `resolutionconverter` 960 / window height [observed: hud_menus capture 2026-10-31, three window sizes] (1280 x 720, 1920 x 1080 and 1280 x 1024). NVForever uses those interface units only while `[UI] TileMenus` names a menu drawn from its file (`tiles::interface_screen`), and writes `cropx` and `cropy` only while `DialogMenu` draws a conversation (dialogue-menu.md §6.2); otherwise it keeps window pixels and no converter [design: preserve default play; applying the observed units unconditionally is a follow-up]. `fnvtool ui tree --screen` writes the size it is given [design] |
 | `globals()` | 244 | `globals.xml`'s tile (`gloabls()`, once, read the same) |

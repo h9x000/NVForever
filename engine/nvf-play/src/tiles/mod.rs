@@ -81,6 +81,7 @@ pub(crate) struct MenuFiles<'w, 's> {
     main_menu: Option<Res<'w, crate::main_menu::MainMenu>>,
     menus: Option<Res<'w, vanilla::TileMenus>>,
     page: Option<Res<'w, crate::pause::Page>>,
+    bindings: Option<Res<'w, crate::bindings::Bindings>>,
 }
 
 impl MenuFiles<'_, '_> {
@@ -143,6 +144,8 @@ impl MenuFiles<'_, '_> {
                 write_screen(&mut game.ui_tree, window.width(), window.height(), units);
             }
         }
+        let pad = self.bindings.as_ref().is_some_and(|b| b.device == crate::bindings::InputDevice::Controller);
+        write_controller(&mut game.ui_tree, pad);
         let report = ui_loading::sync(game, self.paused.as_ref().is_some_and(|p| p.0), self.main_menu.as_ref().is_some_and(|m| m.open));
         for line in report.changes {
             info!("ui: {line}");
@@ -190,6 +193,17 @@ pub fn write_screen(ui: &mut fnv_ui::Ui, window_width: f32, window_height: f32, 
         ui.set_trait(id, "width", Value::Num(f64::from(window_width)));
         ui.set_trait(id, "height", Value::Num(f64::from(window_height)));
     }
+}
+
+/// Write `globals()`'s `_Has360Controller`: 1 while the controller is the input device
+/// (`Bindings::device`), else 0. The game writes it while it runs [observed: Vanilla UI Plus's
+/// `globals.xml` sets it to 1 with the note that, unlike `&xbox;`, it "gets updated
+/// in-game"; MCM Extender's pause menu copies it into MCM's `_AltInput`, so with the file's
+/// 1 kept MCM showed its D-pad help and took no mouse clicks in an owner's run, 2026-11-13].
+/// Without a `globals.xml` that declares it, the trait is made, as the game's own write would.
+pub fn write_controller(ui: &mut fnv_ui::Ui, pad: bool) {
+    let g = ui.globals();
+    ui.set_trait(g, "_Has360Controller", Value::Num(if pad { 1.0 } else { 0.0 }));
 }
 
 /// [`write_screen`] in interface units for a view drawn at `scale` (the UI scale, at most
@@ -1183,6 +1197,24 @@ mod tests {
         let s = ui.tile(ui.screen());
         assert_eq!(s.get("height").map(Value::num), Some(960.0));
         assert_eq!(s.get("resolutionconverter").map(Value::num), Some(960.0 / 720.0));
+    }
+
+    #[test]
+    fn the_controller_trait_follows_the_input_device() {
+        // A globals.xml that sets 1 (Vanilla UI Plus), read by a menu as MCM Extender reads it.
+        let mut ui = Ui::new();
+        let g = ui.globals();
+        ui.set_trait(g, "_Has360Controller", Value::Num(1.0));
+        let src = MemSource::default().with("m.xml", r#"<menu name="M"><rect name="Box"><_alt><copy src="globals()" trait="_Has360Controller"/></_alt></rect></menu>"#);
+        ui.load_menu(&src, "m.xml").unwrap();
+        ui.update();
+        assert_eq!(ui.get_float("M/Box/_alt"), Some(1.0));
+        write_controller(&mut ui, false);
+        ui.update();
+        assert_eq!(ui.get_float("M/Box/_alt"), Some(0.0), "keyboard and mouse: no controller");
+        write_controller(&mut ui, true);
+        ui.update();
+        assert_eq!(ui.get_float("M/Box/_alt"), Some(1.0));
     }
 
     #[test]

@@ -973,3 +973,18 @@ fn trait_write_counts_tell_a_write_from_a_change() {
     ui.set_trait(screen, "width", Value::Num(1920.0));
     assert_eq!(ui.trait_write_counts(), (writes + 3, changes + 2));
 }
+
+#[test]
+fn a_menus_root_has_the_other_menus_as_siblings() {
+    // `screen()` is the parent of every menu's root [documented: UESP, Oblivion XML /
+    // Operators, Selectors]; Vanilla UI Plus's StartMenu reads `sibling(HUDMainMenu)`.
+    let src = MemSource::default()
+        .with("menus\\h.xml", r#"<menu name="HUDMainMenu"> <_VUI+> 1 </_VUI+> </menu>"#)
+        .with("menus\\s.xml", r#"<menu name="StartMenu"> <_VUI+> <copy src="sibling(HUDMainMenu)" trait="_VUI+"/> </_VUI+> <rect name="R"> <_v> <copy src="io()" trait="_VUI+"/> </_v> </rect> </menu>"#);
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus\\h.xml").unwrap();
+    ui.load_menu(&src, "menus\\s.xml").unwrap();
+    ui.update();
+    assert_eq!(ui.get_float("StartMenu/_VUI+"), Some(1.0));
+    assert_eq!(ui.get_float("StartMenu/R/_v"), Some(1.0));
+}
