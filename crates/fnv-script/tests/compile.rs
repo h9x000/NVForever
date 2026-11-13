@@ -1618,3 +1618,71 @@ fn typeof_does_not_hide_invalid_indexing_or_direct_missing_access() {
         assert!(error.is_err(), "{expression}: {error:?}");
     }
 }
+
+#[test]
+fn a_mods_source_takes_an_assignment_without_let() {
+    // [observed: thirteen units of seven mods in a Wabbajack list, `doOnce := 1` and
+    // `Quest.bFlag := 1` on lines of their own, shipped with compiled bytes.]
+    let (c, p) = mod_source("short a\nbegin GameMode\na := 1\nTestQuest.bDone := 1\nend");
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    assert!(body(&p).iter().all(|s| matches!(s, Stmt::Let { expr: fnv_script::ir::XExpr::Assign { .. } })), "{:?}", body(&p));
+}
+
+#[test]
+fn a_mods_source_line_goes_on_while_its_brackets_are_open() {
+    // A condition over three lines [observed: a mod in a Wabbajack list ships `If (( a
+    // && b )` / `|| ( c )` / `|| ( d ))` with compiled bytes].
+    let src = "short a\nshort b\nbegin GameMode\nif ((a == 1)\n    || (b == 2)\n)\nset a to 2\nendif\nend";
+    let (c, p) = mod_source(src);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    // One `if` holding the `set`.
+    assert_eq!(body(&p).len(), 1, "{:?}", body(&p));
+    // The editor-parity compile reads the lines as they are.
+    assert!(compile(src, &table(), &World, None).errors().count() > 0);
+}
+
+#[test]
+fn a_mods_source_lambda_can_end_its_line_with_the_arrow() {
+    // [observed: a mod in a Wabbajack list ships `MessageBoxExAlt ({int iBtn} =>` … `)
+    // "…"` with compiled bytes.]
+    let src = "short a\nbegin GameMode\nMessageBoxExAlt ({int iBtn} =>\n    a = iBtn\n    a += 1\n) \"Title|One|Two\"\nset a to 3\nend";
+    let (c, p) = mod_source(src);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    assert_eq!(body(&p).len(), 2, "{:?}", body(&p));
+}
+
+#[test]
+fn a_mods_source_passes_more_arguments_than_the_catalogue_lists() {
+    // [observed: units of a Wabbajack list pass GetActiveObjectives a quest and
+    // GetRefsInCell a sixth argument, shipped with compiled bytes.]
+    let (c, _) = mod_source("short a\narray_var ar\nbegin GameMode\na := (ar_size (GetActiveObjectives TestQuest))\nar := Player.GetRefsInCell (Player.GetParentCell) 28 2 0 2000 45\nend");
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    let extra = warnings(&c, "extra_argument");
+    assert!(extra.iter().any(|w| w.eq_ignore_ascii_case("GetActiveObjectives")) && extra.iter().any(|w| w.eq_ignore_ascii_case("GetRefsInCell")), "{:?}", c.diags);
+    // A vanilla call line whose argument calls a function nothing knows.
+    let (c, _) = mod_source("begin GameMode\nRewardXP (NoSuchFn \"x\" 5)\nend");
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+}
+
+#[test]
+fn a_mods_source_loses_a_line_not_the_unit() {
+    let src = "short a\nbegin GameMode\nset a to 1\na := (1 +)\nset a to 2\nend";
+    let (c, p) = mod_source(src);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.errors().collect::<Vec<_>>());
+    assert_eq!(warnings(&c, "line_dropped").len(), 1, "{:?}", c.diags);
+    assert_eq!(body(&p).len(), 2, "{:?}", body(&p));
+    assert!(compile(src, &table(), &World, None).errors().count() > 0);
+    // A line that opens a block still fails the unit.
+    let (c, _) = mod_source("short a\nbegin GameMode\nwhile (1 +)\nset a to 1\nloop\nend");
+    assert!(c.errors().count() > 0, "{:?}", c.diags);
+}
+
+#[test]
+fn a_mods_source_takes_an_expression_in_a_game_functions_arguments() {
+    // [observed: a mod in a Wabbajack list ships `SwapTexture (This) "Screen01:0" "…"` with
+    // compiled bytes, in a unit that otherwise calls only the game's functions.]
+    for src in ["begin GameMode\nSwapTexture (This) \"a\" \"b\"\nend", "begin GameMode\nSwapTexture (GetSelf) \"a\" \"b\"\nend"] {
+        let (c, _) = mod_source(src);
+        assert!(c.diags.is_empty(), "{src}: {:?}", c.diags);
+    }
+}

@@ -167,6 +167,16 @@ fn block_comments(line: &str, in_block: &mut bool) -> String {
 /// Every line that can produce a statement, with its tokens; `long` collects the numbers
 /// of lines over [`MAX_LINE`] characters.
 pub fn lines(src: &str, long: &mut Vec<usize>) -> Vec<Line> {
+    lines_keeping(src, long, false)
+}
+
+/// [`lines`], keeping the lines that hold only a `)` too, which close a line that went on
+/// over several (`Gen`'s `joined_lines`).
+pub fn lines_with_closers(src: &str, long: &mut Vec<usize>) -> Vec<Line> {
+    lines_keeping(src, long, true)
+}
+
+fn lines_keeping(src: &str, long: &mut Vec<usize>, closers: bool) -> Vec<Line> {
     let src = src.trim_end_matches('\0');
     let mut out = Vec::new();
     let mut in_block = false;
@@ -178,7 +188,7 @@ pub fn lines(src: &str, long: &mut Vec<usize>) -> Vec<Line> {
             long.push(n + 1);
         }
         let text = strip_comment(raw).trim();
-        if !text.chars().any(|c| c.is_alphanumeric()) {
+        if !text.chars().any(|c| c.is_alphanumeric()) && !(closers && text.contains(')')) {
             continue;
         }
         let toks = tokens(text);

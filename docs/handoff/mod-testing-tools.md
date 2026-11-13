@@ -57,6 +57,10 @@ Per plugin: the units that run from their source, the units that kept their byte
 line and kind of their first error, the functions with no catalogue entry, the
 enumeration names the table lacks (`fnv.ext.report/1`). A unit that kept its bytes cannot
 run, and `ext connections` cannot count its calls (`units_kept_bytes`): fix those first.
+Since 2026-11-13 a call, `set`, `let` or assignment line that does not compile is left out
+instead of the whole unit (`lines_dropped`, with line and error kind): the unit runs, but
+without those lines, so they are the next thing to fix. The mod log names them too
+(`runs without N lines that do not compile`).
 
 ## 3. The mod log: what a played run met
 

@@ -142,6 +142,9 @@ pub struct SourceUnit {
     pub unknown_functions: Vec<String>,
     /// The enumeration names the table lacks (`kind: name`), each once.
     pub unknown_enums: Vec<String>,
+    /// The lines left out of the compile (`line_dropped`): line number, then the error
+    /// that dropped it. The unit runs without them.
+    pub dropped_lines: Vec<(usize, String)>,
 }
 
 /// The names a compile's warnings of `kind` carry, each once, in order.
@@ -162,6 +165,7 @@ struct Made {
     result: Result<Done, SourceError>,
     unknown_functions: Vec<String>,
     unknown_enums: Vec<String>,
+    dropped_lines: Vec<(usize, String)>,
 }
 
 /// What [`compile_picked`] made, in list order.
@@ -209,6 +213,7 @@ pub(crate) fn compile_picked(lo: &LoadOrder<'_>, table: &FunctionTable, units: &
             let c = compile(u.source.as_deref().unwrap_or(""), table, &env, Some(Seed { variables: &u.variables, refs: &u.refs, unknown_calls: true }));
             let first = c.errors().next().map(|e| SourceError { line: e.line, kind: e.kind, detail: e.detail.clone() });
             let (unknown_functions, unknown_enums) = (warned(&c, "unknown_function"), warned(&c, "unknown_enum_name"));
+            let dropped_lines = c.diags.iter().filter(|d| d.kind == "line_dropped").map(|d| (d.line, d.detail.clone())).collect();
             let result = match first {
                 Some(e) => Err(e),
                 None => {
@@ -216,7 +221,7 @@ pub(crate) fn compile_picked(lo: &LoadOrder<'_>, table: &FunctionTable, units: &
                     Ok((c.bytes, d.program, d.report.raw_total(), c.refs, c.variables))
                 }
             };
-            Made { at: i, result, unknown_functions, unknown_enums }
+            Made { at: i, result, unknown_functions, unknown_enums, dropped_lines }
         })
         .collect();
     tracing::info!("script build: source compile: done: {:.0} ms", clock.elapsed().as_secs_f64() * 1e3);
@@ -227,11 +232,14 @@ pub(crate) fn compile_picked(lo: &LoadOrder<'_>, table: &FunctionTable, units: &
 /// their bytes (noted in `issues`). Returns what became of each unit, in list order.
 pub(crate) fn apply(units: &mut [Compiled], recompiled: Recompiled, issues: &mut Issues) -> Vec<SourceUnit> {
     let mut out = Vec::with_capacity(recompiled.0.len());
-    for Made { at, result: r, unknown_functions, unknown_enums } in recompiled.0 {
+    for Made { at, result: r, unknown_functions, unknown_enums, dropped_lines } in recompiled.0 {
         let c = &mut units[at];
         let (key, plugin) = (c.unit.key(), c.unit.plugin.clone());
         for name in &unknown_functions {
             issues.note("script_calls_unknown_function", || format!("{key}: {name}"));
+        }
+        for (line, why) in &dropped_lines {
+            issues.note("script_line_dropped", || format!("{key}: line {line}: {why}"));
         }
         let error = match r {
             // The seed keeps every existing index; names the lists lacked come after them.
@@ -249,7 +257,7 @@ pub(crate) fn apply(units: &mut [Compiled], recompiled: Recompiled, issues: &mut
                 Some(e)
             }
         };
-        out.push(SourceUnit { key, plugin, error, unknown_functions, unknown_enums });
+        out.push(SourceUnit { key, plugin, error, unknown_functions, unknown_enums, dropped_lines });
     }
     out
 }
@@ -273,7 +281,7 @@ mod tests {
     use super::*;
 
     fn unit(key: &str, names: &[&str]) -> SourceUnit {
-        SourceUnit { key: key.into(), plugin: "Mod.esp".into(), error: None, unknown_functions: names.iter().map(|n| n.to_string()).collect(), unknown_enums: Vec::new() }
+        SourceUnit { key: key.into(), plugin: "Mod.esp".into(), error: None, unknown_functions: names.iter().map(|n| n.to_string()).collect(), unknown_enums: Vec::new(), dropped_lines: Vec::new() }
     }
 
     #[test]

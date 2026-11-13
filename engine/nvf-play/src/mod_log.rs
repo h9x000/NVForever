@@ -97,6 +97,18 @@ pub fn load_lines<'a>(load_order: &[String], units: impl Iterator<Item = (&'a st
         if failed.len() > FAILED_SHOWN {
             out.push(format!("{plugin}: does not compile: {} more (fnvtool ext report lists them)", failed.len() - FAILED_SHOWN));
         }
+        // Units that run without some of their lines: where, and the error's kind only (its
+        // detail can quote the mod's text).
+        let dropped: Vec<String> = picked
+            .iter()
+            .filter(|u| u.error.is_none())
+            .flat_map(|u| u.dropped_lines.iter().map(move |(line, why)| format!("{} line {line}: {}", split(&u.key).1, why.split(':').next().unwrap_or(""))))
+            .collect();
+        if !dropped.is_empty() {
+            let shown: Vec<&str> = dropped.iter().take(FAILED_SHOWN).map(String::as_str).collect();
+            let more = if dropped.len() > FAILED_SHOWN { format!(", {} more (fnvtool ext report lists them)", dropped.len() - FAILED_SHOWN) } else { String::new() };
+            out.push(format!("{plugin}: runs without {} that do not compile: {}{more}", plural(dropped.len(), "line", "lines"), shown.join(", ")));
+        }
         if no_source > 0 {
             out.push(format!("{plugin}: {} extender bytes and no source text to compile: what the decoder cannot read of them does not run", plural(no_source, "script has", "scripts have")));
         }
@@ -343,6 +355,7 @@ mod tests {
             error: error.map(|(line, kind)| SourceError { line, kind, detail: "set x to Secret".to_string() }),
             unknown_functions: functions.iter().map(|s| s.to_string()).collect(),
             unknown_enums: enums.iter().map(|s| s.to_string()).collect(),
+            dropped_lines: Vec::new(),
         }
     }
 
@@ -366,6 +379,16 @@ mod tests {
             ]
         );
         // No script text: the compiler's detail, which may quote a line, stays out.
+        assert!(lines.iter().all(|l| !l.contains("Secret")));
+    }
+
+    #[test]
+    fn lines_a_unit_runs_without_are_named_by_number() {
+        let order: Vec<String> = ["FalloutNV.esm", "A.esp"].iter().map(|s| s.to_string()).collect();
+        let mut u = unit("A.esp|script 1", None, &[], &[]);
+        u.dropped_lines = vec![(7, "syntax: set x to Secret".to_string()), (9, "unknown_name: Secret".to_string())];
+        let lines = load_lines(&order, [("A.esp|script 1", false)].iter().copied(), &[u]);
+        assert!(lines.iter().any(|l| l == "A.esp: runs without 2 lines that do not compile: script 1 line 7: syntax, script 1 line 9: unknown_name"), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains("Secret")));
     }
 

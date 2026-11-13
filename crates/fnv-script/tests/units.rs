@@ -240,3 +240,31 @@ fn serialized_extender_variable_kinds_survive_the_unit_reader() {
     assert_eq!(variables.iter().map(|v| v.index).collect::<Vec<_>>(), [1, 2, 3, 4]);
     assert_eq!(variables.iter().map(|v| v.name.as_str()).collect::<Vec<_>>(), ["textSlot", "arraySlot", "refSlot", "unknownSlot"]);
 }
+
+/// One plugin gives a quest and a message one FormID [observed: oHUD.esm in a Wabbajack
+/// list, quest `aHUD` and message `iHUDMainMenu` at 0x01000801, its scripts' `aHUD.var`
+/// lines shipped with compiled bytes]: both names resolve, and the quest's variables too.
+#[test]
+fn a_formid_two_records_share_keeps_both_names() {
+    use fnv_script::compile::{compile, env::LoadOrderIndex, Env, Seed};
+    let mut s = vec![sub(b"EDID", z("QScript"))];
+    s.extend(unit(1, &[0x1D, 0, 0, 0], "scn QScript", &[(1, "bDone", 1)], &[]));
+    let qust = [sub(b"EDID", z("Q")), sub(b"SCRI", QUEST_SCRIPT.to_le_bytes().to_vec())];
+    let mesg = [sub(b"EDID", z("Msg"))];
+    let bytes = [
+        tes4(&[]),
+        top(b"SCPT", &record(b"SCPT", QUEST_SCRIPT, &s)),
+        top(b"QUST", &record(b"QUST", QUEST, &qust)),
+        top(b"MESG", &record(b"MESG", QUEST, &mesg)),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "Twice.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    let (units, _) = read_load_order(&lo, &schema());
+    let ix = LoadOrderIndex::build(&lo, &units);
+    let env = ix.env(0);
+    assert_eq!(env.form("Q").map(|f| (f.form, f.sig)), Some((QUEST, *b"QUST")));
+    assert_eq!(env.form("Msg").map(|f| (f.form, f.sig)), Some((QUEST, *b"MESG")));
+    let c = compile("begin GameMode\nset Q.bDone to 1\nend", &table(), &env, Some(Seed { variables: &[], refs: &[], unknown_calls: true }));
+    assert!(c.diags.iter().all(|d| !d.error && d.kind != "line_dropped"), "{:?}", c.diags);
+}

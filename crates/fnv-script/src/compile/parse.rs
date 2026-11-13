@@ -76,7 +76,9 @@ pub enum Kw {
 /// The assignments the Let macro takes without `let` [documented: Let Macro: `=`, `+=`,
 /// `-=`, `*=`; observed: `/=`, JustAssortedMods.esp 4.6 ships `fAP /= GetNumericGameSetting
 /// …` (JBTOnFireWeaponUDF) with compiled bytes, so the original's compiler takes it].
-const MACRO_OPS: [&str; 5] = ["=", "+=", "-=", "*=", "/="];
+/// `:=` too, with no `let` before the target [observed: thirteen units of seven mods in a
+/// Wabbajack list ship `doOnce := 1` and `Quest.bFlag := 1` lines with compiled bytes].
+const MACRO_OPS: [&str; 6] = ["=", ":=", "+=", "-=", "*=", "/="];
 
 /// A line of the extender's grammar, by its first words.
 fn extender(l: &Line) -> Option<Kw> {
