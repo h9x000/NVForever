@@ -60,18 +60,18 @@ They are the commands CI runs, in its order (`tools/smoke/tests/test_check_lists
 this list, CONTRIBUTING.md, docs/development.md, the `[[check]]` entries and ci.yml the same).
 
 ```
-cargo deny check licenses advisories bans sources
-cargo deny --manifest-path engine/Cargo.toml check licenses advisories bans sources
 cargo test --workspace --release --locked
 cargo clippy --workspace --all-targets --release --locked -- -D warnings
+(cd engine && cargo test --release --locked)
+(cd engine && cargo clippy --release --locked --all-targets -- -D warnings)
+cargo deny check licenses advisories bans sources
+cargo deny --manifest-path engine/Cargo.toml check licenses advisories bans sources
 python -m unittest discover -s parity-lab/tests
 python -m unittest discover -s tools/capture/tests
 python -m unittest discover -s tools/smoke/tests
 python -m unittest discover -s tools/stress/tests
 python -m unittest discover -s tools/profile/tests
 python -m unittest discover -s tools/release/tests
-(cd engine && cargo test --release --locked)
-(cd engine && cargo clippy --release --locked --all-targets -- -D warnings)
 ```
 
 With game data available (owner's install, read-only): build `fnvtool`, set
@@ -88,6 +88,10 @@ python tools/smoke run --exe <engine target>/release/nvforever.exe --data <Data>
 # (--changed origin/main is the default selection; add --checks to run the push checks it lists)
 ```
 
+- While iterating, build with `cargo quick` (in `engine/` for nvforever, at the root for
+  fnvtool): release with incremental compilation in `target/release-quick`, a rebuild after
+  a one-line edit in 10-25 s instead of 2-4 min. The runner takes it when it is newer than
+  `target/release`'s. Profile, measure and ship from `--release` (#1956).
 - It picks the scenarios whose paths your branch changed (`--only NAME…`, `--area A…`,
   `--all` otherwise), shares a game launch between scenarios where that was checked to be
   safe, and runs up to 3 nvforever games on the machine at once (smoke slots,
