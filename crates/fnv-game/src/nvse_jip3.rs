@@ -413,7 +413,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             let Some(f) = args.get(1).cloned() else { return Some(Ok(zero)) };
             let filter = form(args, 3);
             g.gaps.jip3.jg_handlers.retain(|(e, h, l)| !(*e == ev && *h == f && *l == filter));
-            if num(args, 0, 1.0) != 0.0 {
+            if num(args, 0, 1.0) != 0.0 && !g.refuse_empty_handler(name, &f) {
                 g.gaps.jip3.jg_handlers.push((ev, f, filter));
             }
             zero

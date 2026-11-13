@@ -86,6 +86,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, on: Option<FormId>, a
         }
         _ => return None,
     };
+    if g.refuse_empty_handler(name, &d.func) {
+        return Some(Ok(XVal::Num(0.0)));
+    }
     // An array argument lives until the calls stop [documented].
     for a in &d.args {
         g.ext.retain(a);
