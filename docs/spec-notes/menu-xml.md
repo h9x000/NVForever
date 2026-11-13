@@ -1247,12 +1247,15 @@ Found in the owner's runs with MCM 1.5, CASM with MCM, B42 Quickthrow and Projec
   so the tree had no StartMenu and the box came up [observed: the owner's run]. The
   frames now build it first (`nvf_play::script`, `ui_loading::sync` as under the main
   menu); the frame's own sync drops it again.
-- **`src="me"` without brackets is the tile itself.** MCM_Options places its two columns
-  by `<_x1> <copy src="me" trait="x"/> <add> 20 </add> </_x1>` (and `_x2`); read as a
-  tile's name it gave 0, and every option row stood at the screen's left instead of in
-  the right pane [observed: MCM 1.5's Options.xml; the owner's run, CASM's options about
-  500 units left of the pane]. A tile that bears the name is still the one meant
-  (`fnv_ui::Ui::resolve`).
+- **A source keyword without its brackets is that keyword.** `src="me"`, `"parent"`,
+  `"grandparent"`, `"sibling"`, `"child"` and `"screen"` read as `me()`, `parent()` and
+  so on when no tile bears the name (`fnv_ui::Ui::resolve`) [observed: MCM_Options places
+  its columns by `<copy src="me" trait="x"/>`, and read as a name it gave 0, so CASM's
+  options stood about 500 units left of their pane; Vanilla UI Plus shows its "missing
+  UIO" and "installation error" texts by `<not src="parent" …/>`, both up in the owner's
+  run; a Wabbajack list's menu files hold 6,748 such sources in 177 files: parent 3,212,
+  me 2,444, sibling 1,083, screen 249, grandparent 140, child 23, 2026-11-13]. A tile
+  that bears the name is still the one meant.
 - **The pointer is matched by the rule the page is drawn with.** The Mods page is laid
   out by the `locus` rule (§10.1, `layout_by_locus`), the pointer's tiles were placed by
   adding every parent's `x` and `y`; MCM's window rect has an `x` and no `locus`, so the
