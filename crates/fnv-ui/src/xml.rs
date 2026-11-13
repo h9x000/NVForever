@@ -68,8 +68,13 @@ pub fn decode(bytes: &[u8]) -> String {
     }
 }
 
+/// A character of an element's (a trait's) name. `+` too [observed: Vanilla UI Plus names
+/// 3,679 traits `_VUI+…` in a Wabbajack list, and its install check reads them back by
+/// those names, which shows the original keeps the `+`; until 2026-11-13 the name stopped
+/// at it, so every `_VUI+…` trait was one `_VUI` and the check failed; no other character
+/// outside this set is in that list's menu files].
 fn name_char(c: char) -> bool {
-    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':')
+    c.is_ascii_alphanumeric() || matches!(c, '_' | '-' | '.' | ':' | '+')
 }
 
 /// Reads `src`; never fails.
@@ -398,6 +403,15 @@ mod tests {
         let names: Vec<_> = i.elements().map(|e| e.name.as_str()).collect();
         assert_eq!(names, ["systemcolor", "locus"]);
         assert_eq!(d.warnings.len(), 1, "{:?}", d.warnings);
+    }
+
+    #[test]
+    fn a_plus_is_part_of_a_name() {
+        // [observed: Vanilla UI Plus's `_VUI+…` traits.]
+        let d = parse("<rect><_VUI+Fade>1</_VUI+Fade><_VUI+>2</_VUI+></rect>");
+        let names: Vec<_> = el(&d.nodes[0]).elements().map(|e| e.name.as_str()).collect();
+        assert_eq!(names, ["_VUI+Fade", "_VUI+"]);
+        assert!(d.warnings.is_empty(), "{:?}", d.warnings);
     }
 
     #[test]

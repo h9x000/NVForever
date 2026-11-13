@@ -1299,8 +1299,15 @@ impl Ui {
             Src::Child(None) => self.tile(me).children.first().copied(),
             Src::Child(Some(n)) => child_named(me, n),
             Src::Sibling(n) => {
-                let p = parent(me)?;
-                let kids = &self.tile(p).children;
+                // A menu's root has the other menus' roots as siblings: `screen()` is "the
+                // parent tile of all menus' root tiles" [documented: UESP, Oblivion XML /
+                // Operators, Selectors, `screen`; observed: Vanilla UI Plus's StartMenu reads
+                // `sibling(HUDMainMenu)`'s `_VUI+` for its install check].
+                let kids: &[TileId] = match parent(me) {
+                    Some(p) => &self.tile(p).children,
+                    None if self.roots.contains(&me) => &self.roots,
+                    None => return None,
+                };
                 match n {
                     Some(n) => kids.iter().copied().find(|&c| c != me && self.tile(c).name.eq_ignore_ascii_case(n)),
                     None => {
