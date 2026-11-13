@@ -85,7 +85,30 @@ impl<'a> LoadOrder<'a> {
             visit_records(&p.nodes[1..], &mut |r, _| recs.push(r));
             for (ord, r) in recs.iter().enumerate() {
                 match lo.to_global(pi, r.header.form_id) {
-                    Some(g) => lo.index.entry(g).or_default().push(DefRef { plugin: pi as u8, ordinal: ord as u32 }),
+                    Some(g) => {
+                        let defs = lo.index.entry(g).or_default();
+                        // A plugin that gives one FormID to a second record of another type
+                        // keeps its first: the form is the record its scripts were made for
+                        // [observed: oHUD.esm, a quest `aHUD` and later a message
+                        // `iHUDMainMenu` at 0x01000801, the only such pair in a Wabbajack list
+                        // of 232 plugins and the game's masters; its HUD runs from the quest's
+                        // script, which works in the original; hypothesis: the original keeps
+                        // the form first made]. A same-type repeat is unchanged (last wins).
+                        if let Some(prev) = defs.last().filter(|d| d.plugin as usize == pi) {
+                            let first = recs[prev.ordinal as usize];
+                            if first.header.sig != r.header.sig {
+                                tracing::info!(
+                                    plugin = %p.name,
+                                    form_id = format_args!("{:08X}", r.header.form_id),
+                                    "a second record of another type with this FormID ({} after {}): the first is kept",
+                                    String::from_utf8_lossy(&r.header.sig),
+                                    String::from_utf8_lossy(&first.header.sig)
+                                );
+                                continue;
+                            }
+                        }
+                        defs.push(DefRef { plugin: pi as u8, ordinal: ord as u32 })
+                    }
                     None => {
                         tracing::debug!(
                             plugin = %p.name,
