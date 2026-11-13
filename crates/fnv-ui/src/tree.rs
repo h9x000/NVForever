@@ -1315,12 +1315,18 @@ impl Ui {
             Src::Io => Some(self.root_of(me)),
             Src::Named(n) => {
                 let root = self.root_of(me);
-                // `src="me"`, the brackets left off, is the tile itself when no tile bears
-                // the name [observed: MCM 1.5's Options.xml, `<_x1> <copy src="me"
-                // trait="x"/> <add> 20 </add> </_x1>` on MCM_Options, whose rows stand in
-                // the right pane in the original; read as a name it gave 0 and the rows
-                // stood at the screen's left, the owner's run of 2026-11-12].
-                self.find_named(root, n).or_else(|| self.root_named(n)).or_else(|| n.eq_ignore_ascii_case("me").then_some(me))
+                // A source keyword with its brackets left off (`src="me"`, `"parent"`,
+                // `"sibling"`, `"grandparent"`, `"child"`, `"screen"`) is that keyword when
+                // no tile bears the name [observed: MCM 1.5's Options.xml places its rows
+                // by `<copy src="me" trait="x"/>`, which stand in the right pane in the
+                // original; Vanilla UI Plus' start menu shows its "missing UIO" warning by
+                // `<not src="parent" trait="_VUI+UIO_Verify"/>`, which the original does not
+                // show with UIO installed; 6,748 such sources in 177 menu files of a
+                // Wabbajack list, 2026-11-13]. Read as names they gave 0.
+                self.find_named(root, n).or_else(|| self.root_named(n)).or_else(|| match Src::parse(&format!("{n}()")) {
+                    Src::Named(_) => None,
+                    keyword => self.resolve(me, &keyword),
+                })
             }
         }
     }

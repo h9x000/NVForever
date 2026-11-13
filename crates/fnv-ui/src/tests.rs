@@ -261,6 +261,26 @@ fn a_bare_me_is_the_tile_itself() {
     // A tile of that name is the one meant.
     assert_eq!(ui.get_float("B/Panel/_x1"), Some(7.0));
 }
+
+/// Every source keyword works without its brackets [observed: Vanilla UI Plus' start menu,
+/// `<not src="parent" trait="_VUI+UIO_Verify"/>`].
+#[test]
+fn source_keywords_without_brackets() {
+    let src = MemSource::default().with(
+        "menus\\k.xml",
+        r#"<menu name="K"> <_m> 3 </_m> <rect name="Outer"> <_o> 5 </_o> <image name="First"> <_f> 7 </_f> </image>
+             <image name="Second"> <_p> <copy src="parent" trait="_o"/> </_p> <_g> <copy src="grandparent" trait="_m"/> </_g>
+               <_s> <copy src="sibling" trait="_f"/> </_s> <_w> <copy src="screen" trait="width"/> </_w> <_w2> <copy src="screen()" trait="width"/> </_w2> <_n> <not src="parent" trait="_absent"/> </_n> </image>
+             <_c> <copy src="child" trait="_f"/> </_c> </rect> </menu>"#,
+    );
+    let mut ui = Ui::new();
+    ui.load_menu(&src, "menus\\k.xml").unwrap();
+    ui.update();
+    let at = |t: &str| ui.get_float(&format!("K/Outer/{t}"));
+    assert_eq!((at("Second/_p"), at("Second/_g"), at("Second/_s"), at("_c")), (Some(5.0), Some(3.0), Some(7.0), Some(7.0)));
+    assert_eq!(at("Second/_w"), at("Second/_w2"), "the screen's width, as with brackets");
+    assert_eq!(at("Second/_n"), Some(1.0), "a trait the parent lacks reads 0");
+}
 #[test]
 fn missing_files_are_reported_not_fatal() {
     let src = MemSource::default().with("menus\\m.xml", "<menu name=\"M\"><include src=\"gone.xml\"/><x> 1 </x></menu>");
