@@ -132,6 +132,22 @@ fn load_order_overrides_and_remap() {
     assert_eq!(lo.index[&0x0000_1001].len(), 2);
 }
 
+/// One plugin gives a FormID to a quest and then to a message [observed: oHUD.esm]: the
+/// quest stays the form. A repeat of the same type still lets the later record win.
+#[test]
+fn a_formid_one_plugin_gives_two_record_types_keeps_the_first() {
+    let qust = record(b"QUST", 0, 0x0000_0801, &write_subrecords(&[sub(b"EDID", b"Q\0")]));
+    let mesg = record(b"MESG", 0, 0x0000_0801, &write_subrecords(&[sub(b"EDID", b"M\0")]));
+    let misc1 = record(b"MISC", 0, 0x0000_0802, &write_subrecords(&[sub(b"EDID", b"A\0")]));
+    let misc2 = record(b"MISC", 0, 0x0000_0802, &write_subrecords(&[sub(b"EDID", b"B\0")]));
+    let bytes = [tes4(&[], 4, &[]), group(b"QUST", 0, &qust), group(b"MISC", 0, &[misc1, misc2].concat()), group(b"MESG", 0, &mesg)].concat();
+    let plugins = vec![Plugin::parse(&bytes, "Twice.esm".into()).unwrap()];
+    let lo = LoadOrder::new(&plugins).unwrap();
+    assert_eq!(&lo.winner(0x0000_0801).unwrap().1.header.sig, b"QUST");
+    assert_eq!(lo.index[&0x0000_0801].len(), 1);
+    assert_eq!(lo.index[&0x0000_0802].len(), 2, "same type: both listed, the last wins");
+}
+
 #[test]
 fn load_order_errors() {
     let d = Plugin::parse(&dlc(), "Dlc.esm".into()).unwrap();
