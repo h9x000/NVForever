@@ -135,6 +135,8 @@ pub(super) struct Gen<'a> {
     out: Vec<u8>,
     /// Statements written so far, as skip counts count them.
     stmts: usize,
+    /// Each statement's source line, in byte order ([`Compiled::lines`]).
+    lines: Vec<u32>,
     chains: Vec<Chain>,
     /// Byte offset of the open Begin's length field, and of the end of that statement.
     block: Option<(usize, usize)>,
@@ -230,6 +232,7 @@ impl<'a> Gen<'a> {
             line: 0,
             out: Vec::new(),
             stmts: 0,
+            lines: Vec::new(),
             chains: Vec::new(),
             block: None,
             loops: 0,
@@ -282,7 +285,7 @@ impl<'a> Gen<'a> {
             self.statement(&s.kw);
             self.drop_line(&s.kw, before);
         }
-        Compiled { bytes: self.out, variables: self.vars, refs: self.refs, diags: self.diags }
+        Compiled { bytes: self.out, variables: self.vars, refs: self.refs, diags: self.diags, lines: self.lines }
     }
 
     /// In a mod's source compiled by the engine ([`super::Seed::unknown_calls`]), a simple
@@ -300,6 +303,7 @@ impl<'a> Gen<'a> {
         }
         self.out.truncate(out);
         self.stmts = stmts;
+        self.lines.truncate(stmts);
         for d in &mut self.diags[diags..] {
             if d.error {
                 d.error = false;
@@ -381,6 +385,7 @@ impl<'a> Gen<'a> {
             });
         }
         let saved = (std::mem::take(&mut self.out), self.stmts, std::mem::take(&mut self.chains), self.block.take(), self.loops, self.line, self.text.clone());
+        let saved_lines = std::mem::take(&mut self.lines);
         self.stmts = 0;
         self.loops = 0;
         let mut stmts = Vec::new();
@@ -412,7 +417,14 @@ impl<'a> Gen<'a> {
         self.loops = saved.4;
         self.line = saved.5;
         self.text = saved.6;
-        let body = crate::decode::decode(&bytes, self.table).program.top;
+        let lines = std::mem::replace(&mut self.lines, saved_lines);
+        // Line marks only where failures are reported by line (mods' sources, runtime
+        // scripts); the editor-parity compile's bytes stay as they were.
+        let body = if self.unknown_calls || self.runtime {
+            crate::decode::decode_with_lines(&bytes, self.table, &lines).program.top
+        } else {
+            crate::decode::decode(&bytes, self.table).program.top
+        };
         let index = self.next_lambda();
         Some(crate::ir::XExpr::Lambda { params, body, value: None, index })
     }
@@ -947,6 +959,7 @@ impl<'a> Gen<'a> {
         let at = self.out.len();
         self.out.extend_from_slice(body);
         self.stmts += 1;
+        self.lines.push(self.line as u32);
         at
     }
 

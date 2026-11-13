@@ -417,6 +417,8 @@ impl Stats {
         p.walk(&mut |s| st.push(s));
         for s in st {
             let k = match s {
+                // A line mark is no statement.
+                Stmt::Line { .. } => continue,
                 Stmt::Set { expr, .. } => {
                     self.expr(expr);
                     "set"

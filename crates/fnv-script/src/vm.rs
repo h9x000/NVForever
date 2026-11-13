@@ -169,6 +169,9 @@ pub trait Host {
     fn call(&mut self, opcode: u16, on: Option<Value>, args: &[ArgValue]) -> Result<Value, String>;
     /// An opcode that is not in the function table was skipped (non-strict runs).
     fn skipped(&mut self, _what: &VmError) {}
+    /// The source line of the statements that run next ([`Stmt::Line`], units compiled
+    /// from source only), for the host's reports.
+    fn at_line(&mut self, _line: u32) {}
     /// Whether the last call ended the run the way `Return` does (a function such as
     /// `RemoveMe`, which "acts like a return" [documented: catalogue notes]). The VM
     /// asks after every statement; answering true also clears the request.
@@ -557,8 +560,15 @@ impl<'t, 'h> Vm<'t, 'h> {
     fn list_from(&mut self, stmts: &[Stmt], in_else: bool, start: usize) -> Result<Flow, VmError> {
         let mut i = start;
         while i < stmts.len() {
+            // A line mark is no statement: it counts no step.
+            if let Stmt::Line { line } = &stmts[i] {
+                self.host.at_line(*line);
+                i += 1;
+                continue;
+            }
             self.step()?;
             match &stmts[i] {
+                Stmt::Line { .. } => {}
                 Stmt::Set { target, expr } => {
                     let v = self.eval(expr)?;
                     // A call in the expression that stops the script (a call on an

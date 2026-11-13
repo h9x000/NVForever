@@ -77,6 +77,8 @@ pub struct Compiled {
     pub variables: Vec<VarDecl>,
     pub refs: Vec<RefSlot>,
     pub diags: Vec<Diag>,
+    /// Each statement's source line, in byte order (`crate::decode::decode_with_lines`).
+    pub lines: Vec<u32>,
 }
 
 impl Compiled {

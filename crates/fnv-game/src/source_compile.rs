@@ -24,7 +24,7 @@ use fnv_script::compile::{compile, env::LoadOrderIndex, Seed};
 use fnv_script::ir::{Arg, Expr, Stmt, Token};
 use fnv_script::table::CONSOLE_OPCODE_BASE;
 use fnv_script::unit::UnitOwner;
-use fnv_script::{decode, FunctionTable, Program};
+use fnv_script::{FunctionTable, Program};
 use fnv_sim::extract::Issues;
 use rayon::prelude::*;
 use std::sync::atomic::{AtomicU8, Ordering};
@@ -100,7 +100,7 @@ pub fn calls_unknown(p: &Program, table: &FunctionTable) -> bool {
             Stmt::Unmatched { cond, .. } => cond.as_ref().is_some_and(|c| expr(c, h)),
             // An extended statement calls only what its tree names.
             Stmt::While { body, .. } | Stmt::ForEach { body, .. } => stmts(body, h),
-            Stmt::Return | Stmt::Raw { .. } | Stmt::Let { .. } | Stmt::Eval { .. } | Stmt::Label { .. } | Stmt::GoTo { .. } | Stmt::Break | Stmt::Continue => false,
+            Stmt::Return | Stmt::Raw { .. } | Stmt::Let { .. } | Stmt::Eval { .. } | Stmt::Label { .. } | Stmt::GoTo { .. } | Stmt::Break | Stmt::Continue | Stmt::Line { .. } => false,
         })
     }
     stmts(&p.top, table) || p.blocks.iter().any(|b| stmts(&b.body, table))
@@ -217,7 +217,7 @@ pub(crate) fn compile_picked(lo: &LoadOrder<'_>, table: &FunctionTable, units: &
             let result = match first {
                 Some(e) => Err(e),
                 None => {
-                    let d = decode(&c.bytes, table);
+                    let d = fnv_script::decode::decode_with_lines(&c.bytes, table, &c.lines);
                     Ok((c.bytes, d.program, d.report.raw_total(), c.refs, c.variables))
                 }
             };

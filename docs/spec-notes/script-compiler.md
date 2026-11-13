@@ -290,6 +290,13 @@ ask about plugins and read (IsPluginInstalled, GetPluginVersion, IsDLLLoaded, Is
 GetModIndex: `fnv_game::plugin_questions`, kept only under the aid) and the first of each
 failure in a mod's script; at exit the counts per mod. The lines quote no script text.
 
+**Source lines in failures** (2026-11-13): the compiler keeps each statement's source line
+(`Compiled::lines`); a unit compiled from source (a mod's recompiled script, a Script Runner
+or CompileScript file, the console) is decoded with a `Stmt::Line` mark before each statement
+(`decode_with_lines`; an `If` or a loop takes its first line), which runs as nothing and counts
+no step. A skipped statement, a failed call and a script stopped early then start with
+`line N:` [design]. The editor-parity compile and the game's own compiled units carry no marks.
+
 **At the console** (docs/design/console.md): a statement the console's own reader does
 not take goes through the compiler and runs as a one-line result script
 (`Game::run_source`), on the selected reference. That covers a `set` whose value is an
