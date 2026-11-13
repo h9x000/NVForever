@@ -124,6 +124,9 @@ fn files() {
             dir.join("NVSE/user_defined_functions/TileProbe.txt"),
             "Begin Function { }\nSetUIFloat \"HUDMainMenu/Probe/_calls\" ((GetUIFloat \"HUDMainMenu/Probe/_calls\") + 1)\nEnd\n",
         ).unwrap();
+        // A mod's function file calling a function nothing knows, and one that cannot compile.
+        std::fs::write(dir.join("NVSE/user_defined_functions/Unknown.gek"), "Begin Function { }\nNoSuchPluginFunction \"*map\" \"key\" 1\nSetFunctionValue 7\nEnd\n").unwrap();
+        std::fs::write(dir.join("NVSE/user_defined_functions/Broken.gek"), "Begin Function { }\nwhile (1 +)\nloop\nEnd\n").unwrap();
         std::fs::write(dir.join("NVSE/Plugins/nvse_stewie_tweaks.ini"), "[Tweaks]\r\nbJumpWhileAiming=1\r\n[Cookable Grenades]\r\nsSoundName=\"WPNGrenadeBeep\"\r\n").unwrap();
         std::fs::write(dir.join("Config/vheyes-nvse/QueuedCommand.txt"), "SetGlobalTimeMultiplier 2\r\n").unwrap();
     });
@@ -170,6 +173,24 @@ fn compile_script_from_loose_root_runs_as_a_tile_callback() {
     g.ui_tree.set_float("HUDMainMenu/Probe/_probe", 1.0);
     g.tick();
     assert_eq!(g.ui_tree.get_float("HUDMainMenu/Probe/_calls"), Some(2.0));
+}
+
+/// A mod's function file compiles as a plugin's source does: a function nothing knows is a
+/// call that reports "not built", not a file that gives no script; a file that still does
+/// not compile is reported under its own name [decision 2026-11-13: MCM Extender].
+#[test]
+fn compile_script_takes_a_mods_unknown_function_and_names_a_file_that_fails() {
+    files();
+    let f = fixture();
+    let mut g = game(&f);
+    // It compiles (a strict query would then stop at the unknown call, so it is not run here).
+    assert!(matches!(q(&mut g, "SetFunctionValue (CompileScript \"Unknown.gek\")"), XVal::Ref(id) if id != 0));
+    assert_eq!(q(&mut g, "SetFunctionValue (CompileScript \"Broken.gek\")"), XVal::Ref(0));
+    let units: Vec<String> = g.events.iter().filter_map(|e| match &e.kind {
+        fnv_game::trace::EventKind::Skipped { unit, what } if what.starts_with("does not compile") => Some(unit.clone()),
+        _ => None,
+    }).collect();
+    assert_eq!(units, ["CompileScript Broken.gek|compile"]);
 }
 
 fn s(v: &str) -> XVal {

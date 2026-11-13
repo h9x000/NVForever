@@ -3139,21 +3139,24 @@ impl<'a> Game<'a> {
 
     /// A function script from source text, kept as CompileScript keeps its files; `None`
     /// when it does not compile (the compiler's words go to the trace).
+    /// `what` names the unit (`CompileScript <file>`, `EvaluateString`): its plugin in the
+    /// unit's key, so the mod log says which file a failure is in [design].
     fn compile_source(&mut self, what: &str, src: String) -> Option<u32> {
         // The IDs end where the temporary references' begin: no more units past it.
         if COMPILED_BASE as usize + self.compiled_files.len() >= TEMP_REF_BASE as usize {
-            self.emit(EventKind::Skipped { unit: "CompileScript".into(), what: format!("{what}: no compiled-script ID left") });
+            self.emit(EventKind::Skipped { unit: format!("{what}|compile"), what: format!("{what}: no compiled-script ID left") });
             return None;
         }
         let c = fnv_script::compile::compile_mod_runtime(&src, &self.data.table, &GameEnv { g: self });
         if let Some(e) = c.errors().next() {
-            let what = format!("{what}: {}: {}", e.kind.replace('_', " "), e.detail);
-            self.emit(EventKind::Skipped { unit: "CompileScript".into(), what });
+            let unit = format!("{what}|compile");
+            let what = format!("does not compile: line {}: {}: {}", e.line, e.kind.replace('_', " "), e.detail);
+            self.emit(EventKind::Skipped { unit, what });
             return None;
         }
         let d = fnv_script::decode::decode_with_lines(&c.bytes, &self.data.table, &c.lines);
         let unit = fnv_script::ScriptUnit {
-            plugin: "CompileScript".into(),
+            plugin: what.into(),
             owner: fnv_script::UnitOwner::Other { sig: "SCPT".into(), form: 0, ordinal: 0 },
             kind: fnv_script::ScriptKind::Object,
             header: Default::default(),
@@ -6484,7 +6487,9 @@ impl Host for Exec<'_, '_> {
     fn calling_plugin(&mut self) -> Option<String> {
         let p = &self.unit.unit.plugin;
         // Diagnostic runtime unit names are not load-order plugin identities.
-        let runtime = matches!(p.as_str(), "query" | "console" | "CompileScript")
+        // A CompileScript unit is named by its file (`CompileScript <path>`, `compile_source`).
+        let runtime = matches!(p.as_str(), "query" | "console" | "CompileScript" | "EvaluateString")
+            || p.starts_with("CompileScript ")
             || matches!(&self.unit.unit.owner, fnv_script::UnitOwner::Other { sig, .. } if sig == "SR");
         (!runtime).then(|| p.to_ascii_lowercase())
     }
