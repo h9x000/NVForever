@@ -274,6 +274,20 @@ impl Gen<'_> {
                 Ok(i) => self.lambda(i),
                 Err(_) => self.xerr("unresolved_name", t.text.clone()),
             },
+            // `eval <expression>` as an operand is that expression's value, the whole of
+            // what follows up to the closing parenthesis (`SetUIFloatAlt "…" (eval
+            // GetINIFloat_Cached "Map:bCompassRose" "…" 1)`) [documented: Eval, a command
+            // taking an expression; observed: about twenty Script Runner files of a
+            // Wabbajack list's mods pass `(eval …)` as an argument, and every statement
+            // holding one was skipped as a call of an unknown function `eval`; hypothesis:
+            // the value is the expression's, as `if eval` reads it]. A variable named `eval`
+            // stays the variable.
+            XKind::Word if t.text.eq_ignore_ascii_case("eval") && self.var(&t.text).is_none() && (starts_operand(p.peek()) || p.peek().and_then(prefix).is_some()) => {
+                let was = std::mem::replace(&mut self.in_args, false);
+                let e = self.xexpr(p, 0);
+                self.in_args = was;
+                e
+            }
             XKind::Word => self.xword(p, &t.text),
             // `{params} => expr` [documented: Lambda].
             XKind::LBrace => {
