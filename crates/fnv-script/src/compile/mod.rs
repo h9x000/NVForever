@@ -107,6 +107,20 @@ pub fn compile_runtime(src: &str, table: &FunctionTable, env: &dyn Env) -> Compi
     g.unit(src)
 }
 
+/// [`compile_runtime`] for a mod's own text files, CompileScript's and the Script Runner's:
+/// as a plugin's source ([`Seed::unknown_calls`]), a function nothing knows compiles as a
+/// call that reports "not built", and a simple line that does not compile is left out, not
+/// the file [decision 2026-11-13: one unknown plugin function made a whole `.gek` file fail,
+/// CompileScript then gave no script, and MCM Extender stopped before building the 57 mod
+/// pages its JSON files describe (an owner's run of a Wabbajack list)]. The refusals of
+/// [`compile_runtime`] still fail the file: the original refuses them there too. The
+/// console and query steps keep [`compile_runtime`].
+pub fn compile_runtime_mod(src: &str, table: &FunctionTable, env: &dyn Env) -> Compiled {
+    let mut g = gen::Gen::new(table, env, Some(Seed { variables: &[], refs: &[], unknown_calls: true }));
+    g.runtime = true;
+    g.unit(src)
+}
+
 /// The player reference, which source may call `player` or `playerref`
 /// [observed: scripts.md §3.4].
 pub const PLAYER: u32 = 0x14;

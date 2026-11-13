@@ -1,2 +1,3 @@
-; NVForever smoke (script-runner): does not compile, so it is skipped.
-set NVFSmokeNoSuchGlobal to 1
+; NVForever smoke (script-runner): does not compile, so it is skipped (a block line: one simple line would only be left out).
+while (1 +)
+loop

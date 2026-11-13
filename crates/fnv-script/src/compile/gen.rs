@@ -355,7 +355,9 @@ impl<'a> Gen<'a> {
     /// fails the unit: without it the blocks would not match.
     fn drop_line(&mut self, kw: &Kw, (out, stmts, diags): (usize, usize, usize)) {
         let simple = matches!(kw, Kw::Call(_) | Kw::Set { .. } | Kw::Let(_) | Kw::Eval(_));
-        if !self.unknown_calls || !simple || !self.diags[diags..].iter().any(|d| d.error) {
+        // The runtime compiler's own refusals (`compile_runtime`) still fail the unit.
+        let refused = self.diags[diags..].iter().any(|d| d.error && matches!(d.kind, "fraction_for_int_parameter" | "untyped_result_for_form"));
+        if !self.unknown_calls || !simple || refused || !self.diags[diags..].iter().any(|d| d.error) {
             return;
         }
         self.out.truncate(out);

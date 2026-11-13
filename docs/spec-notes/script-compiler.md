@@ -267,6 +267,16 @@ the extender installed) took it:
   ends a block (`begin`, `if`, `while`, `foreach`, their ends, a lambda's start or end)
   still fails the unit, since the blocks would no longer match.
 
+**A mod's text files compile as its plugin's source does** (2026-11-13): CompileScript's
+`.gek`/`.txt` files and the Script Runner's files go through `compile_runtime_mod`, which
+takes the rules above (an unknown function a call that reports "not built", a simple line
+that does not compile left out) on top of the runtime compiler's own refusals, which still
+fail the file [decision: one unknown plugin function, ShowOff's AuxStringMap family, made
+each of MCM Extender's `.gek` files fail, CompileScript gave no script and MCM Extender
+built none of the 57 mod pages its JSON files describe]. The console and query steps keep
+`compile_runtime`. A CompileScript unit is named by its file (`CompileScript <path>`), and a
+file that still does not compile is reported as `CompileScript <path>|compile`.
+
 Also in mods' sources and scripts compiled while the game runs (`compile_runtime`:
 CompileScript, Script Runner files, the console), not the editor-parity compile:
 
