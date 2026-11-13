@@ -261,6 +261,10 @@ pub enum Stmt {
     Break,
     /// `continue`: the innermost loop's next round [documented: While; ForEach].
     Continue,
+    /// The source line of the statements after it, for reports only: put in by
+    /// [`crate::decode::decode_with_lines`] for units compiled from source, so a failure
+    /// can name its line. Does nothing when run [design].
+    Line { line: u32 },
     /// A statement whose opcode or body the decoder could not explain.
     Raw {
         opcode: u16,

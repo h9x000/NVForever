@@ -205,6 +205,8 @@ struct LoopFrame {
     head: Piece,
     ifs: Vec<Frame>,
     body: Vec<Stmt>,
+    /// The statement index of its `while`/`foreach`.
+    start: usize,
 }
 
 impl LoopFrame {
@@ -590,6 +592,8 @@ struct Frame {
     otherwise: Option<Vec<Stmt>>,
     /// Statement index and stored skip count of the last marker (If/ElseIf/Else).
     marker: (usize, u16),
+    /// The statement index of its `If`.
+    start: usize,
 }
 
 impl Frame {
@@ -606,6 +610,18 @@ impl Frame {
 
 /// Decode compiled script bytes.
 pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
+    decode_inner(bytes, table, None)
+}
+
+/// [`decode`] with a [`Stmt::Line`] before each statement, `lines` giving each statement's
+/// source line in byte order ([`crate::compile::Compiled::lines`]); an `If` or a loop
+/// takes its first line. For units compiled from source, so a failure names its line.
+pub fn decode_with_lines(bytes: &[u8], table: &FunctionTable, lines: &[u32]) -> Decoded {
+    decode_inner(bytes, table, Some(lines))
+}
+
+fn decode_inner(bytes: &[u8], table: &FunctionTable, lines: Option<&[u32]>) -> Decoded {
+    let line_of = |i: usize| lines.and_then(|l| l.get(i)).map(|&line| Stmt::Line { line });
     let flats = split(bytes);
     let mut c = Ctx { table, report: Report::default(), stmt: 0 };
     let mut prog = Program::default();
@@ -709,7 +725,7 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
                 }
             },
             Piece::If { skip, cond } => {
-                stack.push(Frame { arms: vec![Arm { cond, body: Vec::new() }], otherwise: None, marker: (i, skip) });
+                stack.push(Frame { arms: vec![Arm { cond, body: Vec::new() }], otherwise: None, marker: (i, skip), start: i });
             }
             Piece::ElseIf { skip, cond } => match stack.last_mut() {
                 Some(fr) if fr.otherwise.is_none() => {
@@ -756,6 +772,9 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
             Piece::EndIf => match stack.pop() {
                 Some(fr) => {
                     check_skip(&mut c, fr.marker, i);
+                    if let Some(l) = line_of(fr.start) {
+                        push(&mut stack, &mut loops, &mut block, &mut prog.top, l);
+                    }
                     let s = fr.finish();
                     push(&mut stack, &mut loops, &mut block, &mut prog.top, s);
                 }
@@ -766,7 +785,7 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
                 }
             },
             Piece::While(_) | Piece::ForEach(_) => {
-                loops.push(LoopFrame { head: p, ifs: std::mem::take(&mut stack), body: Vec::new() });
+                loops.push(LoopFrame { head: p, ifs: std::mem::take(&mut stack), body: Vec::new(), start: i });
             }
             Piece::Loop => match loops.pop() {
                 Some(mut l) => {
@@ -775,7 +794,11 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
                         close_ifs(&mut stack, &mut l.body);
                     }
                     stack = std::mem::take(&mut l.ifs);
+                    let start = l.start;
                     let s = l.finish();
+                    if let Some(m) = line_of(start) {
+                        push(&mut stack, &mut loops, &mut block, &mut prog.top, m);
+                    }
                     push(&mut stack, &mut loops, &mut block, &mut prog.top, s);
                 }
                 None => {
@@ -784,7 +807,12 @@ pub fn decode(bytes: &[u8], table: &FunctionTable) -> Decoded {
                     push(&mut stack, &mut loops, &mut block, &mut prog.top, Stmt::Raw { opcode: op::X_LOOP, body: vec![] });
                 }
             },
-            Piece::Stmt(s) => push(&mut stack, &mut loops, &mut block, &mut prog.top, s),
+            Piece::Stmt(s) => {
+                if let Some(l) = line_of(i) {
+                    push(&mut stack, &mut loops, &mut block, &mut prog.top, l);
+                }
+                push(&mut stack, &mut loops, &mut block, &mut prog.top, s)
+            }
         }
     }
     c.stmt = flats.len();

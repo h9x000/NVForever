@@ -245,6 +245,7 @@ impl Decompiler<'_> {
     fn stmts(&self, s: &[Stmt], out: &mut Vec<String>) {
         for st in s {
             match st {
+                Stmt::Line { .. } => {}
                 Stmt::Set { target, expr } => out.push(format!("set {} to {}", self.var(target), self.expr(expr))),
                 Stmt::If { arms, otherwise } => {
                     for (i, a) in arms.iter().enumerate() {

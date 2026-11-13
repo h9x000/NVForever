@@ -2924,7 +2924,8 @@ fn a_unit_whose_bytes_call_an_unknown_high_opcode_runs_from_its_source() {
     let data = GameData::build(&lo, &schema, table, &j, &refs);
     let s = data.script(FormId(0x900)).expect("the script loads");
     let body = &s.program.blocks[0].body;
-    assert!(matches!(&body[..], [fnv_script::Stmt::Set { .. }]), "the compiled source runs: {body:?}");
+    // The set, after the mark of its source line (a unit compiled from source).
+    assert!(matches!(&body[..], [fnv_script::Stmt::Line { line: 4 }, fnv_script::Stmt::Set { .. }]), "the compiled source runs: {body:?}");
     assert_eq!(data.issues.count("script_compiled_from_source"), 1);
     assert!(fnv_game::source_compile::highest_opcode(&data.table) < 0x7FFF);
 }
@@ -3547,7 +3548,30 @@ End
     }).collect();
     assert_eq!(errors.len(), 1, "{errors:?}");
     assert_eq!(errors[0].0, "query");
-    assert!(errors[0].1.starts_with("callwhile: no function to call"), "{errors:?}");
+    // The line of the query that registered it (a unit compiled from source).
+    assert!(errors[0].1.starts_with("line 3: callwhile: no function to call"), "{errors:?}");
+}
+
+/// A statement of a script compiled from source that fails names its source line, so a
+/// tester can find it in the mod's text (the mod log's `skipped:` lines) [design].
+#[test]
+fn a_skipped_statement_names_its_source_line() {
+    let f = udf_fixture();
+    let mut g = game(&f);
+    let ctx = fnv_game::game::RunCtx { self_ref: Some(FormId::PLAYER_REF), ..Default::default() };
+    // Statements as a Script Runner file or the console runs them (not strict: a failing
+    // statement is skipped and reported).
+    let r = g.run_source("int i\narray_var a\nlet a := Ar_Construct \"array\"\n\nlet i := a[5]\nlet i := 2\n", ctx);
+    let skipped: Vec<String> = g.events.iter().filter_map(|e| match &e.kind {
+        EventKind::Skipped { what, .. } => Some(what.clone()),
+        _ => None,
+    }).collect();
+    // Here the run stops at it, a script error of the line.
+    let errors: Vec<String> = g.events.iter().filter_map(|e| match &e.kind {
+        EventKind::ScriptError { error, .. } => Some(error.clone()),
+        _ => None,
+    }).collect();
+    assert!(skipped.iter().chain(&errors).any(|w| w.starts_with("line 5: ")), "{r:?} {skipped:?} {errors:?}");
 }
 
 /// Every kind of handler the owner's Wabbajack run met with an empty function (about

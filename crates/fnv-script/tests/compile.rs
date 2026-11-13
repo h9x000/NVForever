@@ -1723,3 +1723,26 @@ fn ar_find_in_a_variable_with_no_array_finds_nothing() {
     let h = run("array_var a\nfloat f\nbegin GameMode\nlet f := 1\nif eval (Ar_Find 5 a) != Ar_BadNumericIndex\nlet f := 2\nendif\nend");
     assert_eq!(h.0[&2], Value::Num(1.0));
 }
+
+#[test]
+fn a_program_decoded_with_lines_marks_each_statements_line() {
+    use fnv_script::ir::Stmt;
+    let t = table();
+    let src = "int i\nbegin function {}\nlet i := 1\nif i\n  let i := 2\nendif\nwhile i < 3\n  let i += 1\nloop\nend";
+    let c = fnv_script::compile::compile_runtime(src, &t, &World);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.diags);
+    let p = fnv_script::decode::decode_with_lines(&c.bytes, &t, &c.lines).program;
+    let mut seen = Vec::new();
+    p.walk(&mut |s| {
+        if let Stmt::Line { line } = s {
+            seen.push(*line);
+        }
+    });
+    // `let` 3, the `if` 4 and its body 5, the `while` 7 and its body 8.
+    assert_eq!(seen, [3, 4, 5, 7, 8], "{:?}", p.blocks[0].body);
+    // Without lines, no marks.
+    let plain = decode(&c.bytes, &t).program;
+    let mut any = false;
+    plain.walk(&mut |s| any |= matches!(s, Stmt::Line { .. }));
+    assert!(!any);
+}

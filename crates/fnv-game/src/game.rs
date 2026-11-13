@@ -1236,6 +1236,9 @@ pub struct Game<'a> {
     /// Extender handlers and queued calls whose function cannot run, by (where, error),
     /// reported once each ([`Game::handler_failed`], #2280).
     unusable_reported: std::collections::HashSet<(String, String)>,
+    /// The source line of the script whose function call is running (a unit compiled from
+    /// source; `Exec::call`), for the failures the call reports ([`Game::emit`]).
+    pub(crate) script_line: Option<u32>,
     /// CompileScript's scripts, named by `COMPILED_BASE + index`, and their files' paths
     /// (lower case) to them.
     compiled_files: Vec<&'a Compiled>,
@@ -2299,6 +2302,7 @@ impl<'a> Game<'a> {
             udf: Vec::new(),
             lambdas: Vec::new(),
             unusable_reported: Default::default(),
+            script_line: None,
             compiled_files: Vec::new(),
             compiled_paths: std::collections::HashMap::new(),
             sr: Default::default(),
@@ -2510,6 +2514,12 @@ impl<'a> Game<'a> {
     }
 
     pub fn emit(&mut self, kind: EventKind) {
+        // A failure of a call made by a script compiled from source names its line.
+        let kind = match (self.script_line, kind) {
+            (Some(l), EventKind::CallFailed { opcode, name, unit, error }) => EventKind::CallFailed { opcode, name, unit, error: format!("line {l}: {error}") },
+            (Some(l), EventKind::ScriptError { unit, error }) => EventKind::ScriptError { unit, error: format!("line {l}: {error}") },
+            (_, kind) => kind,
+        };
         let acquired = match kind {
             EventKind::ItemAdded { to: FormId::PLAYER_REF, item, count, .. } => Some((item, count)),
             _ => None,
@@ -2926,13 +2936,14 @@ impl<'a> Game<'a> {
         let opts = self.opts();
         let data = self.data;
         let table = &data.table;
-        let mut ex = Exec { game: self, unit, locals, ctx };
+        let mut ex = Exec { game: self, unit, locals, ctx, line: None };
         let mut vm = Vm::new(table, &mut ex, opts);
         let r = match resume {
             Some(at) => vm.resume(stmts, at),
             None => vm.run(stmts),
         };
         let wait = vm.take_wait();
+        let line = ex.line;
         self.close_run();
         self.depth -= 1;
         if self.depth == 0 {
@@ -2941,7 +2952,12 @@ impl<'a> Game<'a> {
         match r {
             Ok(exit) => (exit == fnv_script::vm::Exit::Returned, wait),
             Err(e) => {
-                self.emit(EventKind::ScriptError { unit: unit.key(), error: e.to_string() });
+                // A unit compiled from source names the line that stopped it.
+                let error = match line {
+                    Some(l) => format!("line {l}: {e}"),
+                    None => e.to_string(),
+                };
+                self.emit(EventKind::ScriptError { unit: unit.key(), error });
                 (false, None)
             }
         }
@@ -2987,7 +3003,7 @@ impl<'a> Game<'a> {
             });
         }
         let warnings = c.diags.iter().map(|d| format!("{}: {}", d.kind.replace('_', " "), d.detail)).collect();
-        let d = fnv_script::decode(&c.bytes, &self.data.table);
+        let d = fnv_script::decode::decode_with_lines(&c.bytes, &self.data.table, &c.lines);
         let unit = fnv_script::ScriptUnit {
             plugin: plugin.into(),
             owner: fnv_script::UnitOwner::Other { sig: sig.into(), form: 0, ordinal: 0 },
@@ -3026,7 +3042,7 @@ impl<'a> Game<'a> {
             self.emit(EventKind::Skipped { unit: "query".into(), what });
             return Err("script did not compile".into());
         }
-        let d = fnv_script::decode(&c.bytes, &self.data.table);
+        let d = fnv_script::decode::decode_with_lines(&c.bytes, &self.data.table, &c.lines);
         let unit = fnv_script::ScriptUnit {
             plugin: "query".into(),
             owner: fnv_script::UnitOwner::Other { sig: "QURY".into(), form: 0, ordinal: 0 },
@@ -3045,7 +3061,7 @@ impl<'a> Game<'a> {
         let opts = self.opts();
         self.udf.push(UdfFrame { value: None, caller: None });
         self.open_run();
-        let mut ex = Exec { game: self, unit, locals: Locals::Temp(BTreeMap::new()), ctx };
+        let mut ex = Exec { game: self, unit, locals: Locals::Temp(BTreeMap::new()), ctx, line: None };
         let result = Vm::new(&data.table, &mut ex, opts).run(&block.body).map_err(|e| e.to_string());
         if let Locals::Temp(m) = &ex.locals {
             for (&index, v) in m {
@@ -3129,7 +3145,7 @@ impl<'a> Game<'a> {
             self.emit(EventKind::Skipped { unit: "CompileScript".into(), what });
             return None;
         }
-        let d = fnv_script::decode(&c.bytes, &self.data.table);
+        let d = fnv_script::decode::decode_with_lines(&c.bytes, &self.data.table, &c.lines);
         let unit = fnv_script::ScriptUnit {
             plugin: "CompileScript".into(),
             owner: fnv_script::UnitOwner::Other { sig: "SCPT".into(), form: 0, ordinal: 0 },
@@ -3227,7 +3243,7 @@ impl<'a> Game<'a> {
         self.udf.push(UdfFrame { value: None, caller });
         self.open_run();
         let ctx = RunCtx { self_ref: self_ref.or(ctx.self_ref), ..ctx };
-        let mut ex = Exec { game: self, unit, locals, ctx };
+        let mut ex = Exec { game: self, unit, locals, ctx, line: None };
         let mut vm = Vm::new(&data.table, &mut ex, opts);
         let mut result = Ok(());
         for (p, a) in params.iter().zip(args) {
@@ -3536,7 +3552,7 @@ impl<'a> Game<'a> {
             Arg::Float(f) => Value::Num(*f),
             Arg::Enum(c) => Value::Num(*c as f64),
             Arg::Ref(r) => {
-                let mut ex = Exec { game: self, unit, locals: Locals::Instance(key), ctx: RunCtx::default() };
+                let mut ex = Exec { game: self, unit, locals: Locals::Instance(key), ctx: RunCtx::default(), line: None };
                 match ex.ref_value(*r) {
                     Ok(v) => v,
                     Err(_) => return false,
@@ -6037,6 +6053,8 @@ struct Exec<'g, 'a> {
     unit: &'a Compiled,
     locals: Locals,
     ctx: RunCtx,
+    /// The source line running (`Host::at_line`), for units compiled from source.
+    line: Option<u32>,
 }
 
 impl Exec<'_, '_> {
@@ -6168,6 +6186,10 @@ impl Host for Exec<'_, '_> {
     }
 
     fn call(&mut self, opcode: u16, on: Option<Value>, args: &[ArgValue]) -> Result<Value, String> {
+        // The run's line, lent to the game while the call runs, for the failures it
+        // reports (`Game::emit`) [design].
+        let prev = std::mem::replace(&mut self.game.script_line, self.line);
+        let r = (|| -> Result<Value, String> {
         let on = match on {
             Some(v) => match v.as_form() {
                 Some(f) => Some(FormId(f)),
@@ -6215,11 +6237,22 @@ impl Host for Exec<'_, '_> {
             in_condition: false,
         };
         Ok(self.game.call_function(&ctx, args))
+    })();
+        self.game.script_line = prev;
+        r
     }
 
     fn skipped(&mut self, what: &VmError) {
         let unit = self.unit.key();
-        self.game.emit(EventKind::Skipped { unit, what: what.to_string() });
+        let what = match self.line {
+            Some(l) => format!("line {l}: {what}"),
+            None => what.to_string(),
+        };
+        self.game.emit(EventKind::Skipped { unit, what });
+    }
+
+    fn at_line(&mut self, line: u32) {
+        self.line = Some(line);
     }
 
     fn take_return(&mut self) -> bool {
@@ -6454,6 +6487,10 @@ impl Host for Exec<'_, '_> {
     }
 
     fn ext_call(&mut self, name: &str, on: Option<Value>, args: &[fnv_script::vm::XVal]) -> Option<Result<fnv_script::vm::XVal, String>> {
+        // The run's line, lent to the game while the call runs, for the failures it
+        // reports (`Game::emit`) [design].
+        let prev = std::mem::replace(&mut self.game.script_line, self.line);
+        let r = {
         let on = on.and_then(|v| v.as_form()).map(FormId);
         let ctx = self.ctx;
         // Who calls: DisablePlayerControlsAlt keeps its locks by plugin, GetNthExplicitRef
@@ -6468,6 +6505,9 @@ impl Host for Exec<'_, '_> {
             }
         }
         out
+    };
+        self.game.script_line = prev;
+        r
     }
 
     fn game_setting(&mut self, name: &str) -> Option<fnv_script::vm::XVal> {
