@@ -1831,3 +1831,40 @@ fn a_mods_source_takes_an_expression_in_a_game_functions_arguments() {
         assert!(c.diags.is_empty(), "{src}: {:?}", c.diags);
     }
 }
+
+#[test]
+fn eval_as_an_operand_is_its_expressions_value() {
+    // [observed: Script Runner files of a Wabbajack list's mods pass `(eval …)` as an
+    // argument; documented: Eval takes an expression.]
+    let t = table();
+    let c = fnv_script::compile::compile_runtime("float f\nbegin function {}\nf = (eval GetMinOf 1 2) + (eval -f)\nend", &t, &World);
+    assert_eq!(c.errors().count(), 0, "{:?}", c.diags);
+    let p = decode(&c.bytes, &t).program;
+    let text = format!("{:?}", p.blocks[0].body);
+    assert!(!text.contains("Name(\"eval\")"), "{text}");
+    assert!(text.contains("Name(\"GetMinOf\")") || text.contains("Opcode("), "{text}");
+}
+
+#[test]
+fn a_call_with_its_arguments_in_brackets_reads_as_the_extender_reads_it() {
+    // `if abs(f) < g` [observed: a main-loop callback of a Wabbajack list's mod, compiled
+    // with CompileScript; the game's grammar read `abs` with no argument].
+    let t = table();
+    for src in ["float f\nfloat g\nbegin function {}\nif abs(f) < g\nendif\nend", "float f\nfloat g\nbegin function {}\nset g to abs(f) * 2\nend"] {
+        let c = fnv_script::compile::compile_runtime(src, &t, &World);
+        assert_eq!(c.errors().count(), 0, "{src}: {:?}", c.diags);
+        let text = format!("{:?}", decode(&c.bytes, &t).program.blocks[0].body);
+        assert!(!text.contains("args: []"), "{src}: abs read without its argument: {text}");
+    }
+    // The editor-parity compile keeps the game's reading.
+    let c = compile("float f\nfloat g\nbegin GameMode\nif abs(f) < g\nendif\nend", &t, &World, None);
+    assert!(format!("{:?}", decode(&c.bytes, &t).program.blocks[0].body).contains("args: []"));
+}
+
+#[test]
+fn ar_find_in_a_variable_with_no_array_finds_nothing() {
+    // [observed: Just Assorted Mods' loot menu compares this with Ar_BadNumericIndex while
+    // the array is still Ar_Null.]
+    let h = run("array_var a\nfloat f\nbegin GameMode\nlet f := 1\nif eval (Ar_Find 5 a) != Ar_BadNumericIndex\nlet f := 2\nendif\nend");
+    assert_eq!(h.0[&2], Value::Num(1.0));
+}

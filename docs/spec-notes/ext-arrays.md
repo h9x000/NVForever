@@ -198,7 +198,10 @@ keys of a map result: open.
 
 **Ar_Find** `Ar_Find value, a[, range]`: the key of the first element equal to
 `value`, optionally only within a range of keys; the bad index for the array's key type
-when there is none [documented: Ar Find]. How equality is judged for strings (case) and
+when there is none [documented: Ar Find]. In a variable with no array (Ar_Null): the bad
+numeric index, not an error [observed: Just Assorted Mods' loot menu compares that with
+Ar_BadNumericIndex while its array is still null, shipped with compiled bytes, and works
+in the original; hypothesis: the value]. How equality is judged for strings (case) and
 floats: open.
 
 **Ar_FindWhere** `Ar_FindWhere a, fn` (xNVSE 6.1.6 and later): the **value** (not the

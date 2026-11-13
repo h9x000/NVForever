@@ -259,6 +259,18 @@ the extender installed) took it:
   ends a block (`begin`, `if`, `while`, `foreach`, their ends, a lambda's start or end)
   still fails the unit, since the blocks would no longer match.
 
+Also in mods' sources and scripts compiled while the game runs (`compile_runtime`:
+CompileScript, Script Runner files, the console), not the editor-parity compile:
+
+- **`eval <expression>` as an operand** (`SetUIFloatAlt "…" (eval GetINIFloat_Cached …)`)
+  is the expression's value [documented: Eval takes an expression; observed: about twenty
+  Script Runner files of the list pass it as an argument, and each such statement was
+  skipped as a call of an unknown function `eval`; hypothesis: the value].
+- **A function's arguments in brackets right after its name** (`if abs(fSlope) < 1`) in a
+  game-grammar `if`, `set` or call line read the line with the extender's grammar. The
+  game's grammar has no such call and read `abs` with no argument [observed: Momentum's
+  main loop, 928 failures in one run] (`Gen::bracket_call`).
+
 Still refused: the extender's C-style syntax (`fn () {`, `Name(args);`, `for ([ref r] in
 …) {`, one mod of the list), `call Fn {args}` in braces and `Call Fn, &ref, …`.
 

@@ -2082,7 +2082,13 @@ impl Vm<'_, '_> {
             // [documented: Ar Find] optionally within a range of keys.
             "ar_find" => {
                 let (v, a) = (val(self, 0)?, val(self, 1)?);
-                let id = array_of(&a).ok_or_else(|| VmError::Type("Ar_Find in an empty array variable".into()))?;
+                // In a variable with no array: nothing found, the bad numeric index
+                // [observed: Just Assorted Mods' loot menu (JLMInventoryEventHandler, shipped
+                // with compiled bytes) runs `(Ar_Find rItem JLM.aDropped) !=
+                // Ar_BadNumericIndex` while aDropped is still Ar_Null, and its list fills in
+                // the original; stopping the statement left the menu empty in an owner's run,
+                // 2026-11-13; hypothesis: the value is Ar_BadNumericIndex].
+                let Some(id) = array_of(&a) else { return num(-99999.0) };
                 let range = match c.args.get(2) {
                     Some(XExpr::Binary { op: XOp::Slice, l, r }) => {
                         let (lo, hi) = (self.xeval(l)?, self.xeval(r)?);

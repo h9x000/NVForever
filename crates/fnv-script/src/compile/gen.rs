@@ -1051,7 +1051,7 @@ impl<'a> Gen<'a> {
         // and so does a vanilla `if` or `set` that calls an extender function
         // (`if rItem.GetBaseObject == rGun`) [observed: the peer's nvse-inv probes compile in
         // the original with xNVSE].
-        if self.co || (matches!(kw, Kw::If(_) | Kw::ElseIf(_) | Kw::Set { .. }) && (self.calls_extender() || self.calls_unknown())) {
+        if self.co || (matches!(kw, Kw::If(_) | Kw::ElseIf(_) | Kw::Set { .. }) && (self.calls_extender() || self.calls_unknown() || self.bracket_call())) {
             let x = lex::xtokens(&self.text);
             let mapped = match kw {
                 Kw::If(_) => Some(Kw::IfEval(x[1..].to_vec())),
@@ -1069,6 +1069,49 @@ impl<'a> Gen<'a> {
             }
         }
         self.statement_inner(kw)
+    }
+
+    /// In a mod's source or a script compiled while the game runs: whether the line calls a
+    /// function with its arguments in brackets right after its name (`abs(fSlope)`,
+    /// `Ref.GetAV(Health)`). The game's own grammar has no such call: it reads `abs` with
+    /// no argument and leaves the bracket's value beside it, which fails when the line runs
+    /// ("parameter 1 is missing", then "2 values left on the stack") [observed: a mod of a
+    /// Wabbajack list compiles `if abs(fSlopeRatio) < fTripMinSlope` with CompileScript into
+    /// its main-loop callback, 928 such failures in an owner's run; it works in the original
+    /// with xNVSE, so the extender's grammar reads the line there]. The editor-parity compile
+    /// keeps the game's reading.
+    fn bracket_call(&self) -> bool {
+        if !(self.unknown_calls || self.runtime) {
+            return false;
+        }
+        let text = self.text.as_bytes();
+        let mut quoted = false;
+        let mut start = None;
+        for (i, &c) in text.iter().enumerate() {
+            match c {
+                b'"' => {
+                    quoted = !quoted;
+                    start = None;
+                }
+                _ if quoted => {}
+                c if c.is_ascii_alphanumeric() || c == b'_' || c == b'.' => {
+                    start.get_or_insert(i);
+                }
+                b'(' => {
+                    if let Some(s) = start {
+                        let word = &self.text[s..i];
+                        let name = word.rsplit('.').next().unwrap_or(word);
+                        let known = self.table.by_name(name).is_some() || self.table.unnumbered.contains_key(&name.to_ascii_lowercase());
+                        if known && self.var(name).is_none() {
+                            return true;
+                        }
+                    }
+                    start = None;
+                }
+                _ => start = None,
+            }
+        }
+        false
     }
 
     /// Whether the line names an extender function (one the vanilla table does not know),
@@ -1092,7 +1135,7 @@ impl<'a> Gen<'a> {
     /// extender statement (#2275)].
     fn x_call_line(&mut self, toks: &[Tok]) -> bool {
         let vanilla = self.function(&toks[0]).is_some();
-        (self.extended || self.unknown_calls) && (!vanilla || toks.iter().any(|t| t.kind == lex::Kind::Open))
+        ((self.extended || self.unknown_calls) && (!vanilla || toks.iter().any(|t| t.kind == lex::Kind::Open))) || self.bracket_call()
     }
 
     /// In a mod's source compiled by the engine ([`super::Seed::unknown_calls`]): whether
