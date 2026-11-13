@@ -499,7 +499,29 @@ fn ini_path(g: &Game, file: Option<&str>) -> String {
         }
     };
     let f = if f.to_ascii_lowercase().ends_with(".ini") { f } else { format!("{f}.ini") };
-    format!("Config\\{f}")
+    within_data(&format!("Config\\{f}"))
+}
+
+/// A Data path with its `..` and `.` parts taken out, where it stays inside Data:
+/// `Config\..\NVSE\Plugins\x.ini` is `NVSE\Plugins\x.ini` [observed: Modern Minimap reads
+/// `GetINIFloat "Main:iResScale" "..\NVSE\Plugins\HighResLocalMaps.ini"` to check that it
+/// overwrites High Res Local Maps' file, and warned of an overwrite when the engine
+/// refused the path; hypothesis: the original resolves the path from `Data\Config`]. A
+/// path that would leave Data is returned as it is, for [`on_disk`] to refuse.
+fn within_data(path: &str) -> String {
+    let mut parts: Vec<&str> = Vec::new();
+    for part in path.split(['\\', '/']).filter(|p| !p.is_empty()) {
+        match part {
+            "." => {}
+            ".." => {
+                if parts.pop().is_none() {
+                    return path.to_string();
+                }
+            }
+            p => parts.push(p),
+        }
+    }
+    parts.join("\\")
 }
 
 /// `Section:Key` with ":", "/" or "\" between [observed: all three work], lower case.
@@ -1319,7 +1341,7 @@ fn glob(pat: &str, s: &str) -> bool {
 
 #[cfg(test)]
 mod path_tests {
-    use super::{on_disk, on_disk_any_case};
+    use super::{on_disk, on_disk_any_case, within_data};
     use std::path::Path;
 
     #[test]
@@ -1332,6 +1354,17 @@ mod path_tests {
         assert_eq!(on_disk_any_case(&base, "nvse\\plugins\\missing.txt"), None);
         assert_eq!(on_disk_any_case(&base, "..\\x"), None, "the plain-name rule of on_disk still holds");
         let _ = std::fs::remove_dir_all(&base);
+    }
+
+    #[test]
+    fn an_ini_path_may_step_out_of_config_but_not_out_of_data() {
+        assert_eq!(within_data("Config\\..\\NVSE\\Plugins\\x.ini"), "NVSE\\Plugins\\x.ini");
+        assert_eq!(within_data("Config\\.\\Mod\\x.ini"), "Config\\Mod\\x.ini");
+        assert_eq!(within_data("Config\\Mod/x.ini"), "Config\\Mod\\x.ini");
+        // Out of Data: left for on_disk to refuse.
+        let out = within_data("Config\\..\\..\\x.ini");
+        assert_eq!(out, "Config\\..\\..\\x.ini");
+        assert_eq!(on_disk(Path::new("layer"), &out), None);
     }
 
     #[test]
