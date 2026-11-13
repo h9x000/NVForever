@@ -81,7 +81,11 @@ the run stays a hand-played one. The log then has `mods:` lines:
   change while it shows (up to four times, half a second apart at least): each tile's
   kind, `visible`, `x`, `y`, `width`, `height`, `alpha`, `depth`, `string`, `filename`.
   A piece that draws wrong or empty is told from one never built: rows a script made show
-  up as tiles; missing ones were never made;
+  up as tiles; missing ones were never made. When a mod replaced the whole menu file (a
+  loose `hud_main_menu.xml`), each of its parts is a piece of its own, written only when its
+  tiles change while it shows (rows a script builds);
+- a CompileScript file is named in its lines (`CompileScript <path>`), and one that does
+  not compile says so with its line (`CompileScript <path>|compile`);
 - at exit, counts per mod and what was asked for and not there.
 
 ## How they fit

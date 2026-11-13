@@ -179,8 +179,10 @@ struct HudSeen {
     dumps: u8,
     /// The frame of the last writing.
     at: u32,
-    /// Its tile count then.
+    /// Its tile count then (or when first seen, for a part of a replaced menu).
     tiles: usize,
+    /// Seen once (a part of a replaced menu is written only when it changes).
+    seen: bool,
 }
 
 /// How often one HUD piece is written out at most.
@@ -235,7 +237,19 @@ pub fn hud_lines(log: &mut ModLog, ui: &fnv_ui::Ui) -> Vec<String> {
         return out;
     }
     let frame = log.frames;
+    // A menu a mod replaced whole (a loose `hud_main_menu.xml`) is no one piece: each of its
+    // parts is, written only when its tiles change while it shows (rows a script builds), so
+    // the HUD's own parts stay out of the log [design: the owner's third run wrote the whole
+    // HUD, 1,604 tiles, and stopped before the loot menu's].
+    let mut pieces: Vec<(fnv_ui::TileId, bool)> = Vec::new();
     for root in ui.mod_added_tiles(menu) {
+        if root == menu {
+            pieces.extend(ui.tile(menu).children.iter().map(|&c| (c, false)));
+        } else {
+            pieces.push((root, true));
+        }
+    }
+    for (root, on_show) in pieces {
         let path = ui.path_of(root);
         let seen = log.hud.entry(path.clone()).or_default();
         if seen.dumps >= HUD_DUMPS || !shown(ui, root) {
@@ -248,13 +262,19 @@ pub fn hud_lines(log: &mut ModLog, ui: &fnv_ui::Ui) -> Vec<String> {
             stack.extend(ui.tile(id).children.iter().rev().map(|&c| (c, depth + 1)));
         }
         let total = order.len();
-        let due = seen.dumps == 0 || (total != seen.tiles && frame >= seen.at + HUD_AGAIN_FRAMES);
+        let changed = total != seen.tiles && frame >= seen.at + HUD_AGAIN_FRAMES;
+        let due = if on_show { seen.dumps == 0 || changed } else { seen.seen && changed };
+        if !seen.seen {
+            seen.seen = true;
+            seen.tiles = total;
+            seen.at = frame;
+        }
         if !due {
             continue;
         }
-        *seen = HudSeen { dumps: seen.dumps + 1, at: frame, tiles: total };
+        *seen = HudSeen { dumps: seen.dumps + 1, at: frame, tiles: total, seen: true };
         let lines: Vec<String> = order.iter().take(HUD_TILES).map(|&(id, depth)| tile_line(ui, root, id, depth)).collect();
-        let when = if seen.dumps == 1 { "shows" } else { "changed" };
+        let when = if on_show && seen.dumps == 1 { "shows" } else { "changed" };
         out.push(format!("HUD piece {path} {when}: {total} tiles{}", if total > HUD_TILES { format!(" ({HUD_TILES} written)") } else { String::new() }));
         out.extend(lines.into_iter().map(|l| format!("HUD   {l}")));
     }
@@ -493,6 +513,28 @@ mod tests {
         let lines = load_lines(&order, [("A.esp|script 1", false)].iter().copied(), &[u]);
         assert!(lines.iter().any(|l| l == "A.esp: runs without 2 lines that do not compile: script 1 line 7: syntax, script 1 line 9: unknown_name"), "{lines:?}");
         assert!(lines.iter().all(|l| !l.contains("Secret")));
+    }
+
+    #[test]
+    fn a_hud_a_mod_replaced_whole_is_written_by_the_parts_that_change() {
+        use fnv_ui::{MemSource, Ui};
+        let mut src = MemSource::default().with(
+            "menus\\hud.xml",
+            r#"<menu name="HUDMainMenu"> <rect name="Compass"> <x> 5 </x> </rect> <rect name="Loot"> <template name="Row"> <text name="R"> <string> Caps </string> </text> </template> </rect> </menu>"#,
+        );
+        src.loose_files.insert("menus\\hud.xml".to_string());
+        let mut ui = Ui::new();
+        ui.load_menu(&src, "menus\\hud.xml").unwrap();
+        ui.update();
+        let mut log = ModLog::default();
+        assert!(hud_lines(&mut log, &ui).is_empty(), "the HUD's parts as they are: nothing");
+        log.frames += HUD_AGAIN_FRAMES;
+        ui.add_from_template(&src, "HUDMainMenu/Loot", "Row", Some("Item0")).unwrap();
+        ui.update();
+        let lines = hud_lines(&mut log, &ui);
+        assert_eq!(lines[0], "HUD piece HUDMainMenu/Loot changed: 2 tiles", "{lines:?}");
+        assert!(lines.iter().any(|l| l.contains("Item0 text") && l.contains("string \"Caps\"")), "{lines:?}");
+        assert!(!lines.iter().any(|l| l.contains("Compass")), "{lines:?}");
     }
 
     #[test]
