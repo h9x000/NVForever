@@ -579,10 +579,34 @@ impl Gen<'_> {
         params.and_then(|ps| ps.get(k)).is_some_and(|p| matches!(p.kind.as_str(), "form" | "reference") || p.name.to_ascii_lowercase().contains("global"))
     }
 
+    /// In a mod's source compiled by the engine: whether the operand right after a call
+    /// that has every argument its catalogue lists is one more of its arguments. Only at
+    /// the top of an expression that is not a call line (`x := Fn a b c`), where it can be
+    /// nothing else; in parentheses the rest is dropped and on a call line the rest of the
+    /// line (`rest_of_parentheses_dropped`, `rest_of_line_dropped`). The catalogue's lists
+    /// are shorter than what mods pass [observed: a unit of a Wabbajack list's mod, shipped
+    /// with compiled bytes, sets an array from `GetRefsInCell` with a sixth argument; the
+    /// line failed].
+    fn extra_argument(&mut self, p: &P<'_>, f: &XFn) -> bool {
+        if !self.unknown_calls || self.in_args || self.in_paren || self.call_line {
+            return false;
+        }
+        let comma = p.peek().is_some_and(|t| t.kind == XKind::Comma);
+        let more = if comma { starts_operand(p.peek2()) } else { starts_operand(p.peek()) };
+        if more {
+            let name = match &f.func {
+                FuncId::Name(n) => n.clone(),
+                FuncId::Opcode(o) => format!("0x{o:04X}"),
+            };
+            self.diag("extra_argument", false, name);
+        }
+        more
+    }
+
     fn xargs(&mut self, p: &mut P<'_>, f: &XFn) -> Option<Vec<XExpr>> {
         let mut args = Vec::new();
         loop {
-            if f.params.is_some_and(|n| args.len() >= n) {
+            if f.params.is_some_and(|n| args.len() >= n) && !self.extra_argument(p, f) {
                 break;
             }
             let mut comma = false;

@@ -59,6 +59,15 @@ struct FnInfo {
     block: bool,
 }
 
+/// Whether a line starts or ends a block, so cannot be left out on its own
+/// (`Gen::drop_line`).
+fn opens_or_closes(l: &lex::Line) -> bool {
+    let head = l.toks.first().map(|t| t.text.to_ascii_lowercase()).unwrap_or_default();
+    matches!(head.as_str(), "begin" | "end" | "if" | "elseif" | "else" | "endif" | "while" | "loop" | "foreach")
+        || lambda_open(&l.text.to_ascii_lowercase()).is_some()
+        || l.text.trim_start().starts_with("end)")
+}
+
 /// Where a line opens a block lambda, `(begin function`, spaces allowed after the `(` and
 /// between the words (`CallWhen ( begin function {}`) [hypothesis: spaces between tokens
 /// do not matter, as elsewhere in the grammar; Bullet Belt Framework's ln_ file is written
@@ -250,6 +259,11 @@ impl<'a> Gen<'a> {
         for l in &lines {
             match parse::statement(l) {
                 Ok(s) => stmts.push(s),
+                // In a mod's source, a line that starts or ends no block is left out, not
+                // the unit (`Gen::drop_line`).
+                Err(e) if self.unknown_calls && !opens_or_closes(l) => {
+                    self.diags.push(Diag { line: e.line, kind: "line_dropped", error: false, detail: format!("syntax: {}", e.msg) })
+                }
                 Err(e) => self.diags.push(Diag { line: e.line, kind: "syntax", error: true, detail: e.msg }),
             }
         }
@@ -264,9 +278,35 @@ impl<'a> Gen<'a> {
         for s in &stmts {
             self.line = s.line;
             self.text = s.text.clone();
+            let before = (self.out.len(), self.stmts, self.diags.len());
             self.statement(&s.kw);
+            self.drop_line(&s.kw, before);
         }
         Compiled { bytes: self.out, variables: self.vars, refs: self.refs, diags: self.diags }
+    }
+
+    /// In a mod's source compiled by the engine ([`super::Seed::unknown_calls`]), a simple
+    /// statement (a call, `set`, `let`, `eval`, an assignment) that does not compile is left
+    /// out with a warning (`line_dropped`, the error's kind and detail), and the unit
+    /// compiles without it [decision 2026-11-13: the original compiled the line, so the
+    /// unit's other lines must not be lost for one this compiler cannot read; one such line
+    /// made the whole unit keep bytes the engine cannot run, 60 units in a Wabbajack list].
+    /// A line that starts or ends a block (`if`, `while`, `begin` and their ends) still
+    /// fails the unit: without it the blocks would not match.
+    fn drop_line(&mut self, kw: &Kw, (out, stmts, diags): (usize, usize, usize)) {
+        let simple = matches!(kw, Kw::Call(_) | Kw::Set { .. } | Kw::Let(_) | Kw::Eval(_));
+        if !self.unknown_calls || !simple || !self.diags[diags..].iter().any(|d| d.error) {
+            return;
+        }
+        self.out.truncate(out);
+        self.stmts = stmts;
+        for d in &mut self.diags[diags..] {
+            if d.error {
+                d.error = false;
+                d.detail = format!("{}: {}", d.kind, d.detail);
+                d.kind = "line_dropped";
+            }
+        }
     }
 
     /// Take the block-form lambdas (`(begin function {…}` … `end)`, which span lines
@@ -347,6 +387,11 @@ impl<'a> Gen<'a> {
         for l in &lines {
             match parse::statement(l) {
                 Ok(s) => stmts.push(s),
+                // In a mod's source, a line that starts or ends no block is left out, not
+                // the unit (`Gen::drop_line`).
+                Err(e) if self.unknown_calls && !opens_or_closes(l) => {
+                    self.diags.push(Diag { line: e.line, kind: "line_dropped", error: false, detail: format!("syntax: {}", e.msg) })
+                }
                 Err(e) => self.diags.push(Diag { line: e.line, kind: "syntax", error: true, detail: e.msg }),
             }
         }
@@ -356,7 +401,9 @@ impl<'a> Gen<'a> {
         for s in &stmts {
             self.line = s.line;
             self.text = s.text.clone();
+            let before = (self.out.len(), self.stmts, self.diags.len());
             self.statement(&s.kw);
+            self.drop_line(&s.kw, before);
         }
         let bytes = std::mem::replace(&mut self.out, saved.0);
         self.stmts = saved.1;

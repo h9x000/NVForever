@@ -537,10 +537,13 @@ What the game makes of the load order's extender scripts when it starts
 (`fnv_game::source_compile`, `GameData::source_units`; docs/handoff/mod-testing-tools.md).
 No script text unless `--detail` is given, whose output stays private.
 
-- `summary`: `units_picked`, `units_from_source`, `units_kept_bytes`, `unknown_functions`
-  (`[{name, units}]`, the names with no catalogue entry).
+- `summary`: `units_picked`, `units_from_source`, `units_kept_bytes`, `lines_dropped`,
+  `units_with_lines_dropped`, `unknown_functions` (`[{name, units}]`, the names with no
+  catalogue entry).
 - `per_plugin`: `plugin`, `units_from_source`, `units_kept_bytes`, `failed` (`[{unit, line,
-  kind}]`, with `detail` under `--detail`), `unknown_functions`, `unknown_enum_names`.
+  kind}]`, with `detail` under `--detail`), `unknown_functions`, `unknown_enum_names`,
+  `lines_dropped` (`[{unit, line, kind}]`, with `detail` under `--detail`: lines a unit
+  that runs from source was compiled without, script-compiler.md §7).
 
 ## `fnvtool ext connections <data_dir> <plugins…> --schema s [--functions f] [--only p…]` → `fnv.ext.connections/1`
 

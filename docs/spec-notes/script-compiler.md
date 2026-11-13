@@ -163,7 +163,7 @@ Errors: `syntax`, `unknown_block`, `unknown_function`, `unresolved_name`,
 `unresolved_remote_variable`, `remote_variable_on_local_ref`, `bad_set_target`,
 `unknown_enum_name`, `bad_axis`, `end_without_begin`. Warnings: `line_too_long`,
 `variable_added`, `reference_added`, `variable_type_differs`, `unmatched_marker`,
-`stray_punctuation`. Which of these the editor really refuses is to be checked with the
+`stray_punctuation`; in a mod's source (§7) also `extra_argument` and `line_dropped`. Which of these the editor really refuses is to be checked with the
 GECK compile cases (extender-core-tasks.md G2) [hypothesis].
 
 ## 7. Running compiled source (task A6)
@@ -234,6 +234,33 @@ the editor-parity and runtime compiles keep their errors) [decision]:
 - **An enumeration name the table lacks** (an animation group, an actor value, a
   statistic) compiles, with a warning, to code 65535, which no entry has. The table holds
   only the names seen in compiled scripts (scripts.md §2).
+
+**Forms the compiler missed until 2026-11-13** [observed: `fnvtool ext report` over a
+Wabbajack list's profile of 232 plugins, 1,730 units picked: 60 kept their bytes before,
+2 after, and lines left out went from 271 in 29 units, once lines could be left out, to
+31 in 16]. Every form below shipped with compiled bytes, so the original's compiler (with
+the extender installed) took it:
+
+- `x := value` without `let`, a condition whose parentheses go on over lines, an arrow
+  lambda over lines, a game function's argument in parentheses, and one FormID given to
+  two records by one plugin: the forms of the #2275 work above (`parse::MACRO_OPS`,
+  `lex::join_open_conditions`, `Gen::take_lambdas`, `Gen::x_call_line`,
+  `LoadOrderIndex::defs_here`), which the same list's mods use too (`SwapTexture (This)
+  "Screen01:0" "…"`, `MessageBoxExAlt ({int iBtn} =>` … `) "…"`, oHUD.esm's quest `aHUD`
+  and message `iHUDMainMenu` at 0x01000801).
+- **More arguments than the catalogue lists at the top of an expression** that is not a
+  call line are its arguments, with a warning (`extra_argument`): `ar := GetRefsInCell …`
+  with a sixth. In parentheses the rest is dropped (`rest_of_parentheses_dropped`), on a
+  call line the rest of the line (`surplus_arguments`, `rest_of_line_dropped`).
+- **A line that still does not compile is left out, not the unit**: a call, `set`, `let`,
+  `eval` or assignment line is dropped with a warning (`line_dropped`, carrying the
+  error's kind and detail) and the unit runs without it [decision: one line this compiler
+  cannot read must not cost a mod every other line of its script]. A line that starts or
+  ends a block (`begin`, `if`, `while`, `foreach`, their ends, a lambda's start or end)
+  still fails the unit, since the blocks would no longer match.
+
+Still refused: the extender's C-style syntax (`fn () {`, `Name(args);`, `for ([ref r] in
+…) {`, one mod of the list), `call Fn {args}` in braces and `Call Fn, &ref, …`.
 
 What a load order's units came to is kept (`GameData::source_units`): the game's log
 names the functions not in NVForever (`scripts: N functions the plugins' scripts call are

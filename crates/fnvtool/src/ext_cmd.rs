@@ -421,6 +421,19 @@ pub(crate) fn source_report(units: &[fnv_game::source_compile::SourceUnit], orde
             let owned: Vec<fnv_game::source_compile::SourceUnit> = mine.iter().map(|u| (*u).clone()).collect();
             let unknown: Vec<Value> = fnv_game::source_compile::unknown_functions(&owned).into_iter().map(|(name, n)| json!({"name": name, "units": n})).collect();
             let enums: std::collections::BTreeSet<&str> = mine.iter().flat_map(|u| u.unknown_enums.iter().map(String::as_str)).collect();
+            // Lines a unit compiled without (`line_dropped`); the detail can quote the
+            // mod's text, so only with `--detail`.
+            let dropped: Vec<Value> = mine
+                .iter()
+                .flat_map(|u| u.dropped_lines.iter().map(move |(line, why)| (u, line, why)))
+                .map(|(u, line, why)| {
+                    let mut row = json!({"unit": u.key, "line": line, "kind": why.split(':').next().unwrap_or("")});
+                    if detail {
+                        row["detail"] = json!(why);
+                    }
+                    row
+                })
+                .collect();
             Some(json!({
                 "plugin": plugin,
                 "units_from_source": mine.len() - failed.len(),
@@ -428,6 +441,7 @@ pub(crate) fn source_report(units: &[fnv_game::source_compile::SourceUnit], orde
                 "failed": failed,
                 "unknown_functions": unknown,
                 "unknown_enum_names": enums,
+                "lines_dropped": dropped,
             }))
         })
         .collect();
@@ -439,6 +453,8 @@ pub(crate) fn source_report(units: &[fnv_game::source_compile::SourceUnit], orde
             "units_picked": units.len(),
             "units_from_source": units.len() - failed,
             "units_kept_bytes": failed,
+            "lines_dropped": units.iter().map(|u| u.dropped_lines.len()).sum::<usize>(),
+            "units_with_lines_dropped": units.iter().filter(|u| !u.dropped_lines.is_empty()).count(),
             "unknown_functions": fnv_game::source_compile::unknown_functions(units).into_iter().map(|(name, n)| json!({"name": name, "units": n})).collect::<Vec<_>>(),
         },
         "per_plugin": per,

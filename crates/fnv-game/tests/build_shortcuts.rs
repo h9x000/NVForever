@@ -161,7 +161,8 @@ fn master(schema: &Schema) -> Vec<u8> {
         compressed(b"SCPT", 0, 0x854, &[vec![sub(b"EDID", z("ScriptCompressed"))], unit(0, &bytes(), &[], &[])].concat()),
         // Picked only when every unit is, and one picked whose source does not compile.
         source_script(0x855, "ScriptPlainSource", "begin GameMode\nend\n"),
-        source_script(0x856, "ScriptBadSource", "string_var s\nbegin GameMode\nset NoSuchVariableAnywhere to 1\nend\n"),
+        // A line that opens a block: one simple line would be left out, not the unit.
+        source_script(0x856, "ScriptBadSource", "string_var s\nbegin GameMode\nwhile (1 +)\nloop\nend\n"),
     ]);
     let stage = |fid: u32, edid: &str| {
         let mut q = vec![sub(b"EDID", z(edid)), sub(b"INDX", 10i16.to_le_bytes().to_vec()), sub(b"QSDT", vec![0])];
