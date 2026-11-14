@@ -342,7 +342,17 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
                 (_, None) => XVal::Num(-1.0),
                 ("getnthperkentryvalue1", Some(v)) => XVal::Num(f64::from(g.jip2.perk_values.get(&(p, i)).copied().or(v).unwrap_or(0.0))),
                 _ => {
-                    g.jip2.perk_values.insert((p, i), num(args, 2, 0.0) as f32);
+                    let v = num(args, 2, 0.0) as f32;
+                    g.jip2.perk_values.insert((p, i), v);
+                    // Into the perk's session copy, which the entry points read
+                    // (`Game::entry_point_entries`): the value takes effect, as a mod's
+                    // sprint that raises a Modify Run Speed entry expects [observed: Just
+                    // Assorted Mods sets `SetNthPerkEntryValue1 JVSPerk 1 (1 + 0.01 *
+                    // speed)` and gives the perk again; the value was kept here and read
+                    // by nothing, so the player ran no faster in an owner's runs].
+                    if let Some(crate::data::PerkEffect::EntryPoint(ep)) = crate::nvse_lu3::perk_entry_mut(g, p, i as f64).map(|e| &mut e.effect) {
+                        ep.value = Some(v);
+                    }
                     zero
                 }
             }

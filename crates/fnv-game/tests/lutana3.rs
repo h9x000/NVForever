@@ -85,6 +85,12 @@ fn fixture() -> Fixture {
             sub(b"EPF2", z("Poke")),
             sub(b"EPF3", vec![0, 0]),
             sub(b"PRKF", Vec::new()),
+            // Modify Run Speed (42), Multiply Value (3) by 1: a sprint mod's entry.
+            sub(b"PRKE", vec![2, 0, 1]),
+            sub(b"DATA", vec![42, 3, 0]),
+            sub(b"EPFT", vec![1]),
+            sub(b"EPFD", 1.0f32.to_le_bytes().to_vec()),
+            sub(b"PRKF", Vec::new()),
         ],
     );
     let cont = record(b"CONT", 0, CONT, &[sub(b"EDID", z("TestChest"))]);
@@ -223,6 +229,13 @@ fn perk_ranks_and_entries() {
     assert_eq!(s(&mut g, "GetNthPerkEntryString TestPerk 1"), "Poke");
     q(&mut g, "SetNthPerkEntryString TestPerk 1 \"Prod\"");
     assert_eq!(s(&mut g, "GetNthPerkEntryString TestPerk 1"), "Prod");
+    // JIP's SetNthPerkEntryValue1 changes what the entry point gives (a sprint mod's
+    // Modify Run Speed entry): the base 100 through the player's perks.
+    assert_eq!(n(&mut g, "GetNthPerkEntryValue1 TestPerk 2"), 1.0);
+    assert_eq!(n(&mut g, "PlayerREF.GetPerkModifier 42 100"), 100.0);
+    q(&mut g, "SetNthPerkEntryValue1 TestPerk 2 1.75");
+    assert_eq!(n(&mut g, "GetNthPerkEntryValue1 TestPerk 2"), 1.75);
+    assert_eq!(n(&mut g, "PlayerREF.GetPerkModifier 42 100"), 175.0);
 }
 
 #[test]
