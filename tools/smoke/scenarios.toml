@@ -2438,6 +2438,22 @@ expect = [
   { re = '1950stylecasual01\\f\\outfit\.nif: texture swap: 4 entr\(ies\), 4 shape\(s\) retextured: .*UpperBody → textures\\armor\\1950stylecasual01\\outfit02fold\.dds', label = "her dress takes the dirty texture set" },
 ]
 
+# ------------------------------------------------------------------ editor geometry
+
+[[scenario]]
+name = "furniture-marker-shapes"
+source = "issue #2469: white figures and capsules were drawn around the Tops lounge chairs at Red Rock Canyon; the property-less MarkerSource, MarkerTarget, Capsule01 and ChairBoundary shapes of loungechair_tops.nif are editor geometry (nif_spawn Props::is_helper, docs/spec-notes/nif.md §6 'Shapes with no property at all')"
+note = "The Great Khans' campfire at Red Rock Canyon, where the owner's screenshot was taken (cell -20,19, 10:00). The model loader names the shapes it left out, once per model. A Khan getting on one of the two chairs (0013F0E9, 0013F0EA) shows the chairs' entry points (their BSFurnitureMarker) still work"
+areas = ["renderer", "furniture"]
+paths = ["engine/nvf-assets/src/nif_spawn.rs", "engine/nvf-assets/src/model.rs", "engine/nvf-assets/src/actor.rs", "engine/nvf-play/src/phys/drawn.rs"]
+env = { NVF_PLAY_TEST_GOD = "1" }
+args = ["--play", "--pos=-77977,78079,4426", "--hour", "10", "--no-voice", "--no-messages"]
+run_seconds = 40
+expect = [
+  { re = '(?i)loungechair_tops\.nif: 8 editor shape\(s\) without any property left out: MarkerSource:0, Capsule01:0, MarkerTarget:0, ChairBoundary:0, ChairBoundary:0, Capsule01:0, MarkerTarget:0, MarkerSource:0', label = "the chair's marker figures, capsules and boundaries are not drawn" },
+  { re = 'furniture: [0-9A-F]{8} is on 0013F0E[9A]', label = "a Khan sits on a lounge chair" },
+]
+
 # ------------------------------------------------------------------ audio
 
 [[scenario]]
@@ -6161,6 +6177,49 @@ expect = [
 ]
 
 [[scenario]]
+name = "crime-expiry-karl-hostile"
+source = "issue #2467 (owner's playtest 2026-11-14): Karl, the Legion's envoy at Red Rock, attacked on sight. He is in ArmorVCaesarsLegionFaction (Track Crime), and a seen murder of a Legionary in no Evil faction makes the player an enemy of the victim's crime-tracking factions, that one among them (docs/spec-notes/crime-karma.md §3.4, §3.7). Within iCoolDownTimerSetting (3) days of the murder he fights: the crime path that sets the flag, staged here"
+note = "at Cottonwood Cove (--day 30, hour 12) the face aid puts the player at NVCCLegionary5REF's post (0x001364BC, which its OnLoad script SCPT 0x00174CE8 disables) at 14 s, in sight of NVCCAurelius (0x0012D6E2), who detects the player; the script aid kills NVCCLegionary4REF (0x001364C0, in no Evil faction, karma 0) as the player at 18 s (Game::kill): a murder the witness saw. coc to Karl's longhouse at 22 s; the face aid puts the player in front of Karl (0x00140E71) at 30 s. Karl never saw the murder: he fights by the faction flag alone. A Legionary in an Evil faction (NVLegionaryAlexusREF, CaesarsLegionTechMineFaction) is no victim for this: the Evil faction's area alert flags that faction only, and the kill then counts as self-defence. crime-expiry-karl-calm is the same with the clock moved on four days first"
+areas = ["crime"]
+paths = ["crates/fnv-game/src/crime.rs", "crates/fnv-game/src/detection.rs", "crates/fnv-game/src/rest.rs", "crates/fnv-game/src/functions/actor.rs", "engine/nvf-play/src/crime.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "14:001364BC,30:00140E71", NVF_PLAY_TEST_SCRIPT = "18:kill:0x001364C0", NVF_PLAY_TEST_CONSOLE = "22:coc 4BRRCPapasCabin;22.3:close" }
+args = ["--world", "WastelandNV", "--pos=63363,-89150,-1500", "--play", "--hour", "12", "--day", "30", "--no-voice"]
+run_seconds = 44
+order = [[
+  { re = 'detection: NVCCAurelius 0012D6E2 → the player: \w+ → detected', label = "a witness (Aurelius, who sees the murder) detects the player before the kill" },
+  { re = 'crime: the player is now an enemy of ArmorVCaesarsLegionFaction$', label = "the flag lands on the armour faction, Karl's (faction lines name the Editor ID)" },
+  { re = 'alert: VRRCKarl 00140E71 \w+ → Combat', label = "Karl fights in the longhouse, by the flag alone" },
+]]
+expect = [
+  { re = 'test aid: the player killed 0x001364C0', label = "the player kills NVCCLegionary4REF (Game::kill)" },
+  { re = 'crime: murder against .*turned on the player: \[\S', label = "a murder the witness saw: it turns" },
+]
+forbid = [
+  { re = 'crime: the player is no longer an enemy of ', label = "no crime expires within the run" },
+  { re = 'provocation: the player attacked .*\(Evil\)', label = "the victim is in no Evil faction" },
+]
+
+[[scenario]]
+name = "crime-expiry-karl-calm"
+source = "issue #2467: the crime-expiry-karl-hostile set-up, and the clock moved on four game days after the murder (a script setting GameDaysPassed, as the console's `set` does): the crime is older than iCoolDownTimerSetting (3 days), the flag a crime set is cleared, and Karl at Red Rock does not fight (docs/spec-notes/crime-karma.md §3.7) [documented: GECK wiki Category:Crime]"
+note = "as crime-expiry-karl-hostile, with `set GameDaysPassed to 34.5` at 20 s (the murder at about day 30.0); expiry is read at the next detection round's start"
+areas = ["crime"]
+paths = ["crates/fnv-game/src/crime.rs", "crates/fnv-game/src/detection.rs", "crates/fnv-game/src/rest.rs", "crates/fnv-game/src/functions/actor.rs", "engine/nvf-play/src/crime.rs", "engine/nvforever/src/npc_combat.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_FACE = "14:001364BC,30:00140E71", NVF_PLAY_TEST_SCRIPT = "18:kill:0x001364C0", NVF_PLAY_TEST_CONSOLE = "20:set GameDaysPassed to 34.5;20.3:close;22:coc 4BRRCPapasCabin;22.3:close" }
+args = ["--world", "WastelandNV", "--pos=63363,-89150,-1500", "--play", "--hour", "12", "--day", "30", "--no-voice"]
+run_seconds = 44
+order = [[
+  { re = 'detection: NVCCAurelius 0012D6E2 → the player: \w+ → detected', label = "a witness (Aurelius, who sees the murder) detects the player before the kill" },
+  { re = 'crime: the player is now an enemy of ArmorVCaesarsLegionFaction$', label = "the murder sets the armour faction's flag (faction lines name the Editor ID)" },
+  { re = 'crime: the player is no longer an enemy of ArmorVCaesarsLegionFaction: the last crime against it is 4\.\d\d game days old', label = "four days on, the crime's flag is cleared" },
+]]
+expect = [
+  { re = 'test aid: the player killed 0x001364C0', label = "the player kills NVCCLegionary4REF (Game::kill)" },
+  { re = "crime: .* no longer counts the player's crimes: the last is 4\\.\\d\\d game days old", label = "the witness forgives too" },
+]
+forbid = [{ re = 'alert: VRRCKarl 00140E71 \w+ → (Alert|Combat)', label = "Karl does not fight or search for the player at Red Rock" }]
+
+[[scenario]]
 name = "karma-fiend"
 source = "owner's playtest list 2 (2026-10-12): killing an evil actor; since #1131 an Evil NPC holding −500 in its own record gives +100, as the original's NorthVegasFiendCF and GoodspringsPowderGangerHM (capture o6_02, docs/spec-notes/crime-karma.md §4.1), and no murder"
 note = "beside Violet's camp (as music-battle); the script test aid kills Violet as the player at 14 s (Game::kill with the player as the killer): shooting her was not repeatable at the run's frame rate (a hunting rifle's shots were dropped, the 10mm pistol does 8 a hit against her DT)"
@@ -8709,6 +8768,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "pipboy-stats-worn-once"
+source = "#2495 (docs/spec-notes/pipboy.md §5.1, aid-items.md §13): a worn apparel enchantment is the game's active effect in the temporary pool (#377); the STATS page added its changes a second time (Speech 19 with the Vault 21 Jumpsuit) and counted an enchantment whose condition fails. The page now shows the game's actor value"
+note = "a new-game player (Speech 15, Perception 5 [observed: headless fnvtool, #2495]) wears the Vault 21 Jumpsuit (VaultSuit21 0x00104184: Speech +2, Melee Weapons +2) and the Reading Glasses (GlassesReading 0x0001C296: Perception +2 only with Four Eyes, which the player lacks); S.P.E.C.I.A.L. row 2 at 23 s, then the Skills list stepped down to Speech (row 11 by name) from 25 s"
+areas = ["pipboy"]
+paths = ["engine/nvf-play/src/pipboy/stats/read.rs", "crates/fnv-game/src/abilities.rs"]
+env = { NVF_PLAY_TEST_TILE_MENUS = "", NVF_PLAY_TEST_SCRIPT_MENUS = "2.5", NVF_PLAY_TEST_EQUIP = "00104184,0001C296", NVF_PLAY_TEST_PIPBOY = "20:open,21:page=stats,22:tab=1,24:tab=2,29:close", NVF_PLAY_TEST_PIPBOY_STATS = "23:down,25:down,25.25:down,25.5:down,25.75:down,26:down,26.25:down,26.5:down,26.75:down,27:down,27.25:down" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 31
+expect = [
+  { re = 'test aid: the player equips 0x00104184', label = "the jumpsuit worn" },
+  { re = 'test aid: the player equips 0x0001C296', label = "the reading glasses worn" },
+  { re = 'pipboy stats: S\.P\.E\.C\.I\.A\.L\.: Perception 5 selected', label = "the glasses' conditioned Perception +2 changes nothing and marks nothing (no Four Eyes)" },
+  { re = 'pipboy stats: Skills: Melee Weapons 17 \(\+\) selected', label = "Melee Weapons 15 + 2, counted once, marked" },
+  { re = 'pipboy stats: Skills: Speech 17 \(\+\) selected', label = "Speech 15 + 2 = GetActorValue Speech, counted once, marked" },
+  { re = 'pipboy stats: Skills: Speech 19', count = 0, label = "not the jumpsuit's +2 twice" },
+]
+
+[[scenario]]
 name = "pipboy-repair"
 source = "todo 6 item 5: repair from the Pip-Boy (engine/nvf-play/src/pipboy/repair.rs, crates/fnv-game/src/repair.rs, docs/spec-notes/repair.md §5): two worn 10mm Pistols (Weap10mmPistol, first in the Weapons tab by name), the ITEMS page's Repair R) hint, R lists the other pistol as the part, using it scraps it and raises the first by the GECK wiki's repair formula at the player's Repair skill; frame pipboy_repair.png in the working folder"
 areas = ["repair", "pipboy"]
@@ -9363,6 +9440,18 @@ run_seconds = 16
 expect = [
   { re = 'physics: the player stepped up [1-9]\d* times, feet at \(-5\d{4}, -2(39|40)\d\d, 6(1[89]\d|2[0-4]\d)\)', label = "up the steps and inside the camper (floor 6185-6215)" },
   { re = 'physics: the player.s drawn height took up [1-9]\d* steps and bumps, lifted ([4-9]|1\d|2[0-4])\.\d units at most', label = "the steps are climbed smoothly by the drawn body and view (playtest list 7 item 9, physics.md §6.11)" },
+]
+
+[[scenario]]
+name = "caravan-door-walk-out"
+source = "issue #2494 (docs/spec-notes/physics.md §6.9.2): walking out of the wrecked caravan 0x001070C1 by Goodsprings (STAT MobileHomeASNV, cell -17,-1) the player stopped on the threshold's zero-thickness lip until a jump; the original walks out at walk and run pace"
+areas = ["physics", "controls"]
+paths = ["crates/fnv-phys/src/character.rs", "engine/nvf-play/src/phys.rs", "engine/nvf-play/src/player.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_MOVE = "10:1:0:walk,16:0:0" }
+args = ["--play", "--pos=-67342,-2237,8160", "--heading", "183.2", "--hour", "12", "--no-actors", "--no-voice", "--no-messages"]
+run_seconds = 19
+expect = [
+  { re = 'physics: the player stepped up [1-9]\d* times, feet at \(-6\d{4}, -(2[5-9]|3\d)\d\d, 8\d{3}\)', label = "walked over the threshold's lip and out of the caravan (lip at y -2386, outside past -2410)" },
 ]
 
 [[scenario]]
@@ -22356,6 +22445,22 @@ expect = [
 ]
 
 [[scenario]]
+name = "missile-shot-one-model"
+source = "#2470: firing the missile launcher showed a second missile or one lying sideways. Before #2327 the shot's reference for scripts was drawn as a dropped item, unturned (rotation 0), beside the flying model shot_fx draws; this checks the missile launcher on main: one flying model, turned along its flight, and no dropped item for the shot's reference"
+note = "as missile-explosion: the missile launcher (00004340) with two missiles (00029383), fired once at the ground by the Prospector Saloon; MLProjectile.NIF is built along +y with its exhaust flame at -y (fnvtool nif decode), so its +y must lie along the shot"
+areas = ["combat"]
+paths = ["engine/nvforever/src/shot_fx.rs", "crates/fnv-game/src/nvse_proj.rs", "engine/nvf-play/src/dropped.rs"]
+env = { NVF_PLAY_TEST_EQUIP = "00004340", NVF_PLAY_TEST_GIVE = "00029383:2", NVF_PLAY_TEST_LOOK = "2:46:-8", NVF_PLAY_TEST_CONTROL = "3:weapon,6:fire" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--pos=-67900,1400,8500", "--hour", "12"]
+run_seconds = 14
+expect = [
+  { re = 'combat: explosion MissileExplosion at', label = "the missile is fired and goes off" },
+  { re = '(?i)shot fx: projectile MissileProjectile meshes.projectiles.mlprojectile.nif drawn along its flight: its \+y (?P<n>[\d.]+) degrees off the shot.s direction, its long axis y', range = [0, 1], label = "the flying missile points along its flight (the model's long axis and nose are +y)" },
+  { re = 'shot fx: \d+ muzzle flashes \(\d+ with a light\), 1 projectile models drawn', label = "one projectile model for the one shot" },
+  { re = '(?i)dropped reference 0x[0-9A-F]{8} drawn: meshes.projectiles', count = 0, label = "the shot's reference is not drawn as a dropped item (#2327)" },
+]
+
+[[scenario]]
 name = "jip-raycast-points"
 source = "JIP's GetPointRayCastPos through the engine's physics (fnv_game::ray::cast_hit, the terrain included) and GetAnglesBetweenPoints, both writing script variables (the VM's out_call)"
 areas = ["scripts", "physics"]
@@ -22448,6 +22553,23 @@ expect = [
   { re = 'script: print "nvf scale 1.50"', label = "a set scale holds over the animation and reads back" },
 ]
 
+[[scenario]]
+name = "player-script-sequence-pose-release-owned"
+source = "[design: player-script-sequence-pose-aid.md] Optional actual post-propagation first/third rig observation using two externally authored owned KFs and a declared numeric manifest. NOT RUN; no native or pixel comparison."
+areas = ["scripts", "player"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/player_sequence_pose_aid.rs", "engine/nvforever/src/script_sequences.rs", "engine/nvf-assets/src/anim_blend.rs", "crates/fnv-game/src/nvse_anim.rs"]
+requires = ["NVF_PLAY_TEST_SEQUENCE_POSE"]
+env = { NVF_PLAY_TEST_CONSOLE = '11:ToggleFirstPerson 1;player.ActivateAnim "qa\sequence2395\owned_underlying.kf" 0 1 1 1 0;player.ActivateAnim "qa\sequence2395\owned_underlying.kf" 1 1 1 1 0;11.5:close;16:player.ActivateAnim "qa\sequence2395\owned_pose.kf" 1 3 1 1 0;16.5:close;20:player.DeactivateAnim "qa\sequence2395\owned_pose.kf" 0.5;20.1:close' }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-head-bob", "--no-weapon-sway", "--no-weapon-lower"]
+run_seconds = 25
+expect = [
+  { text = "sequence pose aid: PASS phase=before", count = 1, label = "both real rigs carry the declared underlying pose before the high layer" },
+  { text = "sequence pose aid: PASS phase=active-quarter", count = 1, label = "first rig applies the actual quarter-phase sample while third remains unchanged" },
+  { text = "sequence pose aid: PASS phase=active-three-quarter", count = 1, label = "second actual phase changes first local and propagated world transforms" },
+  { text = "sequence pose aid: PASS phase=fade", count = 1, label = "actual stopped request fades toward the retained underlying layer" },
+  { text = "sequence pose aid: PASS phase=released", count = 1, label = "request and high tag retire and the underlying pose remains" },
+  { text = "sequence pose aid: FAIL", count = 0, label = "manifest, rig identity and numeric observations stay valid" },
+]
 [[scenario]]
 name = "knvse-anim-replace"
 source = "N5 slice 2 (docs/design/knvse-anim.md): SetActorAnimationPath with a standing-stance file replaces that move in the actor's own copy of its set; taking it back restores the shared set"
@@ -27674,6 +27796,60 @@ order = [[
   { text = "player controls: all enabled", label = "the greeting's result script gives the controls back" },
 ]]
 forbid = [{ text = "EDE1Ref: does not talk", label = "ED-E has a greeting to say" }]
+
+[[scenario]]
+name = "weathers-key-freed"
+source = "issue #2466 (owner's playtest 2026-11-14): at Cottonwood Cove, given the collar key, Mrs. Weathers' collar went off while her sons got away. With the key given, none of the family's collars may go off. Mrs. Weathers' line for the key (INFO 0x0013A62B, topic VFreeformCottonwoodCoveNVCCMrsWeathersTopic009) completes vCCLeftMyHeart objective 50 in its begin script (the family's NVCCSlaveFreePackage becomes valid) and takes off the three collars (SlaveCollar 0x0002F563) only in its end script; the four NVCCSlaveHeadPopper volumes round the pen (SCPT 0x0013A3B8) kill a family member who enters one while GetItemCount of its collar is 1 (PlaceAtMe FakeMediumExplosion, KillActor)"
+note = "The player starts in the north of the pen (outside the gate's dialogue trigger, so Mrs. Weathers' bark package does not start), with the key the Topic009 line asks for (iBuySlaves stays 0: the line for a key not bought); the gate is unlocked (the line wants it unlocked). vCCEyeforaneye's iDeadCount is set to 12 so that the line's end script does not turn the Legion on the family (SetEnemy NVCCSlaveFaction / VCaesarsLegionFaction, the original's rule for a key not paid for): only the collars are under test. Only the family runs packages. Setup and the collar probes come after the scripts' 6.5 s start threshold and before the talk; the talk starts 4.6 s after the last probe. Each family member is followed by name: collared before the key, the key line, then its own entry into a death volume, then alive, then collarless (that last probe comes after the escape so that it cannot race the entry). First run (2026-11-14, combined build): all three left through the gate and crossed the north volume 0x0013A63F about 12 s after the line ended, and lived"
+areas = ["dialogue", "scripts", "ai"]
+paths = ["engine/nvf-play/src/script_trigger.rs", "crates/fnv-game/src/functions/items.rs", "crates/fnv-game/src/dialogue.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_GIVE = "001364C6:1", NVF_PLAY_TEST_SCRIPT = "7:objective:vCCLeftMyHeart:10,7.3:var:vCCEyeforaneye:iDeadCount:12,7.6:call:vCCSlavePenGateREF:Unlock,9:call:vCCMrsWeathersREF:GetItemCount:SlaveCollar,9.2:call:vCCSammyWeathersREF:GetItemCount:SlaveCollar,9.4:call:vCCKennyWeathersREF:GetItemCount:SlaveCollar,70:call:vCCMrsWeathersREF:GetDead,70.2:call:vCCSammyWeathersREF:GetDead,70.4:call:vCCKennyWeathersREF:GetDead,72:call:vCCMrsWeathersREF:GetItemCount:SlaveCollar,72.2:call:vCCSammyWeathersREF:GetItemCount:SlaveCollar,72.4:call:vCCKennyWeathersREF:GetItemCount:SlaveCollar", NVF_PLAY_TEST_TALK = "14:vCCMrsWeathersREF=VFreeformCottonwoodCoveNVCCMrsWeathersTopic009" }
+args = ["--play", "--world", "WastelandNV", "--pos=65600,-87700,-1780", "--hour", "12", "--npc-packages", "00130B99,001364C5,001364C4", "--no-voice", "--no-messages"]
+run_seconds = 80
+order = [[
+  { text = "script: test aid calls GetItemCount on vCCMrsWeathersREF = 1", label = "Mrs. Weathers wears her collar before the key" },
+  { re = 'dialogue: choice \d+ made: .*, vCCMrsWeathersREF answers with 0x0013A62B', label = "Mrs. Weathers' chain: the player gives Mrs. Weathers the key (Topic009)" },
+  { re = 'dialogue: conversation with vCCMrsWeathersREF ended \(goodbye,', label = "Mrs. Weathers' chain: the key line is said to the end (its end script runs)" },
+  { re = 'script: vCCMrsWeathersREF entered trigger 0x0013A(3B6|63F|640|641)', label = "Mrs. Weathers then enters a death volume on the way out" },
+  { text = "script: test aid calls GetDead on vCCMrsWeathersREF = 0", label = "Mrs. Weathers is alive after the escape" },
+  { text = "script: test aid calls GetItemCount on vCCMrsWeathersREF = 0", label = "Mrs. Weathers' collar is off" },
+], [
+  { text = "script: test aid calls GetItemCount on vCCSammyWeathersREF = 1", label = "Sammy wears her collar before the key" },
+  { re = 'dialogue: choice \d+ made: .*, vCCMrsWeathersREF answers with 0x0013A62B', label = "Sammy's chain: the player gives Mrs. Weathers the key (Topic009)" },
+  { re = 'dialogue: conversation with vCCMrsWeathersREF ended \(goodbye,', label = "Sammy's chain: the key line is said to the end (its end script runs)" },
+  { re = 'script: vCCSammyWeathersREF entered trigger 0x0013A(3B6|63F|640|641)', label = "Sammy then enters a death volume on the way out" },
+  { text = "script: test aid calls GetDead on vCCSammyWeathersREF = 0", label = "Sammy is alive after the escape" },
+  { text = "script: test aid calls GetItemCount on vCCSammyWeathersREF = 0", label = "Sammy's collar is off" },
+], [
+  { text = "script: test aid calls GetItemCount on vCCKennyWeathersREF = 1", label = "Kenny wears his collar before the key" },
+  { re = 'dialogue: choice \d+ made: .*, vCCMrsWeathersREF answers with 0x0013A62B', label = "Kenny's chain: the player gives Mrs. Weathers the key (Topic009)" },
+  { re = 'dialogue: conversation with vCCMrsWeathersREF ended \(goodbye,', label = "Kenny's chain: the key line is said to the end (its end script runs)" },
+  { re = 'script: vCCKennyWeathersREF entered trigger 0x0013A(3B6|63F|640|641)', label = "Kenny then enters a death volume on the way out" },
+  { text = "script: test aid calls GetDead on vCCKennyWeathersREF = 0", label = "Kenny is alive after the escape" },
+  { text = "script: test aid calls GetItemCount on vCCKennyWeathersREF = 0", label = "Kenny's collar is off" },
+]]
+forbid = [
+  { re = 'dismember: (Mrs\. Weathers|Sammy Weathers|Kenny Weathers) 0x[0-9A-F]{8}: Head exploded \(KillActor\)', label = "no family member's collar goes off (the death volume's KillActor)" },
+  { text = "combat: explosion FakeMediumExplosion", label = "no death volume's explosion is placed" },
+]
+
+[[scenario]]
+name = "weathers-collar-without-key"
+source = "issue #2466: without the key the collars still behave as the scripts say. The family freed with their collars on (vCCLeftMyHeart objective 50 completed and EvaluatePackage, as the begin script of the Speech line 'Run for it!', INFO 0x001364A4, does) runs for it, and the NVCCSlaveHeadPopper volume (SCPT 0x0013A3B8) kills whoever enters it still collared: PlaceAtMe FakeMediumExplosion, then KillActor with dismemberment flag 1 (the head explodes)"
+note = "The same start as weathers-key-freed, without the key: the collars are probed after the scripts' 6.5 s start threshold and before the family is released (objective 50 completed and the three packages evaluated by the test aid). Mrs. Weathers is followed by name: collared, released, enters a death volume, the explosion placed at her, her head exploded by KillActor, dead. First run (2026-11-14, combined build): all three crossed the north volume 0x0013A63F within 1.2 s of each other and each died by its explosion"
+areas = ["scripts", "ai"]
+paths = ["engine/nvf-play/src/script_trigger.rs", "crates/fnv-game/src/functions/items.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.05", NVF_PLAY_TEST_SCRIPT = "7:objective:vCCLeftMyHeart:10,7.3:var:vCCEyeforaneye:iDeadCount:12,7.6:call:vCCSlavePenGateREF:Unlock,9:call:vCCMrsWeathersREF:GetItemCount:SlaveCollar,9.2:call:vCCSammyWeathersREF:GetItemCount:SlaveCollar,9.4:call:vCCKennyWeathersREF:GetItemCount:SlaveCollar,11:objective_done:vCCLeftMyHeart:50,11.5:call:vCCMrsWeathersREF:EvaluatePackage,11.6:call:vCCSammyWeathersREF:EvaluatePackage,11.7:call:vCCKennyWeathersREF:EvaluatePackage,50:call:vCCMrsWeathersREF:GetDead,50.2:call:vCCSammyWeathersREF:GetDead,50.4:call:vCCKennyWeathersREF:GetDead" }
+args = ["--play", "--world", "WastelandNV", "--pos=65600,-87700,-1780", "--hour", "12", "--npc-packages", "00130B99,001364C5,001364C4", "--no-voice", "--no-messages"]
+run_seconds = 60
+order = [[
+  { text = "script: test aid calls GetItemCount on vCCMrsWeathersREF = 1", label = "Mrs. Weathers wears her collar before she is released" },
+  { text = "script: test aid calls EvaluatePackage on vCCMrsWeathersREF", label = "she is released (objective 50 done, her package evaluated)" },
+  { re = 'script: vCCMrsWeathersREF entered trigger 0x0013A(3B6|63F|640|641)', label = "collared, she enters a death volume" },
+  { text = "combat: explosion FakeMediumExplosion", label = "the volume's script places its explosion (PlaceAtMe FakeMediumExplosion)" },
+  { re = 'dismember: Mrs\. Weathers 0x00130B99: Head exploded \(KillActor\)', label = "and its KillActor explodes her head" },
+  { text = "script: test aid calls GetDead on vCCMrsWeathersREF = 1", label = "she is dead" },
+]]
 
 [[scenario]]
 name = "freeside-fort-residents-door"
