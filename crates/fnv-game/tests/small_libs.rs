@@ -126,6 +126,11 @@ fn files() {
         ).unwrap();
         // A mod's function file calling a function nothing knows, and one that cannot compile.
         std::fs::write(dir.join("NVSE/user_defined_functions/Unknown.gek"), "Begin Function { }\nNoSuchPluginFunction \"*map\" \"key\" 1\nSetFunctionValue 7\nEnd\n").unwrap();
+        std::fs::write(dir.join("NVSE/user_defined_functions/OwnForms.gek"), "Begin Function { }
+PlayerREF.AuxVarSetRef \"*nvfOwn\" BobbyPin -1
+SetFunctionValue (PlayerREF.AuxiliaryVariableGetSize \"*nvfOwn\")
+End
+").unwrap();
         std::fs::write(dir.join("NVSE/user_defined_functions/Broken.gek"), "Begin Function { }\nwhile (1 +)\nloop\nEnd\n").unwrap();
         std::fs::write(dir.join("NVSE/Plugins/nvse_stewie_tweaks.ini"), "[Tweaks]\r\nbJumpWhileAiming=1\r\n[Cookable Grenades]\r\nsSoundName=\"WPNGrenadeBeep\"\r\n").unwrap();
         std::fs::write(dir.join("Config/vheyes-nvse/QueuedCommand.txt"), "SetGlobalTimeMultiplier 2\r\n").unwrap();
@@ -571,4 +576,17 @@ fn cached_ini_file_quotes_are_removed_without_changing_default_or_cached_values(
     q(&mut g, "SetINIString \"Template:Warm\" \"%qReloaded%q\" \"OwnedWarmQuotes.ini\"");
     q(&mut g, "ReloadIniCache \"OwnedWarmQuotes.ini\"");
     assert_eq!(q(&mut g, "SetFunctionValue (GetINIString_Cached \"Template:Warm\" \"OwnedWarmQuotes.ini\")"), XVal::Str("Reloaded".into()));
+}
+
+/// A form the game itself names and no plugin defines resolves in a mod's text file as in
+/// a plugin's source: MCM Extender registers each mod's page with `AuxVarSetRef "…"
+/// BobbyPin -1`, which read as the text "BobbyPin" minus 1 and stopped the statement
+/// [hypothesis: BobbyPin is 0x0000000A, observer check 128].
+#[test]
+fn a_mods_text_file_names_the_games_own_forms() {
+    files();
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(q(&mut g, "SetFunctionValue (Call (CompileScript \"OwnForms.gek\"))"), n(1.0));
+    assert_eq!(q(&mut g, "SetFunctionValue (GetFormIDString (PlayerREF.AuxiliaryVariableGetRef \"*nvfOwn\" 0))"), XVal::Str("0000000A".into()));
 }

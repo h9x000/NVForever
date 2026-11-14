@@ -123,9 +123,17 @@ impl<'a> LoadOrderIndex<'a> {
 /// `MapMarker` is 0x00000010 [observed: CASM with MCM 1.8's compiled script lists form
 /// 0x00000010 where its source says `rRef.gbo == MapMarker`; the base game's map marker
 /// references have that base, refs.md]; a static [hypothesis: nothing here reads the type].
-const BUILT_IN: [(&str, u32, [u8; 4]); 1] = [("MapMarker", 0x0000_0010, *b"STAT")];
+/// `BobbyPin` is taken to be 0x0000000A, the bobby pin [hypothesis, observer check 128:
+/// MCM Extender 1.63's `OnRestart.gek`, a text file the extender compiles in the game,
+/// passes the bare name `BobbyPin` where a form goes (`AuxVarSetRef "…" BobbyPin -1`) and
+/// its other files test that element with `GetType … != 31`, the misc item's type; no
+/// plugin of a 232-plugin list gives any record that Editor ID, and the base game's misc
+/// item 0x0000000A, Editor ID `Lockpick`, is named "Bobby Pin" with its model under
+/// `Clutter\BobbyPin`. No compiled bytes show the FormID].
+const BUILT_IN: [(&str, u32, [u8; 4]); 2] = [("MapMarker", 0x0000_0010, *b"STAT"), ("BobbyPin", 0x0000_000A, *b"MISC")];
 
-fn built_in(editor_id: &str) -> Option<FormInfo> {
+/// The game's own form a name stands for where no plugin defines it ([`BUILT_IN`]).
+pub fn built_in(editor_id: &str) -> Option<FormInfo> {
     BUILT_IN.iter().find(|b| b.0.eq_ignore_ascii_case(editor_id)).map(|b| FormInfo { form: b.1, sig: b.2 })
 }
 

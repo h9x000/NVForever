@@ -1892,3 +1892,74 @@ fn a_program_decoded_with_lines_marks_each_statements_line() {
     plain.walk(&mut |s| any |= matches!(s, Stmt::Line { .. }));
     assert!(!any);
 }
+
+// ---------------------------------------------------------------- mods' text files (2026-11-14)
+// Forms the text files of a Wabbajack list's mods use (Script Runner files and CompileScript
+// files, which the extender compiles in the game: no compiled bytes). Each case is the
+// line's shape, not the mod's text.
+
+fn mod_text(body: &str) -> (Compiled, Program) {
+    let c = fnv_script::compile::compile_mod_runtime(&format!("Begin Function {{ }}\n{body}\nEnd\n"), &table(), &World);
+    assert_eq!(c.errors().count(), 0, "{body}: {:?}", c.errors().collect::<Vec<_>>());
+    let p = fnv_script::decode::decode(&c.bytes, &table()).program;
+    (c, p)
+}
+
+#[test]
+fn pc1st_reads_the_first_person_flag() {
+    // [observed: seven mods' text files; hypothesis: IsPC1stPerson's short name.]
+    let (c, p) = mod_text("int x = PC1st");
+    assert!(warnings(&c, "unquoted_argument").is_empty() && warnings(&c, "unknown_function").is_empty(), "{:?}", c.diags);
+    assert!(format!("{:?}", body(&p)[0]).contains("Opcode(4488)"), "{:?}", body(&p)[0]);
+}
+
+#[test]
+fn a_short_form_id_names_its_form_in_a_plugin_functions_form_parameter() {
+    let (c, p) = mod_text("AuxVarSetFlt \"*x\" 1 0 f");
+    assert!(c.refs.contains(&RefSlot::Form(CAPS)), "{:?}", c.refs);
+    assert_eq!(call_args(&p, "AuxiliaryVariableSetFloat"), Some(4));
+    // As text where the parameter is no form, and a variable of that name comes first.
+    let (c, _) = mod_text("string_var s\nlet s := sv_Construct \"%z\" f");
+    assert!(!c.refs.contains(&RefSlot::Form(CAPS)), "{:?}", c.refs);
+    let (c, _) = mod_text("ref f\nAuxVarSetFlt \"*x\" 1 0 f");
+    assert!(!c.refs.contains(&RefSlot::Form(CAPS)), "{:?}", c.refs);
+}
+
+#[test]
+fn test_expr_takes_an_assignment_without_parentheses() {
+    for src in ["array_var a\narray_var b\nif TestExpr a = b[\"k\"]\nendif", "array_var a\nif eval !(TestExpr a = ar_List 1)\nendif"] {
+        let (c, p) = mod_text(src);
+        assert!(warnings(&c, "assignment_to_a_value").is_empty(), "{src}: {:?}", c.diags);
+        let text = format!("{:?}", body(&p)[0]);
+        assert!(text.contains("Name(\"TestExpr\"), args: [Assign"), "{src}: {text}");
+    }
+}
+
+#[test]
+fn a_star_after_a_function_that_needs_an_argument_unboxes_it() {
+    let (_, p) = mod_text("array_var a\nint i\nif eval (i + 4 + (Ar_Size *a) * 2) <= 35\nendif");
+    assert!(format!("{:?}", body(&p)[0]).contains("Name(\"Ar_Size\"), args: [Unary { op: Unbox"), "{:?}", body(&p)[0]);
+    // A function that needs none is multiplied.
+    let (_, p) = mod_text("int i\nlet i := GetSelf * 2");
+    assert!(format!("{:?}", body(&p)[0]).contains("op: Mul"), "{:?}", body(&p)[0]);
+}
+
+#[test]
+fn the_surplus_of_a_call_assigned_in_parentheses_is_dropped() {
+    let (c, _) = mod_text("array_var a\nref r\nint i\nif eval IsFormValid (r = GetSelf) == 0 || (i = (ar_Size (a = GetRefsInCell r 32 0 1 0 0 MapMarker))) == 0\nendif");
+    assert_eq!(warnings(&c, "rest_of_parentheses_dropped"), ["0 MapMarker"]);
+}
+
+#[test]
+fn a_second_operand_in_parentheses_is_dropped_in_a_mods_text() {
+    let (c, p) = mod_text("ref r = TempCloneForm (Caps001 TestQuest)");
+    assert_eq!(warnings(&c, "rest_of_parentheses_dropped"), ["TestQuest"]);
+    assert_eq!(call_args(&p, "TempCloneForm"), Some(1));
+}
+
+#[test]
+fn a_fraction_is_refused_only_where_a_page_types_the_parameter() {
+    // A kNVSE command with no page: the catalogue's kinds are one probed call's.
+    mod_text("SetAnimAdditiveInterpsWeightMult (\"a.kf\") (\"Bip01\") 0.1 1 0");
+    assert_eq!(runtime_errors("SetBaseKarma 37.5"), ["fraction_for_int_parameter"]);
+}

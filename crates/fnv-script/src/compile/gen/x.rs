@@ -265,7 +265,12 @@ impl Gen<'_> {
                 self.in_args = was;
                 self.in_paren = was_paren;
                 let e = e?;
-                if p.peek().is_some_and(|c| c.kind == XKind::Comma || c.kind != XKind::Close && ends_in_call(&e)) {
+                // In a mod's source compiled by the engine a second operand right after a
+                // whole expression is dropped the same way [observed: True Minigun's text
+                // file of a Wabbajack list, `TempCloneForm (FormA FormB)`; hypothesis: as
+                // the surplus after a call, the first is kept].
+                let second_operand = self.unknown_calls && starts_operand(p.peek());
+                if p.peek().is_some_and(|c| c.kind == XKind::Comma || c.kind != XKind::Close && (ends_in_call(&e) || second_operand)) {
                     // What is left before the `)` once the expression inside is whole and
                     // ends in a call, or from a comma on (a function's surplus argument, `,
                     // x`, `38 || …`), is dropped [observed:
@@ -639,7 +644,13 @@ impl Gen<'_> {
             // signed number after a space (`GetMaxOf -1 -5`).
             let minus = p.peek().is_some_and(|t| t.is(XKind::Op, "-"));
             let minus_first = f.params != Some(0) && minus && (comma || args.is_empty() || p.peek().is_some_and(|t| t.sign));
-            if !starts_operand(p.peek()) && !minus_first {
+            // A `*` right after the name of a function that cannot go without its first
+            // argument unboxes that argument, it does not multiply a call that has none
+            // [documented: NVSE Expressions, the unary `*`; observed: Keybinder's text
+            // script of a Wabbajack list, `(Ar_Size *aKeybinds) * 2`, which read as
+            // "ar_size without argument"].
+            let unbox_first = args.is_empty() && self.first_param_required(f) && p.peek().is_some_and(|t| t.is(XKind::Op, "*")) && starts_operand(p.peek2());
+            if !starts_operand(p.peek()) && !minus_first && !unbox_first {
                 break;
             }
             // A string variable given by name to an xNVSE function's plain string
@@ -689,6 +700,24 @@ impl Gen<'_> {
                     }
                 }
             }
+            // A short FormID alone in a form parameter names that form, in a mod's source
+            // compiled by the engine, as on a game function's line (`Gen::short_form_id`)
+            // [observed: Armor Damage Fix's Script Runner file of a Wabbajack list,
+            // `AuxVarSetFlt "…" (…) 0 f`, the owner form given as `f`; hypothesis: 0x0000000F
+            // as `player.AddItem f n` adds caps]. A name of the load order or a variable
+            // comes first.
+            if self.form_param(f, args.len()) {
+                if let Some(t) = p.peek().filter(|t| t.kind == XKind::Word && !t.text.contains('.')).cloned() {
+                    let alone = !p.peek2().is_some_and(|n| matches!(n.kind, XKind::LBracket | XKind::Op));
+                    let named = self.var(&t.text).is_some() || self.form(&t.text).is_some() || self.xfunction(&t.text).is_some();
+                    if let (true, false, Some(fi)) = (alone, named, self.short_form_id(&t.text)) {
+                        p.next();
+                        let r = self.ref_index(crate::unit::RefSlot::Form(fi.form), &t.text);
+                        args.push(XExpr::Ref { r: RefIndex(r) });
+                        continue;
+                    }
+                }
+            }
             let enc = match f.opcode {
                 Some(o) => self.table.param_enc(o, args.len()),
                 None if self.axis_param(f, args.len()) => ParamEnc::Axis,
@@ -703,7 +732,13 @@ impl Gen<'_> {
             // the argument and a range or pair (`1:2`, `"k"::v`) continues it, as in an
             // override block [hypothesis].
             let nested_aware = f.aware && self.in_expression() && !self.expression_param(f, args.len());
-            let min = if f.aware && !nested_aware {
+            // A parameter documented as a whole expression takes an assignment too
+            // [documented: TestExpr, "any expression"; observed: MCM Extender's and Keybind
+            // Quick Display's text scripts of a Wabbajack list, `if TestExpr aVars =
+            // aEntry["vars"]`, which read as an assignment to TestExpr's result].
+            let min = if f.aware && self.expression_param(f, args.len()) && !matches!(&f.func, FuncId::Name(n) if n.eq_ignore_ascii_case("let")) {
+                0
+            } else if f.aware && !nested_aware {
                 ARG_OVERRIDE
             } else if self.co || nested_aware {
                 ARG_IN_OVERRIDE
@@ -768,7 +803,12 @@ impl Gen<'_> {
             // GetWeaponFireRate gives a float), #2275].
             let plugin = self.table.unnumbered.get(&low).is_some_and(|u| !matches!(u.origin.as_str(), "NVSE" | "FOSE1" | "GECK1"));
             let int = INT_PARAMS_OBSERVED.contains(&(low.as_str(), k))
-                || plugin && self.table.unnumbered.get(&low).and_then(|u| u.params.get(k)).is_some_and(|p| p.kind == "int");
+                // Only where the function's own page types the parameter: a command with
+                // no page has the kinds of the one call that was probed, not its types
+                // [observed: Additive Hit Reactions' text file of a Wabbajack list passes
+                // `SetAnimAdditiveInterpsWeightMult (anim) ("bone") 0.1 1 0`, a kNVSE
+                // command no page lists; refusing the 0.1 cost the mod its whole file].
+                || plugin && self.table.unnumbered.get(&low).filter(|u| u.own_page).and_then(|u| u.params.get(k)).is_some_and(|p| p.kind == "int");
             if int {
                 self.diag("fraction_for_int_parameter", true, format!("{name}: {text}"));
             }
@@ -849,6 +889,8 @@ fn ends_in_call(e: &XExpr) -> bool {
         XExpr::Call { .. } => true,
         XExpr::Binary { r, .. } => ends_in_call(r),
         XExpr::Unary { e, .. } => ends_in_call(e),
+        // `(a = GetRefsInCell c 32 0 1 0 0 MapMarker)`: the assigned call's surplus.
+        XExpr::Assign { value, .. } => ends_in_call(value),
         _ => false,
     }
 }

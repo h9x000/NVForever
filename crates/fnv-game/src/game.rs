@@ -2266,7 +2266,9 @@ pub struct GameEnv<'g, 'a> {
 
 impl fnv_script::compile::Env for GameEnv<'_, '_> {
     fn form(&self, editor_id: &str) -> Option<fnv_script::compile::FormInfo> {
-        let id = *self.g.data.edids.get(&editor_id.to_ascii_lowercase())?;
+        // A name no plugin defines may be one of the game's own (`MapMarker`, `BobbyPin`),
+        // as in a plugin's source.
+        let Some(id) = self.g.data.edids.get(&editor_id.to_ascii_lowercase()) else { return fnv_script::compile::env::built_in(editor_id) };
         self.info(id.0)
     }
     fn info(&self, form: u32) -> Option<fnv_script::compile::FormInfo> {

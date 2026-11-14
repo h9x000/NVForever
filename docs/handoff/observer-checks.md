@@ -1996,3 +1996,19 @@ heading 75) with NVFExtProbe.esp loaded, as the jip-probes sets run.
      what does she say on it? The same for one actor each of MaleAdult10-12 and
      FemaleAdult12 without a Goodbye line of their own. If she offers none, the gate
      takes a quest's GetIsID (and what else?) but not its voice-type list.
+
+## Added 2026-11-14 (a form's name no plugin defines, NVSE mod compatibility)
+
+128. **What form does the bare name `BobbyPin` name in a script?** (P2; script-compiler.md
+     §7.) Ours: 0x0000000A, the bobby pin (Editor ID `Lockpick` in FalloutNV.esm)
+     [hypothesis: MCM Extender 1.63 passes `BobbyPin` where a form goes in a file the
+     extender compiles in the game, and tests the element as a misc item; no plugin
+     defines the name]. With xNVSE in the original's console: `player.AddItem BobbyPin 1`
+     and say what was added (or the console's error), then `print (GetFormIDString
+     BobbyPin)` if it took the name.
+
+129. **Is `PC1st` the short name of IsPC1stPerson?** (P2; encodings.json
+     `compiler.aliases`.) Ours: yes [hypothesis: seven mods' text scripts read `PC1st` as
+     the first-person flag; no compiled bytes]. With xNVSE in the original's console, in
+     first person then in third: `print $PC1st` (or `PC1st` alone, reading the console's
+     `>>` line), beside `IsPC1stPerson`.

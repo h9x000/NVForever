@@ -281,6 +281,27 @@ CompileScript, Script Runner files, the console), not the editor-parity compile:
   game's grammar has no such call and read `abs` with no argument [observed: Momentum's
   main loop, 928 failures in one run] (`Gen::bracket_call`).
 
+**Forms of mods' text files, 2026-11-14** [observed: the Script Runner and CompileScript
+files of the same list, which the extender compiles in the game, so no compiled bytes
+show the result; found with `fnvtool ext script-runner --run`, whose `problems` list the
+failures of a headless run]:
+
+- `PC1st` reads the first-person flag (encodings.json `compiler.aliases`, seven mods;
+  [hypothesis: IsPC1stPerson's short name, observer check 129]).
+- `BobbyPin` names a form though no plugin defines it (`compile::env::BUILT_IN`, the
+  runtime compiler's names too; [hypothesis: 0x0000000A, observer check 128]).
+- A short FormID alone in a plugin function's form parameter is that form
+  (`AuxVarSetFlt "…" v 0 f`).
+- `TestExpr a = b["k"]` without parentheses: a parameter documented as a whole expression
+  takes the assignment.
+- `Ar_Size *a`: a `*` right after a function that cannot go without its first argument
+  unboxes it [documented: NVSE Expressions].
+- In parentheses, the surplus of a call that is assigned there (`(a = GetRefsInCell c 32
+  0 1 0 0 MapMarker)`) and a second operand after a whole one (`TempCloneForm (FormA
+  FormB)`) are dropped (`rest_of_parentheses_dropped`) [hypothesis for the second].
+- A fraction is refused for an int parameter only where the function's own page types
+  it: a command no page lists has the kinds of one probed call.
+
 Still refused: the extender's C-style syntax (`fn () {`, `Name(args);`, `for ([ref r] in
 …) {`, one mod of the list), `call Fn {args}` in braces and `Call Fn, &ref, …`.
 
