@@ -23459,6 +23459,30 @@ expect = [
 ]
 
 [[scenario]]
+name = "mod-log-digest"
+kind = "tool"
+source = "docs/handoff/mod-testing-tools.md §4: a played run's log read down to what its mods ran into, and compared with the run before (fnvtool ext mod-log); two made-up logs in the game's format"
+areas = ["scripts", "extender", "mods"]
+paths = ["crates/fnvtool/src/mod_log_digest.rs", "crates/fnvtool/src/ext_cmd.rs", "engine/nvf-play/src/mod_log.rs", "tools/smoke/fixtures/mod-log/"]
+commands = [["ext", "mod-log", "{repo}/tools/smoke/fixtures/mod-log/run.log", "--previous", "{repo}/tools/smoke/fixtures/mod-log/before.log"]]
+expect = [
+  { json = "run.load_order", schema = "fnv.ext.mod_log/1", equals = "3 plugins (2 mods)" },
+  { json = "run.exited", schema = "fnv.ext.mod_log/1", equals = true, label = "the exit lines were found" },
+  { json = "run.failures.#", schema = "fnv.ext.mod_log/1", equals = 2, label = "the mod's two failures" },
+  { json = "run.counts.0.skipped_statements", schema = "fnv.ext.mod_log/1", equals = 2 },
+  { json = "run.missing_functions.0.name", schema = "fnv.ext.mod_log/1", equals = "NvfNoSuchFunction" },
+  { json = "run.not_there.0.names.0", schema = "fnv.ext.mod_log/1", equals = "NvfNoSuchPlugin" },
+  { json = "run.script_runner_skipped.#", schema = "fnv.ext.mod_log/1", equals = 0 },
+  # Against the run before: its failure, message box and skipped file are gone, two failures are new.
+  { json = "changes.#", schema = "fnv.ext.mod_log/1", equals = 3, label = "three kinds changed" },
+  { json = "changes.0.kind", schema = "fnv.ext.mod_log/1", equals = "script failures" },
+  { json = "changes.0.new.#", schema = "fnv.ext.mod_log/1", equals = 2 },
+  { json = "changes.0.gone.#", schema = "fnv.ext.mod_log/1", equals = 1 },
+  { json = "changes.1.kind", schema = "fnv.ext.mod_log/1", equals = "message boxes" },
+  { json = "changes.2.kind", schema = "fnv.ext.mod_log/1", equals = "Script Runner files skipped" },
+]
+
+[[scenario]]
 name = "script-runner-new"
 source = "issue #1460, docs/spec-notes/ext-script-runner.md §2: a run without a save runs the gr_ files, then the gn_/ln_ files; a file that does not compile is skipped with its line; then a save for script-runner-load"
 note = 'The mods layer of the fixture home: gr_nvfsmoke.txt sets the Luck of the player to 3 and registers optional\gl_nvfsmoke_late.txt, ln_nvfsmoke.txt adds 2'

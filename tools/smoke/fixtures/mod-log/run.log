@@ -1,0 +1,10 @@
+2026-11-14T10:00:00.000000Z  INFO nvf_play::mod_log: mods: load order, 3 plugins (2 mods): 00 FalloutNV.esm, 01 NvfSmokeA.esp, 02 NvfSmokeB.esp
+2026-11-14T10:00:01.000000Z  INFO nvf_play::script: scripts: 7 units run from their source text, 0 kept their bytes (the source does not compile)
+2026-11-14T10:00:02.000000Z  INFO nvf_play::mod_log: mods: NvfSmokeA.esp: 4 scripts, 3 use the script extender: 3 run from source, 0 do not compile and cannot run
+2026-11-14T10:00:03.000000Z  INFO nvf_play::mod_log: mods: NvfSmokeA.esp: calls 1 function NVForever does not have (the calls do nothing): NvfNoSuchFunction
+2026-11-14T10:00:04.000000Z  WARN nvf_play::mod_log: mods: the console asks GetPluginVersion "NvfNoSuchPlugin": -1, not there (first in SR 0x00000000 unit 0)
+2026-11-14T10:00:05.000000Z  INFO nvf_play::script: script runner: ln_nvfsmoke.txt ran (new game)
+2026-11-14T10:00:06.000000Z  WARN nvf_play::mod_log: mods: NvfSmokeA.esp: SCPT 0x01000801: skipped: line 70: no element at key "x"
+2026-11-14T10:00:07.000000Z  WARN nvf_play::mod_log: mods: NvfSmokeA.esp: SCPT 0x01000801: skipped: line 74: no element at key "x"
+2026-11-14T10:00:08.000000Z  INFO nvf_play::combat: movement: the Modify Run Speed perks make the player move at 175% (NvfSmokePerk)
+2026-11-14T10:00:09.000000Z  INFO nvf_play::mod_log: mods: at exit: NvfSmokeA.esp: 0 script errors, 0 failed calls, 2 skipped statements, 1 functions not built

@@ -30,6 +30,7 @@ mod combat_cmd;
 mod combat_sim;
 mod dds_cmd;
 mod mo2_args;
+mod mod_log_digest;
 mod dialogue_cmd;
 mod spt_cmd;
 mod esm_cmd;

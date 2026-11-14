@@ -179,6 +179,23 @@ pub enum ExtCmd {
         #[arg(long)]
         no_data_files: bool,
     },
+    /// A played run's log read down to what a mod list's tester needs (fnv.ext.mod_log/1):
+    /// the log `NVForever-mods-test.bat` writes with the mod log on
+    /// (`NVF_PLAY_TEST_MOD_LOG=1`). The first of each script failure per mod with the
+    /// counts at exit, the scripts that do not compile, the functions NVForever lacks, the
+    /// Script Runner files skipped, the message boxes shown, the extender plugins asked
+    /// for and not there, HUD and MCM lines, errors and panics. With `--previous`, what is
+    /// new and what is gone since that run. Reads only the log.
+    ModLog {
+        /// The run's log.
+        log: PathBuf,
+        /// The log of the run before, to compare with.
+        #[arg(long)]
+        previous: Option<PathBuf>,
+        /// Also write the digest as text a person reads to this file.
+        #[arg(long)]
+        summary: Option<PathBuf>,
+    },
     /// Write the compiled script units that have no source text (route 1 input) to a
     /// directory: each unit's bytes as `<n>.scda`, and `units.json` with its plugin, owner,
     /// header, variables, references and whether its bytes call extender opcodes. Keep the
@@ -293,6 +310,23 @@ pub fn run(cmd: ExtCmd) -> anyhow::Result<Value> {
             Ok(doc)
         }
         ExtCmd::ScriptRunner { lo, schema, functions, roots, run, no_data_files } => script_runner(&lo, &schema, functions, roots, run, no_data_files),
+        ExtCmd::ModLog { log, previous, summary } => {
+            use crate::mod_log_digest::{changes, changes_json, text, Digest};
+            // A log may hold bytes that are not UTF-8 (a mod's file name in the system's code page).
+            let read = |p: &Path| -> anyhow::Result<Digest> { Ok(Digest::read(&String::from_utf8_lossy(&std::fs::read(p).with_context(|| p.display().to_string())?))) };
+            let now = read(&log)?;
+            // The run before may not be there (the first run after the launcher kept none).
+            let before = previous.as_deref().filter(|p| p.exists()).map(read).transpose()?;
+            if let Some(path) = &summary {
+                std::fs::write(path, text(&now, before.as_ref())).with_context(|| path.display().to_string())?;
+            }
+            let mut doc = json!({"schema": "fnv.ext.mod_log/1", "log": log.display().to_string(), "run": now.json()});
+            if let Some(b) = &before {
+                doc["previous"] = json!(previous.as_ref().map(|p| p.display().to_string()));
+                doc["changes"] = changes_json(&changes(&now, b));
+            }
+            Ok(doc)
+        }
         ExtCmd::Queries { lo, schema, functions, steps, start_cell, save, trace, ini, config } => {
             // Mods' files as `script run` sees them: the Data folder (and its archives)
             // read-only, `--config` for Data\Config; nothing is written to disk.

@@ -106,6 +106,40 @@ the run stays a hand-played one. The log then has `mods:` lines:
   not compile says so with its line (`CompileScript <path>|compile`);
 - at exit, counts per mod and what was asked for and not there.
 
+## 4. `fnvtool ext mod-log`: the run's log, read down
+
+```
+fnvtool ext mod-log <the run's log> [--previous <the log of the run before>] [--summary <text file>]
+```
+
+A played run of a large list writes tens of thousands of lines (27,434 for four minutes
+of a 232-plugin list), a few dozen of them what the tester needs. This reads only the log
+and gives (fnv.ext.mod_log/1): errors and panics; the message boxes shown, each once with
+its count; the Script Runner files skipped; the first of each script failure per mod, the
+mods with the most skipped statements first, with the counts at exit; the scripts that do
+not compile or run without lines; the functions NVForever lacks with the mods that call
+each; the extender plugins asked for and not there (mods' optional patch files are only
+counted); the movement lines; MCM's last list line; the HUD pieces; the menu files'
+warnings; other warnings by the part of the game. A run whose exit lines are missing
+(crashed, closed from outside) says so.
+
+With `--previous`, `changes` lists per kind what is new and what is gone since that run:
+the answer to "did the last build change anything". `--summary` writes the same as text a
+person reads, the changes first, failures that differ only in the script's line folded
+into one entry (`lines 1, 2, 3: …`).
+
+Read the digest first, and open the log only for the lines around a failure. A launcher
+can keep the last log and write the summary after the game exits:
+
+```
+if exist run.log move /y run.log run.previous.log
+nvforever.exe … > run.log 2>&1
+fnvtool.exe ext mod-log run.log --previous run.previous.log --summary run.summary.txt > nul
+```
+
+The game writes no colour codes when its output goes to a file (since 2026-11-14); the
+digest takes them out of older logs.
+
 ## How they fit
 
 1. **Before any run**: `ext report`, then `ext connections`, on the mod list. Everything
