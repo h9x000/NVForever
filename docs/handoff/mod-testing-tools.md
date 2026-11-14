@@ -17,9 +17,27 @@ A mod works only when every layer holds, and a player sees nothing until the las
 | 1 | Does the game start with the mod (archives, plugins)? | the run log's first lines | yes |
 | 2 | Do its scripts compile? | `fnvtool ext report` | no |
 | 3 | Does every function its scripts can call exist? | `fnvtool ext connections` | no |
-| 4 | Does what it calls work when it runs (arguments, state)? | the mod log | yes |
+| 4 | Does what it calls work when it runs (arguments, state)? | the mod log; for its Script Runner and CompileScript text files, `fnvtool ext script-runner --run` (`problems`) | yes; no for the text files |
 | 5 | Does a call's effect reach the game? | nothing yet (issue #2272) | yes |
 | 6 | Are its menus and HUD pieces drawn, and do they take input? | the mod log's MCM lines; otherwise a look at the screen | yes |
+
+## 0. `fnvtool ext script-runner --run`: a mod's text files, run without the game
+
+```
+fnvtool ext script-runner <Data> --mo2-profile <profile folder> --schema schemas/fnv --root <mod folder>… --no-data-files --run
+```
+
+Compiles every Script Runner file of the `--root` folders (a mod manager's mod folders)
+and runs the game-restart and new-game ones in a headless new game. Since 2026-11-14 the
+result also has `problems`: every failed call, stopped script, skipped statement and
+unbuilt function of that run, each distinct one once with its count, unit (`CompileScript
+<file>` for the files they compile) and line; and `printed`, what the files printed. It
+is the mod log's failure list without a played run: five of the owner's runs of a
+232-plugin list each found only the next line a file stopped at, this finds them at once.
+Give only the mod folders that hold script text (`NVSE/plugins/scripts`,
+`NVSE/user_defined_functions`, `NVSE/CompileScript`, `MCM`): a command line holds about
+32,000 characters. What needs a drawn scene or a menu (a NIF's nodes, UI tiles a menu
+file builds) still fails here and may work in the game.
 
 ## 1. `fnvtool ext connections`: every call, without running anything
 

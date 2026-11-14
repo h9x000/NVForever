@@ -84,6 +84,11 @@ The prefixes other than `gr_`, the order of the files, whether `gr_` runs once p
 session or again after a load from the pause menu, and where `gl_`/`ln_` run relative to
 the LoadGame events (docs/handoff/observer-checks.md).
 
+With `--run` the result also lists what went wrong in the run (`problems`: kind
+`call_failed`, `script_error`, `skipped` or `not_built`, the unit, the words and a count)
+and what the files printed (`printed`), from the game's trace events
+(fnv.ext.script_runner/1; docs/handoff/mod-testing-tools.md §0).
+
 ## 6. The files that do not compile yet
 
 `fnvtool ext script-runner` over the owner's MO2 mods (109 distinct files) against the

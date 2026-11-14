@@ -557,6 +557,30 @@ fn script_runner(lo: &LoadOrderArgs, schema: &Path, functions: Option<PathBuf>, 
         g.new_game();
         let new_game = rows(g.run_script_runner(Moment::NewGame));
         doc["ran"] = json!({"restart": restart, "new_game": new_game});
+        // What went wrong while they ran, each distinct line once with its count, and
+        // what the files printed: the same failures the game's mod log names.
+        let mut problems: Vec<(String, String, String, usize)> = Vec::new();
+        let mut printed = Vec::new();
+        for e in &g.events {
+            use fnv_game::trace::EventKind as K;
+            let (kind, unit, what) = match &e.kind {
+                K::CallFailed { name, unit, error, .. } => ("call_failed", unit, format!("{name}: {error}")),
+                K::ScriptError { unit, error } => ("script_error", unit, error.clone()),
+                K::Skipped { unit, what } => ("skipped", unit, what.clone()),
+                K::Unhandled { name, unit, .. } => ("not_built", unit, name.clone()),
+                K::ScriptPrint { unit, text } => {
+                    printed.push(json!({"unit": unit, "text": text}));
+                    continue;
+                }
+                _ => continue,
+            };
+            match problems.iter_mut().find(|p| p.0 == kind && &p.1 == unit && p.2 == what) {
+                Some(p) => p.3 += 1,
+                None => problems.push((kind.into(), unit.clone(), what, 1)),
+            }
+        }
+        doc["problems"] = problems.into_iter().map(|(kind, unit, what, count)| json!({"kind": kind, "unit": unit, "what": what, "count": count})).collect();
+        doc["printed"] = json!(printed);
     }
     Ok(doc)
 }
