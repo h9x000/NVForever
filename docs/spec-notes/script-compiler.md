@@ -287,9 +287,9 @@ show the result; found with `fnvtool ext script-runner --run`, whose `problems` 
 failures of a headless run]:
 
 - `PC1st` reads the first-person flag (encodings.json `compiler.aliases`, seven mods;
-  [hypothesis: IsPC1stPerson's short name, observer check 129]).
+  [hypothesis: IsPC1stPerson's short name, observer check 138]).
 - `BobbyPin` names a form though no plugin defines it (`compile::env::BUILT_IN`, the
-  runtime compiler's names too; [hypothesis: 0x0000000A, observer check 128]).
+  runtime compiler's names too; [hypothesis: 0x0000000A, observer check 137]).
 - A short FormID alone in a plugin function's form parameter is that form
   (`AuxVarSetFlt "…" v 0 f`).
 - `TestExpr a = b["k"]` without parentheses: a parameter documented as a whole expression

@@ -123,7 +123,7 @@ impl<'a> LoadOrderIndex<'a> {
 /// `MapMarker` is 0x00000010 [observed: CASM with MCM 1.8's compiled script lists form
 /// 0x00000010 where its source says `rRef.gbo == MapMarker`; the base game's map marker
 /// references have that base, refs.md]; a static [hypothesis: nothing here reads the type].
-/// `BobbyPin` is taken to be 0x0000000A, the bobby pin [hypothesis, observer check 128:
+/// `BobbyPin` is taken to be 0x0000000A, the bobby pin [hypothesis, observer check 137:
 /// MCM Extender 1.63's `OnRestart.gek`, a text file the extender compiles in the game,
 /// passes the bare name `BobbyPin` where a form goes (`AuxVarSetRef "…" BobbyPin -1`) and
 /// its other files test that element with `GetType … != 31`, the misc item's type; no

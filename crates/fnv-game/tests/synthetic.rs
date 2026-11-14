@@ -3625,7 +3625,6 @@ fn handlers_with_no_function_are_refused_once() {
 Begin Function { }
 CallAfterSeconds 0 r
 SetGameMainLoopCallback r 1
-SetOnHitEventHandler r 1
 SetEventHandler \"OnHit\" r
 SetJohnnyOnDyingEventHandler 1 r
 SetJohnnyOnLimbGoneEventHandler 1 r
@@ -3639,7 +3638,9 @@ End
         EventKind::ScriptError { error, .. } => Some(error.clone()),
         _ => None,
     }).collect();
-    assert_eq!(errors.len(), 6, "one each, registered three times: {errors:?}");
+    // JIP's SetOn…EventHandler keeps such a handler and says its failure once, with who
+    // registered it (tests/jip_registration_provenance.rs): not in this list.
+    assert_eq!(errors.len(), 5, "one each, registered three times: {errors:?}");
     assert!(errors.iter().all(|e| e.contains("no function to call") && e.ends_with("not registered")), "{errors:?}");
     assert!(!errors.iter().any(|e| e.contains("is not a function script")), "none fired: {errors:?}");
 }

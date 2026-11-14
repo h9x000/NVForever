@@ -21,6 +21,7 @@ mod ash_piles;
 mod build_identity;
 mod camera_paths;
 mod caravan_data;
+mod clone_calling_reference;
 mod combat_blocks;
 mod combat_lines_data;
 mod combat_transitions;
@@ -35,6 +36,7 @@ mod dialogue;
 mod difficulty;
 mod effect_updates;
 mod experience;
+mod extender_conditions;
 mod factions;
 mod functions;
 mod game_clock;
@@ -87,6 +89,7 @@ mod sup4;
 mod sup6;
 mod sup7;
 mod sweep;
+mod temporary_scene_bases;
 mod traps;
 mod ui_functions;
 mod ui_hud;
@@ -101,6 +104,8 @@ mod zones;
 
 /// With `autotests = false` Cargo builds only the files named, so a new file in `tests/`
 /// would never run: every one is a `mod` here or a `[[test]]` in Cargo.toml, not both.
+mod world_model_fields;
+
 #[test]
 fn every_test_file_is_built() {
     let dir = std::path::Path::new(env!("CARGO_MANIFEST_DIR"));

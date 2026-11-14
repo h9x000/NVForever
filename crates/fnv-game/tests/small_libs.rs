@@ -69,6 +69,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"REGN", &regn),
         top(b"SPEL", &spel),
         top(b"QUST", &qust),
+        top(b"NPC_", &record(b"NPC_", 0, FormId::PLAYER_BASE.0, &[sub(b"EDID", z("Player"))])),
         top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[outside, inside, children].concat()))),
         top(b"WRLD", &wrld),
     ]
@@ -108,6 +109,26 @@ fn game(f: &Fixture) -> Game<'_> {
     g
 }
 
+#[test]
+fn source_get_is_form_type_uses_the_reference_base_signature() {
+    let f = fixture();
+    let mut g = game(&f);
+    for (expression, expected) in [
+        ("TestBoxRef.GetIsFormType \"ACTI\"", 1.0),
+        ("TestBoxRef.GetIsFormType \"acti\"", 1.0),
+        ("TestBoxRef.GetIsFormType \"REFR\"", 0.0),
+        ("TestBoxRef.GetIsFormType \"MISC\"", 0.0),
+        ("TestGun.GetIsFormType \"WEAP\"", 1.0),
+        ("TestGun.GetIsFormType \"Weapon\"", 0.0),
+        ("GetIsFormType \"ACTI\"", 0.0),
+    ] {
+        assert_eq!(g.run_query(&format!("Begin Function {{}}\nSetFunctionValue ({expression})\nEnd"), Default::default()).unwrap(), XVal::Num(expected), "{expression}");
+    }
+    let XVal::Ref(temporary) = g.run_query("Begin Function {}\nplayer.AddItem TestGun 1\nSetFunctionValue (player.GetFirstRefForItem TestGun)\nEnd", Default::default()).unwrap() else { panic!("expected an inventory reference") };
+    assert_ne!(temporary, 0);
+    assert_eq!(fnv_game::nvse::call(&mut g, &Default::default(), "getisformtype", Some(FormId(temporary)), &[XVal::Str("WEAP".into())]), Some(Ok(XVal::Num(1.0))));
+}
+
 /// A data folder made for the run: the KF files the kNVSE functions look for, Stewie's
 /// Tweaks' INI and vheyes-nvse's queued command, and the plugin bytes TTW_CRC32 reads.
 fn files() {
@@ -134,6 +155,8 @@ End
         std::fs::write(dir.join("NVSE/user_defined_functions/Broken.gek"), "Begin Function { }\nwhile (1 +)\nloop\nEnd\n").unwrap();
         std::fs::write(dir.join("NVSE/Plugins/nvse_stewie_tweaks.ini"), "[Tweaks]\r\nbJumpWhileAiming=1\r\n[Cookable Grenades]\r\nsSoundName=\"WPNGrenadeBeep\"\r\n").unwrap();
         std::fs::write(dir.join("Config/vheyes-nvse/QueuedCommand.txt"), "SetGlobalTimeMultiplier 2\r\n").unwrap();
+        std::fs::write(dir.join("NVSE/Plugins/OwnedSibling.ini"), "[Main]\r\nValue=17\r\n").unwrap();
+        std::fs::write(dir.join("Config/OwnedLocal.ini"), "[Main]\r\nValue=41\r\n").unwrap();
     });
     set_roots(Roots {
         read: vec![dir],
@@ -581,7 +604,7 @@ fn cached_ini_file_quotes_are_removed_without_changing_default_or_cached_values(
 /// A form the game itself names and no plugin defines resolves in a mod's text file as in
 /// a plugin's source: MCM Extender registers each mod's page with `AuxVarSetRef "…"
 /// BobbyPin -1`, which read as the text "BobbyPin" minus 1 and stopped the statement
-/// [hypothesis: BobbyPin is 0x0000000A, observer check 128].
+/// [hypothesis: BobbyPin is 0x0000000A, observer check 137].
 #[test]
 fn a_mods_text_file_names_the_games_own_forms() {
     files();
@@ -589,4 +612,59 @@ fn a_mods_text_file_names_the_games_own_forms() {
     let mut g = game(&f);
     assert_eq!(q(&mut g, "SetFunctionValue (Call (CompileScript \"OwnForms.gek\"))"), n(1.0));
     assert_eq!(q(&mut g, "SetFunctionValue (GetFormIDString (PlayerREF.AuxiliaryVariableGetRef \"*nvfOwn\" 0))"), XVal::Str("0000000A".into()));
+}
+
+#[test]
+fn ini_sibling_paths_read_owned_files_and_share_session_cache_values() {
+    files();
+    let f = fixture();
+    let mut g = game(&f);
+    assert_eq!(q(&mut g, r#"SetFunctionValue (GetINIFloat "Main:Value" "../NVSE/Plugins/OwnedSibling.ini")"#), n(17.0));
+    q(&mut g, r#"SetINIFloat "Main:Value" 23 "../NVSE/Plugins/OwnedSibling.ini""#);
+    assert_eq!(q(&mut g, r#"SetFunctionValue (GetINIFloat_Cached "Main:Value" "../NVSE/Plugins/Group/../OwnedSibling.ini" -7)"#), n(23.0));
+    assert_eq!(q(&mut g, r#"SetFunctionValue (GetINIFloat "Main:Value" "Group/../OwnedLocal.ini")"#), n(41.0));
+    assert_eq!(q(&mut g, r#"SetFunctionValue (GetINIFloat "Main:Value" "/OwnedLocal.ini")"#), n(0.0), "a rooted name must not alias a valid Config file");
+    q(&mut g, r#"SetINIFloat "Main:Value" 99 "../../OwnedEscape.ini""#);
+    assert_eq!(q(&mut g, r#"SetFunctionValue (GetINIFloat "Main:Value" "../../OwnedEscape.ini")"#), n(0.0));
+    let original = std::env::temp_dir().join(format!("nvf-small-libs-{}", std::process::id())).join("NVSE/Plugins/OwnedSibling.ini");
+    assert_eq!(std::fs::read_to_string(original).unwrap(), "[Main]\r\nValue=17\r\n", "without a write root, the session write leaves the owned original unchanged");
+}
+
+#[test]
+fn objective_links_are_nested_paths_while_alt_is_a_flat_marker_list() {
+    use fnv_game::quest::ObjectiveState;
+    use fnv_sim::refs::Teleport;
+    let mut f = fixture();
+    // Typed, owned graph metadata uses only baseline public structures, so this
+    // identical fixture also compiles before the new cache field exists.
+    let template = f.refs.get(FormId(BOX_REF)).unwrap().clone();
+    for (id, cell, destination) in [(0x900, INSIDE, 0x902), (0x902, 0xFFFF, 0x900), (0x901, 0xFFFF, 0x903), (0x903, OUTSIDE, 0x901)] {
+        let mut door = template.clone();
+        door.id = FormId(id);
+        door.edid = None;
+        door.cell = Some(FormId(cell));
+        door.stored_in = Some(FormId(cell));
+        door.teleport = Some(Teleport { door: FormId(destination), pos: [0.0; 3], rot: [0.0; 3], no_alarm: false });
+        f.refs.refs.insert(door.id, door);
+        f.refs.by_cell.entry(FormId(cell)).or_default().push(FormId(id));
+    }
+    let mut g = game(&f);
+    let query = |g: &mut Game, source: &str| g.run_query(source, Default::default()).unwrap_or_else(|e| panic!("{source}: {e}"));
+    assert_eq!(q(&mut g, "SetFunctionValue (Ar_Size (GetCurrentQuestObjectiveTeleportLinks))"), n(0.0));
+    g.ui.active_quest = Some(FormId(QUEST));
+    g.quests.entry(FormId(QUEST)).or_default().objectives.insert(10, ObjectiveState { displayed:true, completed:false });
+    g.other.jip10.objective_targets.insert((FormId(QUEST),10), vec![FormId(BOX_REF)]);
+    g.world.get(FormId::PLAYER_REF).unwrap().cell = Some(FormId(INSIDE));
+    assert_eq!(g.check_quest_targets(FormId(QUEST)).len(), 1);
+    assert_eq!(g.cell_of(FormId(BOX_REF)), Some(FormId(INSIDE)));
+    assert_eq!(query(&mut g, "array_var paths\nBegin Function {}\nlet paths := GetCurrentQuestObjectiveTeleportLinks\nSetFunctionValue paths[0][0]\nEnd"), XVal::Ref(BOX_REF));
+    assert_eq!(query(&mut g, "array_var markers\nBegin Function {}\nlet markers := GetCurrentQuestObjectiveTeleportLinksAlt\nSetFunctionValue markers[0]\nEnd"), XVal::Ref(BOX_REF));
+    // Two rooms away: the first marker is the local door, and the nested row
+    // keeps both doors followed by the actual objective reference.
+    g.world.get(FormId(BOX_REF)).unwrap().cell = Some(FormId(OUTSIDE));
+    assert_eq!(query(&mut g, "array_var paths\nBegin Function {}\nlet paths := GetCurrentQuestObjectiveTeleportLinks\nSetFunctionValue (Ar_Size paths[0])\nEnd"), n(3.0));
+    assert_eq!(query(&mut g, "array_var paths\nBegin Function {}\nlet paths := GetCurrentQuestObjectiveTeleportLinks\nSetFunctionValue paths[0][2]\nEnd"), XVal::Ref(BOX_REF));
+    assert_eq!(query(&mut g, "array_var markers\nBegin Function {}\nlet markers := GetCurrentQuestObjectiveTeleportLinksAlt\nSetFunctionValue markers[0]\nEnd"), XVal::Ref(0x900));
+    g.quests.get_mut(&FormId(QUEST)).unwrap().objectives.get_mut(&10).unwrap().completed = true;
+    assert_eq!(q(&mut g, "SetFunctionValue (Ar_Size (GetCurrentQuestObjectiveTeleportLinks))"), n(0.0));
 }
