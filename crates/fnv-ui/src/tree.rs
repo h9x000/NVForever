@@ -1133,6 +1133,19 @@ impl Ui {
         out
     }
 
+    /// [design] Whether `id`, a tile of a menu a mod replaced whole, was added to it apart
+    /// from the menu's own file: by a UIO list, from another file, from a template or by a
+    /// script. The mod log writes such a part when it shows, the menu's own parts only
+    /// when they change.
+    pub fn added_apart(&self, menu: TileId, id: TileId) -> bool {
+        let apart = match (&self.tile(id).origin, &self.tile(menu).origin) {
+            (Origin::File { path: a, .. }, Origin::File { path: b, .. }) => !a.eq_ignore_ascii_case(b),
+            (Origin::Injected | Origin::Template, _) => true,
+            _ => false,
+        };
+        apart || self.uio_tiles.contains(&id)
+    }
+
     /// [design] Whether [`Ui::mod_added_tiles`] of `menu` has any, without walking it:
     /// from the count kept as tiles are made, unloaded or change origin, so the engine may
     /// ask every frame [design: #938].

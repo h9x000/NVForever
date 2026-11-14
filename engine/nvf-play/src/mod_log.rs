@@ -244,7 +244,11 @@ pub fn hud_lines(log: &mut ModLog, ui: &fnv_ui::Ui) -> Vec<String> {
     let mut pieces: Vec<(fnv_ui::TileId, bool)> = Vec::new();
     for root in ui.mod_added_tiles(menu) {
         if root == menu {
-            pieces.extend(ui.tile(menu).children.iter().map(|&c| (c, false)));
+            // A part another file or a UIO list added (a loot menu) is written when it
+            // shows too: its rows may be built before it shows, or never [design: the
+            // owner's fifth run wrote nothing for the loot menu, whose tile count did not
+            // change while it showed].
+            pieces.extend(ui.tile(menu).children.iter().map(|&c| (c, ui.added_apart(menu, c))));
         } else {
             pieces.push((root, true));
         }
@@ -520,7 +524,7 @@ mod tests {
         use fnv_ui::{MemSource, Ui};
         let mut src = MemSource::default().with(
             "menus\\hud.xml",
-            r#"<menu name="HUDMainMenu"> <rect name="Compass"> <x> 5 </x> </rect> <rect name="Loot"> <template name="Row"> <text name="R"> <string> Caps </string> </text> </template> </rect> </menu>"#,
+            r#"<menu name="HUDMainMenu"> <rect name="Compass"> <x> 5 </x> </rect> <rect name="Loot"> <template name="Row"> <text name="R"> <string> Caps </string> </text> </template> </rect> <template name="Part"> <rect name="P"> <x> 1 </x> </rect> </template> </menu>"#,
         );
         src.loose_files.insert("menus\\hud.xml".to_string());
         let mut ui = Ui::new();
@@ -535,6 +539,12 @@ mod tests {
         assert_eq!(lines[0], "HUD piece HUDMainMenu/Loot changed: 2 tiles", "{lines:?}");
         assert!(lines.iter().any(|l| l.contains("Item0 text") && l.contains("string \"Caps\"")), "{lines:?}");
         assert!(!lines.iter().any(|l| l.contains("Compass")), "{lines:?}");
+        // A part added apart from the menu's file (a template here, a UIO list in a mod
+        // list) is written as soon as it shows, with no change of its tiles.
+        ui.add_from_template(&src, "HUDMainMenu", "Part", Some("Added")).unwrap();
+        ui.update();
+        let lines = hud_lines(&mut log, &ui);
+        assert_eq!(lines[0], "HUD piece HUDMainMenu/Added shows: 1 tiles", "{lines:?}");
     }
 
     #[test]
