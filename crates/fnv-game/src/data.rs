@@ -899,6 +899,13 @@ pub struct GameData {
     pub unit_by_key: HashMap<String, UnitId>,
     /// SCPT FormID → unit.
     pub scripts: HashMap<FormId, UnitId>,
+    /// SCPT FormID → unit, for the scripts left out of `scripts` (SCHR flag "Enabled"
+    /// clear) that hold a Function block: nothing runs them, but another script's Call
+    /// does [observed: JBTImproved.esp of a Wabbajack list saves its override of Just
+    /// Assorted Mods' `JBTMCMUDF` with the flag clear, and the same plugin's MCM script
+    /// calls it each time its page is drawn; refusing it left the page without its
+    /// options].
+    pub functions_off: HashMap<FormId, UnitId>,
     pub quests: BTreeMap<FormId, QuestDef>,
     pub infos: HashMap<FormId, InfoDef>,
     /// The dialogue lines (INFO) of each topic (DIAL), in topic order: the order of the
@@ -1874,6 +1881,7 @@ impl GameData {
             units: Vec::new(),
             unit_by_key: HashMap::new(),
             scripts: HashMap::new(),
+            functions_off: HashMap::new(),
             quests: BTreeMap::new(),
             infos: HashMap::new(),
             topics: HashMap::new(),
@@ -2051,8 +2059,15 @@ impl GameData {
                         // SCHR flag "Enabled" clear: the script does not run [documented: xEdit
                         // SCHR flags; hypothesis: what a disabled script does, logic-fields.md
                         // §2]. One master script has it clear (l38upgradeGunRack01SCRIPT).
-                        if let Some(&u) = unit_of.get(&UnitOwner::Script { form: id.0 }).filter(|&&u| units[u].unit.header.flags & 1 != 0) {
-                            d.scripts.insert(id, u);
+                        match unit_of.get(&UnitOwner::Script { form: id.0 }) {
+                            Some(&u) if units[u].unit.header.flags & 1 != 0 => {
+                                d.scripts.insert(id, u);
+                            }
+                            // A function script is still there for a Call (`functions_off`).
+                            Some(&u) if units[u].program.blocks.iter().any(|b| b.event == fnv_script::ir::FUNCTION_BLOCK) => {
+                                d.functions_off.insert(id, u);
+                            }
+                            _ => {}
                         }
                     }
                     b"QUST" => {
@@ -2354,6 +2369,12 @@ impl GameData {
 
     pub fn script(&self, script: FormId) -> Option<&Compiled> {
         self.scripts.get(&script).map(|&u| &self.units[u])
+    }
+
+    /// The function script a Call names: [`Self::script`], or one whose "Enabled" flag is
+    /// clear (`functions_off`).
+    pub fn function_script(&self, script: FormId) -> Option<&Compiled> {
+        self.scripts.get(&script).or_else(|| self.functions_off.get(&script)).map(|&u| &self.units[u])
     }
 
     /// The file names of the plugins that hold `form`, defining it or overriding it, in

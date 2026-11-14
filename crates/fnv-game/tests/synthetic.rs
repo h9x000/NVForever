@@ -2982,6 +2982,8 @@ fn udf_fixture() -> Fixture {
         // Functions that return a lambda (#1088): two in one unit, one in another.
         (0x0000_0906u32, "TestMaker", "scn TestMaker\nint k\nint w\nBegin Function {w}\n  if w\n    SetFunctionValue ({k} => k + 100)\n  else\n    SetFunctionValue ({k} => k * 2)\n  endif\nEnd\n".to_string()),
         (0x0000_0907u32, "TestMaker2", "scn TestMaker2\nint k\nBegin Function {}\n  SetFunctionValue ({k} => k - 1)\nEnd\n".to_string()),
+        // Saved with the SCHR flag "Enabled" clear (below): still there for a Call.
+        (0x0000_0908u32, "TestOff", "scn TestOff\nint a\nBegin Function {a}\n  SetFunctionValue a + 40\nEnd\n".to_string()),
     ] {
         // TestFact calls itself: its own name resolves through a seed reference list.
         let c = if edid != "TestAdd" {
@@ -3030,6 +3032,9 @@ fn udf_fixture() -> Fixture {
                 });
             }
         }
+        if edid == "TestOff" {
+            subs[0].data[18..20].copy_from_slice(&0u16.to_le_bytes());
+        }
         subs.push(sub(b"SCTX", src.as_bytes().to_vec()));
         scripts.push(record(b"SCPT", 0, fid, &[vec![sub(b"EDID", z(edid))], subs].concat()));
     }
@@ -3059,6 +3064,10 @@ fn global_after(f: &Fixture, src: &str) -> f32 {
 fn call_runs_a_function_script_with_its_parameters() {
     let f = udf_fixture();
     assert_eq!(global_after(&f, "let TestGlobal := Call TestAdd 2, 3"), 5.0);
+    // A function script saved with its "Enabled" flag clear runs when called [observed:
+    // JBTImproved.esp's JBTMCMUDF, called by the same plugin's MCM script].
+    assert_eq!(global_after(&f, "let TestGlobal := Call TestOff 2"), 42.0);
+    assert!(f.data.script(FormId(0x0000_0908)).is_none() && f.data.function_script(FormId(0x0000_0908)).is_some());
     // Recursion: each call has its own variables [documented: User Defined Function].
     assert_eq!(global_after(&f, "let TestGlobal := Call TestFact 5"), 120.0);
 }

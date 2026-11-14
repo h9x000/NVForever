@@ -3245,7 +3245,7 @@ impl<'a> Game<'a> {
             let compiled = id.checked_sub(COMPILED_BASE).filter(|_| id < TEMP_REF_BASE).and_then(|i| self.compiled_files.get(i as usize).copied());
             let unit = match compiled {
                 Some(u) => u,
-                None => data.script(FormId(id)).ok_or_else(|| format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))))?,
+                None => data.function_script(FormId(id)).ok_or_else(|| format!("{}{NOT_A_FUNCTION}", data.name(FormId(id))))?,
             };
             let block = unit.program.blocks.iter().find(|b| b.event == fnv_script::ir::FUNCTION_BLOCK).ok_or_else(|| format!("{}{NO_FUNCTION_BLOCK}", data.name(FormId(id))))?;
             let params = block.params.iter().flatten().filter_map(|a| if let Arg::Var(v) = a { Some(*v) } else { None }).collect();
