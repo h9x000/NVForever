@@ -105,9 +105,13 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// missing" messages although NVForever runs the functions TTW calls from them
 /// (`TTW_GetPlugins` and the other `TTW_*`, StewieGetValue; `fnv_game::nvse_small`)
 /// [design, owner 2026-11-08: "technically the dll is present, just in engine"]:
-/// Stewie's Tweaks is reported at 941, the lowest TTW 3.4 accepts, and ttw_nvse at 1,
-/// as TTW only asks whether it is there. Most of Stewie's tweaks themselves are not
-/// built (ext-small.md).
+/// Stewie's Tweaks was reported at 941, the lowest TTW 3.4 accepts, and ttw_nvse at 1,
+/// as TTW only asks whether it is there. Since 2026-11-14 Stewie's Tweaks is at
+/// [`UNOBSERVED_VERSION`] like the others no version was read for: three mods of a
+/// Wabbajack list ask for 960 and stopped at "Install latest lStewieAl's Tweaks"
+/// [observed: Companion Map Icons, Pip-Boy UI Tweaks, Quality of Life ESPless; design: a
+/// number too low stops a mod, ext-version.md §4]. Most of Stewie's tweaks themselves
+/// are not built (ext-small.md).
 ///
 /// The same holds for every other plugin whose functions the engine builds: a mod that
 /// asks `IsPluginInstalled "SUP NVSE Plugin"` before calling SUP's functions got 0 and
@@ -128,15 +132,18 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// Not reported, though the catalogue has functions of theirs: yUI (its two ySI trait
 /// functions are built, its menus are not, and a mod that finds it goes on to read its
 /// tiles), and the plugins whose registered name no page gives (ITR, One111, ppNVSE,
-/// vheyes-nvse and the smaller ones): ext-version.md §6.
-pub const PLUGINS: [(&str, f64); 15] = [
+/// vheyes-nvse and the smaller ones): ext-version.md §6. ITR is reported since
+/// 2026-11-14 under `itr-nvse` [observed: the name mods of a Wabbajack list ask by, SD
+/// Dynamic Encounters' `GetPluginVersion "itr-nvse" < 108` and ITR's own
+/// `ReloadPluginConfig "itr-nvse"`; its catalogued functions are built, `nvse_itr*`].
+pub const PLUGINS: [(&str, f64); 16] = [
     ("JIP NVSE Plugin", JIP_VERSION),
     ("JIP LN NVSE", JIP_VERSION),
     ("ShowOffNVSE Plugin", 184.0),
     ("kNVSE", 37.0),
     ("JohnnyGuitarNVSE", 528.0),
     ("MCM Extensions", 1.0),
-    ("lStewieAl's Tweaks", 941.0),
+    ("lStewieAl's Tweaks", UNOBSERVED_VERSION),
     ("ttw_nvse", 1.0),
     ("CUI", 120.0),
     ("hNVSE", 120.0),
@@ -145,6 +152,7 @@ pub const PLUGINS: [(&str, f64); 15] = [
     ("AnhNVSE", UNOBSERVED_VERSION),
     ("Extensions for NVSE", UNOBSERVED_VERSION),
     ("UI Organizer Plugin", UNOBSERVED_VERSION),
+    ("itr-nvse", UNOBSERVED_VERSION),
 ];
 
 /// The version reported for a plugin the engine builds whose own number is neither

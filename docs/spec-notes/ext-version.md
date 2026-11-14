@@ -176,6 +176,11 @@ low.
   TTW calls from both (`TTW_*`, StewieGetValue, `fnv_game::nvse_small`). Neither plugin
   is on the owner's install, so neither version was read: 941 is the lowest TTW accepts,
   and TTW never asks ttw_nvse's. Most of Stewie's tweaks are not built (ext-small.md).
+  Since 2026-11-14 Stewie's Tweaks reports 9999 as the other unread versions do (§4):
+  Companion Map Icons, Pip-Boy UI Tweaks and Quality of Life ESPless ask for 960 and
+  stopped at their "install latest" message in an owner's run of a Wabbajack list. The
+  same day ITR is reported under `itr-nvse`, the name mods ask by [observed: SD Dynamic
+  Encounters' `GetPluginVersion "itr-nvse" < 108`], at 9999.
 - **The other plugins the engine builds** (2026-11-12): until then a mod asking
   `IsPluginInstalled "SUP NVSE Plugin"` got 0 and `GetPluginVersion` -1 for every plugin
   outside the list above, though all of that plugin's catalogue functions run here
