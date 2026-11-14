@@ -298,7 +298,12 @@ pub fn file_layer(_app: &mut App) -> Option<BoxedLayer> {
 /// The console's lines (the log plugin's own layer, the same but for the home folder,
 /// [`redact`]).
 pub fn console_layer(_app: &mut App) -> Option<bevy::log::BoxedFmtLayer> {
-    Some(Box::new(tracing_subscriber::fmt::Layer::default().with_writer(|| ConsoleWriter)))
+    // Colour codes only for a terminal: output sent to a file (a launcher's `> log 2>&1`,
+    // a test run's capture) is plain text, to be searched and read as it is [design: an
+    // owner's redirected log of 27,434 lines had the codes around every time, level and
+    // name].
+    let ansi = std::io::IsTerminal::is_terminal(&std::io::stderr());
+    Some(Box::new(tracing_subscriber::fmt::Layer::default().with_ansi(ansi).with_writer(|| ConsoleWriter)))
 }
 
 /// A line to the console, redacted (this crate's `eprintln!`, main.rs).
