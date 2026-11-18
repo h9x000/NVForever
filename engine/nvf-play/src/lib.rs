@@ -57,6 +57,7 @@ pub mod flashlight;
 pub mod free_cam;
 pub mod script_camera;
 pub mod shake;
+pub mod sprint;
 pub mod game_start;
 pub mod furniture;
 pub mod grab;

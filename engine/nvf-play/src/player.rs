@@ -386,6 +386,8 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
         // Sprint and Prone's shared state and the bindings kept on their switches.
         app.add_plugins(crate::stance::StancePlugin);
+        // Sprint (`crate::sprint`): between the frame's walk rules and the physics steps.
+        app.add_plugins(crate::sprint::SprintPlugin);
         // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
         // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
         // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].
@@ -847,7 +849,10 @@ impl Default for ReloadPace {
 
 /// What slows or speeds the player's steps: crippled legs, a two-handed weapon's run, the
 /// Modify Run Speed perks, a reload, Speed Mult and body armour.
-type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>);
+type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>, Sprinting<'w>);
+
+/// Sprint's share and speed (`crate::sprint`), a factor on all the paces above.
+type Sprinting<'w> = (Option<Res<'w, crate::stance::StanceMotion>>, Option<Res<'w, crate::sprint::SprintTuning>>);
 
 /// Turbo's clock for the player, and where the steps' cost is measured: `--log-frame-times`'
 /// counts and the physics rate's guard (`crate::phys_load::Meter`).
@@ -1365,7 +1370,7 @@ fn step(
     mut phys: ResMut<PhysState>,
     mut player: ResMut<Player>,
     mut status: ResMut<Status>,
-    (limbs, pace, perk_pace, reload_pace, stat_pace): Paces,
+    (limbs, pace, perk_pace, reload_pace, stat_pace, sprinting): Paces,
     (turbo, mut load, mut rate): Meters,
     (mut seat, mut landed): (ResMut<crate::furniture::PlayerSeat>, MessageWriter<crate::rumble::Landed>),
     (mut blocks, noclip, mut inertia): (Option<ResMut<crate::blocking::ActorBlocks>>, Res<NoClip>, ResMut<crate::inertia::MovementInertia>),
@@ -1526,6 +1531,8 @@ fn step(
             let k = k * reload_pace.as_deref().map_or(1.0, |p| p.0);
             // Speed Mult and the body armour's class, as people's (`StatSpeed`).
             let k = k * stat_pace.as_deref().map_or(1.0, |p| p.0);
+            // Sprint: a multiple of all of that, by its eased share (`crate::sprint`).
+            let k = k * sprinting.0.as_deref().zip(sprinting.1.as_deref()).map_or(1.0, |(s, t)| crate::sprint::speed_factor(s.sprint_share, t.speed));
             // The player's tweak: wading slows the player, the deeper the more [design: docs/design/tweaks.md].
             let wade = tweaks.as_deref().map_or(1.0, |t| t.wading_pace);
             let k = if wade < 1.0 && !c.swimming {
