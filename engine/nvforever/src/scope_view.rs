@@ -449,7 +449,7 @@ fn sway(
     mut player: ResMut<Player>,
     mut lens_sway: ResMut<nvf_play::aim_zoom::LensSway>,
     mut st: Local<SwayState>,
-    tweaks: Option<Res<nvf_play::tweaks::TweakSettings>>,
+    (tweaks, stance): (Option<Res<nvf_play::tweaks::TweakSettings>>, Option<Res<nvf_play::stance::StanceMotion>>),
 ) {
     let want = if scope.on {
         if st.wobble.is_none() {
@@ -470,6 +470,8 @@ fn sway(
         // The player's Hold Breath tweak steadies it (docs/design/tweaks.md).
         let held = nvf_play::tweaks::BREATH_HELD.load(std::sync::atomic::Ordering::Relaxed);
         let radius = if held { radius * tweaks.as_ref().map_or(1.0, |t| t.breath_sway) } else { radius };
+        // Lying down steadies it (`nvf_play::prone`).
+        let radius = radius * nvf_play::prone::sway_mult(stance.as_deref().map_or(0.0, |s| s.prone_share));
         if !st.told {
             st.told = true;
             info!("scope sway: PSp {spread:.3}, radius {radius:.2}°");

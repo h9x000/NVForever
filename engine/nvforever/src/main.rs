@@ -121,6 +121,7 @@ mod npc_grenades;
 mod npc_stimpaks;
 mod use_weapon;
 mod ui_attach;
+mod prone_view;
 mod provoked;
 mod weapons;
 mod lodgen;

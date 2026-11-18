@@ -1060,6 +1060,8 @@ struct Motion {
     sights_eased: f32,
     /// The true iron sights could run last frame (the sway's raise follows their share).
     sights_ran: bool,
+    /// Prone's look: the push-up layers' cross-over, the lowered eye (`prone_view.rs`).
+    prone: crate::prone_view::ProneLook,
 }
 
 impl Motion {
@@ -1116,6 +1118,7 @@ impl Default for Motion {
             sights: nvf_play::ease::Settled::default(),
             sights_eased: 0.0,
             sights_ran: false,
+            prone: crate::prone_view::ProneLook::default(),
         }
     }
 }
@@ -2191,6 +2194,8 @@ struct Posed<'a> {
     /// True iron sights (first person, `iron_sights.rs`): how far in (0–1), and the
     /// view's direction in the rig's model space.
     sights: Option<(f32, Vec3)>,
+    /// Prone's push-up layers over everything (third person, `prone_view.rs`).
+    prone: Option<crate::prone_view::ProneLayers>,
 }
 
 /// The turn and offset (in the hand's frame, game units) a Land Mine weapon is given in
@@ -2210,7 +2215,7 @@ fn land_mine_grip() -> (Quat, Vec3) {
 /// would do by itself [hypothesis: the clips of the opening share track priorities with
 /// the standing idle, so both cannot play; idles.md §4].
 fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &mut ActorCtx, transforms: &mut Query<&mut Transform>) -> Option<(Vec3, Option<Quat>)> {
-    let Posed { root, look_pitch, special, sequences, sequence_dt, pipboy, sway, sights } = posed;
+    let Posed { root, look_pitch, special, sequences, sequence_dt, pipboy, sway, sights, prone } = posed;
     rig.carry = None;
     let pipboy = pipboy.filter(|_| rig.view == View::First).and_then(|t| Some((rig.clip(ctx, ClipKey::PipBoy(f.female))?, t)));
     let draw = rig.clip(ctx, ClipKey::Equip(f.stance, f.prefix, true));
@@ -2621,6 +2626,8 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         let l = &mut a.layers[i];
         (l.rate, l.time) = (0.0, if f.inertia { pipboy_clip_time(*t) } else { *t });
     }
+    // Prone: the push-up clip lays the body down over everything (`prone_view.rs`).
+    crate::prone_view::pose_layers(a, prone.as_ref());
     a.end();
     // Movement clips play at the speed the character actually moves [hypothesis: the
     // game matches the clip's root motion to the ground speed].
@@ -3160,7 +3167,7 @@ fn drive_body(
         (Option<Res<nvf_play::aim_zoom::AimZoom>>, Option<Res<nvf_play::combat::Combat>>, Option<ResMut<nvf_play::aim_zoom::TrueSights>>, Option<Res<nvf_play::aim_zoom::Scope>>, Option<ResMut<nvf_play::aim_zoom::Scope3d>>, Option<Res<nvf_play::aim_zoom::LensSway>>),
         (Res<crate::weapon_lower::Ahead>, ResMut<nvf_play::player::Lunge>, Option<Res<nvf_play::console::ShowFirstPerson>>, Option<Res<nvf_play::vats_mode::VatsMode>>, Option<Res<nvf_play::inertia::MovementInertia>>, Option<ResMut<PlayerBlows>>),
     ),
-    mut driven: ResMut<nvf_play::player::ViewDriven>,
+    (mut driven, stance_motion): (ResMut<nvf_play::player::ViewDriven>, Option<Res<nvf_play::stance::StanceMotion>>),
 ) {
     let state = &mut *state;
     player.body_view = None;
@@ -3200,6 +3207,8 @@ fn drive_body(
     }
     // Turbo slows the world's clock, not the player's clips (magic-archetypes.md §2).
     let dt = time.delta_secs() * turbo.as_deref().map_or(1.0, |t| t.0);
+    // Prone (`prone_view.rs`): lying down is the target, and how far down the player is.
+    let (prone_on, prone_share) = stance_motion.as_deref().map_or((false, 0.0), |s| (s.prone, s.prone_share));
     let m = &mut state.motion;
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
 
@@ -3558,7 +3567,17 @@ fn drive_body(
         *told_scale = Some(script_scale);
     }
     let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale * script_scale) };
-    let third = Posed { root, look_pitch: player.pitch, special: &idles.third, sequences:&sequences.third, sequence_dt: dt, pipboy: None, sway: SwayPose::NONE, sights: None };
+    // Prone: the push-up clip's two layers on the body, while the player is down at all.
+    let prone_layers = {
+        let [down, up] = m.prone.layers(prone_on, prone_share, dt);
+        let clip = (down.1 + up.1 > 0.0).then(|| ctx.clip(&format!("{}{}", body.third.folder, crate::prone_view::CLIP))).flatten();
+        if down.1 + up.1 > 0.0 && clip.is_none() && !m.prone.told_missing {
+            m.prone.told_missing = true;
+            warn!("prone body: {}{} not read; the third-person body does not lie down", body.third.folder, crate::prone_view::CLIP);
+        }
+        clip.map(|clip| crate::prone_view::ProneLayers { clip, down, up })
+    };
+    let third = Posed { root, look_pitch: player.pitch, special: &idles.third, sequences:&sequences.third, sequence_dt: dt, pipboy: None, sway: SwayPose::NONE, sights: None, prone: prone_layers };
     let third_eye = pose_rig(&mut body.third, &frame, &events, third, &mut ctx, &mut transforms).map(|(e, _)| e + eye_sink);
     // The third-person body's melee attack clip carries the player by its root's travel
     // (actors.md §8.13), turned by the heading and scaled with the body.
@@ -3585,6 +3604,8 @@ fn drive_body(
     // a heavier gun (`view_sway.rs`); thrown and melee weapons have none.
     let soft_recoil = inertia.as_deref().is_none_or(|i| i.soft_recoil());
     let kick = if attack_now && matches!(prefix, "1hp" | "2hr" | "2ha" | "2hh" | "2hl") { 0.7 + 0.6 * nvf_play::ease::smoothstep(2.0, 20.0, gun_weight) } else { 0.0 };
+    // Lying down the gun kicks less too (`nvf_play::prone`).
+    let kick = kick * nvf_play::prone::recoil_mult(prone_share);
     // The blows taken since last frame, as one punch (already in the view's frame).
     let punch = blows.as_deref_mut().map_or(Vec3::ZERO, |b| std::mem::take(&mut b.punch));
     let punch = if advanced && state.head_bob { punch } else { Vec3::ZERO };
@@ -3632,6 +3653,8 @@ fn drive_body(
         })
     });
     let sway = crate::view_sway::rescale(sway, sway_share);
+    // Lying down the arms are steadier and the gun rests lower off the sights (`prone_view.rs`).
+    let sway = crate::prone_view::steady(sway, prone_share, m.sights_eased);
     // The head bob in first person moves the whole arms rig, camera node, arms and
     // weapon together (`head_bob.rs`).
     if let Some(f) = body.first.as_ref() {
@@ -3655,8 +3678,22 @@ fn drive_body(
             punch,
             on: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
         });
+        // Lying down the head moves less (`prone_view.rs`).
+        let o = o * crate::prone_view::head_share(prone_share);
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
     }
+    // Prone (`prone_view.rs`): the arms rig, its camera node with it, goes down towards the
+    // floor by the share, lifted where the ground under the eye rises (a slope ahead).
+    let prone_drop = crate::prone_view::eye_drop(prone_share, body.scale * script_scale);
+    let prone_lift = {
+        let ground = (prone_drop > 0.0 && body.first.is_some()).then(|| {
+            let xy = player.body_eye.unwrap_or(feet);
+            phys.ground_drawn([xy[0], xy[1], feet[2] + 30.0], 160.0, None).map(|(bare, drawn)| bare.max(drawn))
+        });
+        let eye_up = m.prone.eye_up.unwrap_or(crate::prone_view::CROUCH_EYE * body.scale * script_scale);
+        m.prone.clearance.step(at[2] + eye_up - prone_drop, ground.flatten(), dt)
+    };
+    at[2] += prone_lift - prone_drop;
     // Lowered against a wall or a friend ahead (`weapon_lower.rs`): a drawn weapon, not
     // fists; aiming, the trigger, an attack or a reload bring it up.
     let lowered = m.lower.update(LowerInput {
@@ -3740,7 +3777,7 @@ fn drive_body(
         m.sights_told = !m.sights_told;
         info!("true iron sights: {}", if m.sights_told { "the sights are on the eye" } else { "off the eye" });
     }
-    let first = Posed { root: Transform { translation: Vec3::from_array(at), rotation: Quat::from_rotation_z(-held), ..root }, look_pitch: pitch, special: &idles.first, sequences: &sequences.first, sequence_dt: dt.max(sequences.first_menu_dt), pipboy, sway, sights };
+    let first = Posed { root: Transform { translation: Vec3::from_array(at), rotation: Quat::from_rotation_z(-held), ..root }, look_pitch: pitch, special: &idles.first, sequences: &sequences.first, sequence_dt: dt.max(sequences.first_menu_dt), pipboy, sway, sights, prone: None };
     // With movement inertia the arms' looping clips have their seams smoothed (the idle's
     // hand turned back in one frame at each loop; `nvf_assets::anim_blend` `Seams`).
     if let Some(f) = body.first.as_mut() {
@@ -3748,6 +3785,17 @@ fn drive_body(
     }
     let first = body.first.as_mut().and_then(|f| pose_rig(f, &frame, &events, first, &mut ctx, &mut transforms));
     let first_eye = first.map(|(e, _)| e);
+    // Prone: the camera node's height over the rig's root, for the next frame's clearance.
+    if let Some(e) = first_eye {
+        m.prone.eye_up = Some(e.z - at[2]);
+        if prone_share >= 1.0 && !m.prone.told_flat {
+            m.prone.told_flat = true;
+            info!("prone view: flat on the ground, the eye {:.0} units over the feet (lifted {prone_lift:.1} off the ground ahead)", e.z - feet[2]);
+        }
+    }
+    if prone_share < 1.0 {
+        m.prone.told_flat = false;
+    }
     // The arms and the weapon are drawn as through the first-person view, narrower than
     // the world's, and narrower still while the Pip-Boy shows.
     let mut lens_k = 1.0;
@@ -3822,6 +3870,8 @@ fn drive_body(
         // From the feet without the drawn ground's share of the lift, as the eye.
         let base = feet[2] - ground_lift;
         let up = e.z - base;
+        // Lying down the camera stays over the body (`prone_view.rs`).
+        let up = up.max(prone_share * crate::prone_view::PIVOT_UP);
         let up = if third_view { m.head.pivot_height(up, dt) } else { up };
         [feet[0], feet[1], base + up + 5.0]
     });
@@ -3894,6 +3944,17 @@ fn drive_body(
     } else {
         Seen { body: third_view || !has_first, head: third_view || has_first, arms: true, weapon: true }
     };
+    // Prone: the lying body's hands are flat on the floor, so in third person its weapon is
+    // hidden and the shots leave the eye (`prone_view.rs`).
+    let prone_hide = third_view && prone_share > crate::prone_view::WEAPON_HIDE_SHARE;
+    if prone_hide != m.prone.weapon_hidden {
+        m.prone.weapon_hidden = prone_hide;
+        info!("prone body: {}", if prone_hide { "the weapon hidden while lying (third person)" } else { "the weapon shown again" });
+    }
+    if prone_hide {
+        (anim.muzzle, anim.casing, state.muzzle_entity, state.casing_entity) = (None, None, None, None);
+    }
+    let seen = Seen { weapon: seen.weapon && !prone_hide, ..seen };
     // Through a scope the arms rig is not drawn (docs/spec-notes/weapon-scopes.md §2),
     // unless the scope is shown in its lens (3D scopes).
     let scoped = scope.as_deref().is_some_and(|s| s.on && !s.lens_3d);

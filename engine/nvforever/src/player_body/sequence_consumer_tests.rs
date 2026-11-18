@@ -290,6 +290,7 @@ fn pose_frame(
                 pipboy,
                 sway: SwayPose::NONE,
                 sights: None,
+                prone: None,
             },
             &mut ctx,
             &mut transforms,
