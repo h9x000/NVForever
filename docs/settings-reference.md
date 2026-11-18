@@ -1296,6 +1296,14 @@ below cover them all.
   a one-second hold lies down; given a key of its own, a press of it does. Lying down is
   sneaking: the sneak bonuses, sneak attacks, detection, the sneak label and the perks on
   sneaking all apply (owner, 2026-11-18). The control is greyed while this is off.
+  Flat on the ground: the shot's cone ×0.5 (hip, iron sights and scopes), the kick ×0.5
+  (the view's and the gun's), a scope's sway ×0.5, V.A.T.S. chances +15 points (still
+  capped at 95 %); the share of each grows with how far down the player is. Lying down from
+  the crouch takes about 1.2 s, getting up 1.3 s; a movement key or Jump stands up (the
+  movement waits until the body is mostly up), Crouch/Sneak (or Prone's own key) pressed
+  again goes back to the crouch. The first-person view lies 17 units over the floor and
+  looks at most 40° down; in third person the body lies on its front and the drawn weapon is
+  hidden (`nvf_play::prone`, nvforever `prone_view.rs`; player-body.md §1.4a.5).
 - Command-line switches: `--prone`, `--no-prone`
 - Off by default.
 - Registered in `engine/nvf-play/src/player.rs`

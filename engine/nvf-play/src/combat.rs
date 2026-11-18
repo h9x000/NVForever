@@ -3246,9 +3246,12 @@ pub(crate) fn fire(
     mut sounds: MessageWriter<PlaySound>,
     mut casings: MessageWriter<CasingFx>,
     mut loops: MessageWriter<LoopSound>,
-    (mut hud, mut vats, lens_sway, inertia, mut scaled): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>),
+    (mut hud, mut vats, lens_sway, inertia, mut scaled, stance): (Option<ResMut<HudMessage>>, Option<ResMut<crate::vats_mode::VatsMode>>, Option<Res<crate::aim_zoom::LensSway>>, Option<Res<crate::inertia::MovementInertia>>, MessageWriter<ScaledSound>, Option<Res<crate::stance::StanceMotion>>),
 ) {
     let dt = time.delta_secs();
+    // Lying down (`crate::prone`): a narrower cone and a smaller kick, by the share down.
+    let prone_share = stance.as_deref().map_or(0.0, |s| s.prone_share);
+    let (prone_spread, prone_recoil) = (crate::prone::spread_mult(prone_share), crate::prone::recoil_mult(prone_share));
     let c = &mut *c;
     c.time += dt;
     // The view's kick of the last shots, with soft recoil, comes in over a moment.
@@ -3485,7 +3488,7 @@ pub(crate) fn fire(
         let stance = player_stance(&control, &phys, &limbs, shooter.skill, shooter.strength, sp);
         let actor_spread = spread::actor_spread(&c.rules, &c.tuning, &w, &stance) * wobble(script.as_deref(), FormId::PLAYER_REF);
         let (actor_spread, _) = player_weapon_perk(script.as_deref_mut(), &mut sim, fnv_game::perks::CALCULATE_GUN_SPREAD, id, actor_spread);
-        let cone = spread::cone_deg(actor_spread.max(0.0), c.kick.bloom, &w, &effects);
+        let cone = spread::cone_deg(actor_spread.max(0.0), c.kick.bloom, &w, &effects) * prone_spread;
         c.crosshair_cone = Some(if c.no_spread { 0.0 } else { cone });
         if std::mem::take(&mut c.kick_just_settled) {
             info!(
@@ -3600,7 +3603,7 @@ pub(crate) fn fire(
                 } else if vats_shot.is_some() {
                     spread::half_angle(spread::deviation_deg(spread::crippled_spread(&c.rules, &c.tuning, &w, &stance), 0.0))
                 } else {
-                    spread::cone_deg(actor_spread, c.kick.bloom, &w, &effects)
+                    spread::cone_deg(actor_spread, c.kick.bloom, &w, &effects) * prone_spread
                 };
                 let eye = player.eye();
                 let gravity = phys.world.params.gravity;
@@ -3715,7 +3718,9 @@ pub(crate) fn fire(
                 // throw (a grenade has no recoil).
                 if vats_shot.is_none() && !c.no_spread && !c.self_ammo {
                     let rng = &mut c.kick_rng;
-                    let kick = c.kick.shot(&c.tuning, &w, cycle.timing.interval, &mut || rng.next_f32());
+                    let mut kick = c.kick.shot(&c.tuning, &w, cycle.timing.interval, &mut || rng.next_f32());
+                    // Lying down the view kicks less (`crate::prone`).
+                    (kick.pitch_deg, kick.yaw_deg) = (kick.pitch_deg * prone_recoil, kick.yaw_deg * prone_recoil);
                     // With soft recoil its first share shows this frame, the rest over the
                     // next ones; otherwise all at once, as the original.
                     let left = c.kick_left;

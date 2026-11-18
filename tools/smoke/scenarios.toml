@@ -1485,6 +1485,116 @@ expect = [
 ]
 
 [[scenario]]
+name = "prone-lie-down"
+source = "owner 2026-11-18 (engine/nvf-play/src/prone.rs, engine/nvforever/src/prone_view.rs; docs/design/player-body.md §1.4a.5): with Prone on, Crouch/Sneak held crouches at the press and lies down at a second; lying counts as sneaking (IsSneaking 1); flat on the ground the bonuses are whole and the first-person eye is about 17 units up; a movement key stands up and no longer sneaks"
+areas = ["player-body", "player"]
+paths = ["engine/nvf-play/src/prone.rs", "engine/nvforever/src/prone_view.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/control.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_PLAY_TEST_KEYS = "5:ctrl:1.4", NVF_PLAY_TEST_CONSOLE = "10:PrintC \"nvf prone sneak %g\", (player.IsSneaking);10.5:close;16:PrintC \"nvf up sneak %g\", (player.IsSneaking);16.5:close", NVF_PLAY_TEST_MOVE = "13:1:0,14.5:0:0" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--prone"]
+run_seconds = 19
+order = [[
+  { text = "Crouch/Sneak pressed: sneaking on asked", label = "the press crouches at once" },
+  { re = 'Prone held 1\.\d s on Crouch/Sneak: lying down or getting up asked', label = "the second's hold asks to lie down" },
+  { re = 'prone: lying down \(Crouch/Sneak held; share 0\.00\)', label = "lying down" },
+  { text = "prone: flat on the ground: spread x0.50, recoil x0.50, scope sway x0.50, V.A.T.S. +15 points", label = "flat: the bonuses whole" },
+  { re = 'script: print "nvf prone sneak 1"', label = "lying counts as sneaking (IsSneaking)" },
+  { re = 'prone: getting up \(moved; share 1\.00\)', label = "a movement key stands up" },
+  { text = "prone: up", label = "up again" },
+  { re = 'script: print "nvf up sneak 0"', label = "standing up ends sneaking" },
+]]
+expect = [
+  { re = 'prone view: flat on the ground, the eye (1\d|2\d) units over the feet', label = "the first-person eye about 17 units over the feet" },
+  { re = 'prone summary: lay down 1 time\(s\), got up 1 by moving or a script', label = "the exit summary" },
+]
+forbid = [
+  { re = 'prone body: .* not read', label = "the push-up clip is read" },
+]
+
+[[scenario]]
+name = "prone-off"
+source = "owner 2026-11-18 (engine/nvf-play/src/prone.rs; \"off = exactly the original\"): with Prone off (the default) the same second's hold of Crouch/Sneak only crouches, as in the original"
+areas = ["player-body", "player"]
+paths = ["engine/nvf-play/src/prone.rs", "engine/nvf-play/src/control.rs"]
+env = { NVF_PLAY_TEST_KEYS = "5:ctrl:1.4", NVF_PLAY_TEST_CONSOLE = "9:PrintC \"nvf off sneak %g\", (player.IsSneaking);9.5:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 11
+expect = [
+  { text = "Crouch/Sneak pressed: sneaking on asked", label = "the press crouches" },
+  { re = 'script: print "nvf off sneak 1"', label = "still crouched after the hold" },
+]
+forbid = [
+  { re = 'Prone held|prone: lying down|prone view:|prone body:', label = "nothing of Prone with it off" },
+]
+
+[[scenario]]
+name = "prone-crouch-again"
+source = "owner 2026-11-18 (engine/nvf-play/src/prone.rs; \"pressing it again while prone → back to crouch\"): lying, Crouch/Sneak pressed again goes back to the crouch, still sneaking, and that press's hold does not lie down again"
+areas = ["player-body", "player"]
+paths = ["engine/nvf-play/src/prone.rs", "engine/nvforever/src/prone_view.rs"]
+env = { NVF_PLAY_TEST_KEYS = "5:ctrl:1.4,10:ctrl:1.5", NVF_PLAY_TEST_CONSOLE = "13:PrintC \"nvf crouch sneak %g\", (player.IsSneaking);13.5:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--prone"]
+run_seconds = 15
+order = [[
+  { re = 'prone: lying down \(Crouch/Sneak held', label = "lying down" },
+  { re = 'prone: getting up to the crouch \(Crouch/Sneak pressed', label = "the press goes back to the crouch" },
+  { text = "prone: up", label = "up to the crouch" },
+  { re = 'script: print "nvf crouch sneak 1"', label = "still sneaking" },
+]]
+expect = [
+  { re = 'prone summary: lay down 1 time\(s\), got up 0 by moving or a script, 1 to the crouch', label = "the second hold did not lie down again" },
+]
+
+[[scenario]]
+name = "prone-third-person-fire"
+source = "owner 2026-11-18 (engine/nvforever/src/prone_view.rs, engine/nvf-play/src/combat.rs; docs/design/player-body.md §1.4a.5): with a rifle drawn, lying down in first person and shooting (the kick and the cone halved), then third person: the body lies with the push-up clip and its weapon is hidden; a jump stands up and the weapon shows again"
+areas = ["player-body", "combat"]
+paths = ["engine/nvforever/src/prone_view.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-play/src/combat.rs", "engine/nvf-play/src/prone.rs"]
+env = { NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,11:fire,11.2:fire,14:view,20:jump", NVF_PLAY_TEST_KEYS = "7:ctrl:1.4" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--prone"]
+run_seconds = 25
+order = [[
+  { re = 'prone: lying down \(Crouch/Sneak held', label = "lying down with the rifle out" },
+  { text = "prone: flat on the ground: spread x0.50", label = "flat" },
+  { re = 'combat: kick: shot', label = "a shot lying down" },
+  { text = "prone body: the weapon hidden while lying (third person)", label = "third person: the weapon hidden" },
+  { re = 'prone: getting up \(moved', label = "the jump stands up" },
+  { text = "prone body: the weapon shown again", label = "the weapon shows again" },
+]]
+forbid = [
+  { re = 'prone body: .* not read', label = "the push-up clip is read" },
+]
+
+[[scenario]]
+name = "prone-vats"
+source = "owner 2026-11-18 (engine/nvf-play/src/vats_mode.rs chance_of, engine/nvf-play/src/prone.rs vats_bonus): lying down, V.A.T.S. chances gain 15 points (capped at 95 % as before)"
+note = "vats-mode-miss's setup (a .357 among the Goodsprings dogs, god mode; Violetta killed) with Prone on: lie down at 5 s, VATS at 10 s and a mark"
+areas = ["combat", "vats", "player-body"]
+paths = ["engine/nvf-play/src/vats_mode.rs", "engine/nvf-play/src/prone.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:kill:0x0013E5BB", NVF_PLAY_TEST_EQUIP = "0008F216", NVF_PLAY_TEST_GIVE = "0008ED02:24", NVF_PLAY_TEST_CONTROL = "3:weapon,4.5:reload,10.3:aimvats", NVF_PLAY_TEST_KEYS = "5:ctrl:1.4,10:v,10.32:mouse-left", NVF_PLAY_TEST_VATS_STYLE = "dead-eye" }
+args = ["--cell", "Goodsprings", "--pos=-45600,65000,7000", "--play", "--hour", "12", "--no-voice", "--no-messages", "--npc-packages", "000F573F,0013E5BB", "--prone"]
+run_seconds = 14
+order = [[
+  { re = 'prone: lying down \(Crouch/Sneak held', label = "lying down" },
+  { text = "vats mode: lying down, every chance +15 points (Prone)", label = "the chances gain 15 points" },
+  { re = 'vats mode: marked .* mark 1; .*% to hit', label = "a mark with its chance" },
+]]
+
+[[scenario]]
+name = "prone-motion-trace"
+source = "owner 2026-11-18 (engine/nvforever/src/prone_view.rs, engine/nvforever/src/player_body.rs MotionTrace): a frame-by-frame trace of the first-person view and rifle going down into prone from the crouch, held flat, aimed and fired lying, got up by a movement key, then down and up again by Crouch/Sneak, for finding pops and two-step moves (tools/smoke/motion_trace.py reads it)"
+areas = ["player-body"]
+paths = ["engine/nvforever/src/prone_view.rs", "engine/nvforever/src/player_body.rs", "engine/nvf-play/src/prone.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/head_bob.rs"]
+env = { NVF_PLAY_TEST_MOTION_TRACE = "prone-motion-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,11:aim,12:fire,12.1:fire,13:aim", NVF_PLAY_TEST_KEYS = "7:ctrl:1.4,22:ctrl:1.4,27:ctrl", NVF_PLAY_TEST_MOVE = "16:1:0,17:0:0" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--prone", "--movement-inertia", "--weapon-handling", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 31
+expect = [
+  { text = "motion trace: writing", label = "the trace is written" },
+  { re = 'prone: getting up \(moved', label = "up by moving" },
+  { re = 'prone: getting up to the crouch \(Crouch/Sneak pressed', label = "up to the crouch by Crouch/Sneak" },
+  { text = "player body summary: weapon sway on", label = "the run reached its end" },
+]
+
+[[scenario]]
 name = "graphics-glow-switches"
 source = "docs/spec-notes/world.md §6 \"HDR and bloom\", \"Eye adaptation\" (owner 2026-10-25: the HDR effects as settings switches): the settings page's Eye adaptation and Neon glow switches, and the light glow (HDR) they need, change while the game runs, without a rendering error"
 areas = ["renderer", "graphics", "settings"]

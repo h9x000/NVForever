@@ -325,6 +325,9 @@ struct InHand {
     /// A melee weapon's special attack the player's skill allows, and what it costs
     /// after the Action Point Cost perks (vats-classic.md §9).
     special: Option<(SpecialAttack, f32)>,
+    /// Lying down: percentage points added to every chance before the cap
+    /// (`crate::prone::vats_bonus`), kept each frame by [`update`].
+    prone_bonus: f32,
 }
 
 /// A helper in the world (§18.2).
@@ -417,6 +420,8 @@ pub struct VatsMode {
     /// playing camera shot's Player time multiplier (`crate::kill_cam`), else 1 (0 before
     /// the first frame).
     player_rate: f32,
+    /// Lying down: the points every chance gains this frame (`crate::prone::vats_bonus`).
+    prone_bonus: f32,
     /// The mark shot last, for the scripts (GetVATSValue).
     shooting: Option<usize>,
     /// This stay's shots and AP spent.
@@ -1043,7 +1048,8 @@ fn chance_of(spot: &Spot, w: &InHand, eye: [f32; 3], cone: Option<f32>) -> f32 {
     let distance = crate::combat::distance(eye, spot.point);
     let cone = if w.style == AttackStyle::Melee { None } else { Some(cone.unwrap_or(0.0)) };
     let raw = raw_chance(&HitInputs { base: spot.base, size: spot.size, skill: w.skill, distance, cone_deg: cone }, &w.hit);
-    final_chance(raw, |c| spot.perks.apply(c as f64) as f32, spot.perks.concentrated_fire.then_some(spot.earlier), &w.hit) * spot.seen.unwrap_or(1.0)
+    // Lying down adds its points before the game's cap (`crate::prone`).
+    final_chance(raw, |c| spot.perks.apply(c as f64) as f32 + w.prone_bonus, spot.perks.concentrated_fire.then_some(spot.earlier), &w.hit) * spot.seen.unwrap_or(1.0)
 }
 
 /// Whether the player's V.A.T.S. Throwables Use Visibility tweak scales this mode's
@@ -1429,6 +1435,11 @@ fn update(
 ) {
     let ClassicIn { style, slowdown, kill_cam } = settings;
     let v = &mut *vats;
+    // Lying down raises every chance (`crate::prone`), as far as the player is down now.
+    v.prone_bonus = crate::prone::vats_bonus(stance.as_deref().map_or(0.0, |s| s.prone_share));
+    if let Some(w) = v.weapon.as_mut() {
+        w.prone_bonus = v.prone_bonus;
+    }
     v.now = real.elapsed_secs_f64();
     v.player_rate = kill_cam.as_deref().and_then(|k| k.player_scale()).unwrap_or(1.0);
     v.shot = None;
@@ -1726,7 +1737,10 @@ fn try_enter(v: &mut VatsMode, combat: &Combat, mut script: Option<&mut ScriptSt
         (Some(s), None) => info!("vats mode: {} has a special attack the player cannot use yet: skill {skill:.0} of {:.0} needed", w.edid, s.skill),
         _ => {}
     }
-    v.weapon = Some(InHand { id: w.id, reach: w.reach, style: w.style, melee_reach: w.melee_reach, sight_fov, skill, hit: combat.rules.vats_hit, special: allowed });
+    v.weapon = Some(InHand { id: w.id, reach: w.reach, style: w.style, melee_reach: w.melee_reach, sight_fov, skill, hit: combat.rules.vats_hit, special: allowed, prone_bonus: v.prone_bonus });
+    if v.prone_bonus > 0.0 {
+        info!("vats mode: lying down, every chance +{:.0} points (Prone)", v.prone_bonus);
+    }
     (v.hits, v.misses) = (0, 0);
     // The classic style is entered only with a target in sight: `classic_enter` plays the
     // sound then, or the refusal's alone.
@@ -3714,7 +3728,7 @@ mod tests {
 
     #[test]
     fn a_marks_chance_follows_range_and_perks() {
-        let w = |style, skill| InHand { id: FormId(1), reach: REACH, style, melee_reach: 75.0, sight_fov: 0.0, skill, hit: HitTuning { spread_mult: 1.1, ..HitTuning::default() }, special: None };
+        let w = |style, skill| InHand { id: FormId(1), reach: REACH, style, melee_reach: 75.0, sight_fov: 0.0, skill, hit: HitTuning { spread_mult: 1.1, ..HitTuning::default() }, special: None, prone_bonus: 0.0 };
         let torso = Spot { point: [500.0, 0.0, 0.0], base: 60.0, size: SIZE_TORSO, ..Default::default() };
         let gun = w(AttackStyle::Single, 50.0);
         let near = chance_of(&torso, &gun, [0.0; 3], Some(2.0));
@@ -3734,11 +3748,16 @@ mod tests {
         assert_eq!(chance_of(&again, &gun, [0.0; 3], Some(2.0)), near);
         let cf = Spot { perks: HitPerks { ops: Vec::new(), concentrated_fire: true }, ..again };
         assert!((chance_of(&cf, &gun, [0.0; 3], Some(2.0)) - (near + 10.0)).abs() < 1e-3);
+        // Lying down (`crate::prone`): its points on top, never past the cap.
+        let lying = InHand { prone_bonus: crate::prone::vats_bonus(1.0), ..gun.clone() };
+        assert!((chance_of(&torso, &lying, [0.0; 3], Some(2.0)) - (near + crate::prone::VATS_POINTS).min(95.0)).abs() < 1e-3);
+        assert!((chance_of(&Spot { point: [3000.0, 0.0, 0.0], ..torso.clone() }, &lying, [0.0; 3], Some(2.0)) - (far + crate::prone::VATS_POINTS)).abs() < 1e-3);
+        assert_eq!(chance_of(&torso, &lying, [490.0, 0.0, 0.0], Some(2.0)), 95.0, "capped as before");
     }
 
     #[test]
     fn a_preview_figure_is_the_marks_chance() {
-        let gun = InHand { id: FormId(1), reach: REACH, style: AttackStyle::Single, melee_reach: 0.0, sight_fov: 0.0, skill: 45.0, hit: HitTuning::default(), special: None };
+        let gun = InHand { id: FormId(1), reach: REACH, style: AttackStyle::Single, melee_reach: 0.0, sight_fov: 0.0, skill: 45.0, hit: HitTuning::default(), special: None, prone_bonus: 0.0 };
         let head = Spot { point: [900.0, 0.0, 60.0], part: "Head".into(), base: 30.0, size: 0.4, ..Default::default() };
         let mut v = VatsMode { phase: Phase::Marking, queue: MarkQueue::new(20.0, 1, 100), weapon: Some(gun.clone()), ..Default::default() };
         let previewed = chance_of(&head, &gun, [0.0; 3], Some(1.5));
@@ -3854,7 +3873,7 @@ mod tests {
     #[test]
     fn a_queued_special_attack_holds_its_own_ap_and_marks_its_blow() {
         let bat = SpecialAttack::from_fields(None, 50.0, 2.0, 35.0).unwrap();
-        let hand = InHand { id: FormId(1), reach: MELEE_MARK_REACH, style: AttackStyle::Melee, melee_reach: 75.0, sight_fov: 0.0, skill: 60.0, hit: HitTuning::default(), special: Some((bat, 35.0)) };
+        let hand = InHand { id: FormId(1), reach: MELEE_MARK_REACH, style: AttackStyle::Melee, melee_reach: 75.0, sight_fov: 0.0, skill: 60.0, hit: HitTuning::default(), special: Some((bat, 35.0)), prone_bonus: 0.0 };
         let mut v = VatsMode { phase: Phase::Marking, queue: MarkQueue::new(25.0, 1, u32::MAX), style: VatsStyle::Classic, weapon: Some(hand), ..Default::default() };
         v.queue.push(FormId(7), None, 80.0).unwrap();
         v.spots.push(Spot::default());
@@ -3999,7 +4018,7 @@ mod tests {
         let mut v = VatsMode { phase: Phase::Firing, queue: MarkQueue::new(20.0, 1, 100), ..Default::default() };
         v.queue.push(FormId(7), None, 92.0).unwrap();
         v.spots.push(Spot { point: [1.0, 2.0, 3.0], name: "dog".into(), part: "whole".into(), ..Default::default() });
-        v.weapon = Some(InHand { id: FormId(1), reach: MELEE_MARK_REACH, style: AttackStyle::Melee, melee_reach: 75.0, sight_fov: 0.0, skill: 50.0, hit: HitTuning::default(), special: None });
+        v.weapon = Some(InHand { id: FormId(1), reach: MELEE_MARK_REACH, style: AttackStyle::Melee, melee_reach: 75.0, sight_fov: 0.0, skill: 50.0, hit: HitTuning::default(), special: None, prone_bonus: 0.0 });
         assert_eq!(v.melee_mark(), None, "no swing yet");
         v.striking = Some(0);
         assert_eq!(v.melee_mark(), Some((7, [1.0, 2.0, 3.0], 75.0 + CLOSE_SLACK, false)), "the roll has not let it land");
