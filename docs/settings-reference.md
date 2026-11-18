@@ -1282,7 +1282,7 @@ below cover them all.
   key, so turning Sprint off gives Shift back to Run (owner, 2026-11-18). The speed and AP
   perks apply to the sprint.
 - Command-line switches: `--sprint`, `--no-sprint`
-- Off by default; greyed while the Global Toggle is off.
+- Off by default.
 - Registered in `engine/nvf-play/src/player.rs`
 
 ### `prone`: Prone
@@ -1293,7 +1293,7 @@ below cover them all.
   sneaking: the sneak bonuses, sneak attacks, detection, the sneak label and the perks on
   sneaking all apply (owner, 2026-11-18). The control is greyed while this is off.
 - Command-line switches: `--prone`, `--no-prone`
-- Off by default; greyed while the Global Toggle is off.
+- Off by default.
 - Registered in `engine/nvf-play/src/player.rs`
 
 ## NVF Features › Visual Only

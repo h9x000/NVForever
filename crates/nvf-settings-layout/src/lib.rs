@@ -950,9 +950,6 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("fps-counter-upscaling", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
-    // Sprint and Prone act only under the Global Toggle (owner 2026-11-18).
-    ("sprint", "advanced-movement", "Needs the Global Toggle."),
-    ("prone", "advanced-movement", "Needs the Global Toggle."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller

@@ -655,9 +655,9 @@ mod tests {
         assert_eq!(l.control_placement("bind:Jump").unwrap().path(), "Controls > Movement");
         assert_eq!(l.control_placement("bind:Sprint").unwrap().path(), "Controls > Movement", "beside the movement controls (owner 2026-11-18)");
         assert_eq!(l.control_placement("bind:Prone").unwrap().path(), "Controls > Movement");
-        // Sprint and Prone greyed under the Global Toggle.
-        assert_eq!(needs("sprint")[0].parent, "advanced-movement");
-        assert_eq!(needs("prone")[0].parent, "advanced-movement");
+        // Sprint and Prone are not greyed under the Global Toggle, as their Advanced Movement
+        // neighbours (owner 2026-11-18); only their bindings are, while they are off.
+        assert!(needs("sprint").is_empty() && needs("prone").is_empty());
         // The registry itself is left as it was: its order and each row's group.
         let again = registry(&KNOWN);
         assert!(list.iter().zip(&again).all(|(a, b)| a.key == b.key && a.group == b.group && a.label == b.label && a.note == b.note));
