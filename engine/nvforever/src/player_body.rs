@@ -3232,7 +3232,10 @@ fn drive_body(
         (1.0, 0.0, true)
     } else {
         let (f, r, walk) = inertia.as_deref().map_or((intent.forward, intent.right, intent.walk), |i| i.clip_intent(intent.forward, intent.right, intent.walk, player.heading));
-        (f, r, !walk)
+        // A sprint from a walk (Always Run off) runs: the run clips from half a sprint on
+        // (`nvf_play::sprint`).
+        let sprint_runs = stance_motion.as_deref().is_some_and(|s| s.sprint_share >= nvf_play::sprint::RUN_GAIT_FROM);
+        (f, r, !walk || sprint_runs)
     };
     let feet = player.feet;
     if dt > 0.0 {

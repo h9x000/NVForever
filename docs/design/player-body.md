@@ -548,10 +548,14 @@ by eye; the speed and the AP rate the owner's].
 - **Speed**: a full sprint is 1.45 × (`sprint::SPRINT_SPEED`) the speed the player would run
   at, applied in `player::step` after every pace there (crippled legs, `RunPace`, `PerkSpeed`,
   `ReloadPace`, `StatSpeed`, the tweaks' wading and strafe paces), so whatever changes a run
-  changes a sprint alike. It grows with `StanceMotion::sprint_share`, one critically damped
+  changes a sprint alike. Always from the run: walking (Always Run off) a sprint is the
+  run's 1.45 too (owner, 2026-11-18). The velocity goes from the gait's (walk or run) to the
+  sprint's by `StanceMotion::sprint_share` (`sprint::sprint_velocity`), one critically damped
   spring of 0.5 s both ways (`sprint::SHARE_SECONDS`; no change of constant, so a change of
-  mind part way never hitches), so the speed comes and goes smoothly with Movement Inertia
-  off; with it on the ground inertia's spring carries it too.
+  mind part way never hitches), so the speed, and a walk's change of gait, come and go
+  smoothly with Movement Inertia off; with it on the ground inertia's spring carries it too.
+  From half a sprint (`sprint::RUN_GAIT_FROM`) a sprint begun walking plays the run clips
+  and glides as a run.
 - **Direction**: straight ahead a full sprint; ahead and aside (W+D) about half
   (`sprint::direction_share`, none under a share ahead of 0.4, `LEAST_AHEAD`); straight
   aside or back none.
@@ -561,8 +565,9 @@ by eye; the speed and the AP rate the owner's].
   #2601). AP does not come back while sprinting (`vats_mode`'s regeneration waits). At 0 the
   sprint ends and starts again only after Sprint is let go and AP came back. God mode spends
   none.
-- **What stops it**: Sprint let go, aiming or blocking, the trigger, sneaking or crouching
-  (the press stops it at once, eased out), lying down or still getting up (`StanceMotion::prone`
+- **What stops it**: Sprint let go, aiming or blocking, the trigger, a reload (owner,
+  2026-11-18; `Combat::player_reloading`, logged `sprint: ended (reloading)`), sneaking or
+  crouching (the press stops it at once, eased out), lying down or still getting up (`StanceMotion::prone`
   or `prone_share` over 0.02: getting up with Shift held stands up first, then the sprint
   ramps in), over-encumbered, swimming or more than 30 units deep in water, a script's
   movement lock, no AP. A jump does not: its speed carries into the air. Held on, the sprint

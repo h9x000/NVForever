@@ -853,7 +853,7 @@ impl Default for ReloadPace {
 /// Modify Run Speed perks, a reload, Speed Mult and body armour.
 type Paces<'w> = (Option<Res<'w, crate::combat::PlayerLimbs>>, Option<Res<'w, RunPace>>, Option<Res<'w, PerkSpeed>>, Option<Res<'w, ReloadPace>>, Option<Res<'w, StatSpeed>>, Sprinting<'w>);
 
-/// Sprint's share and speed (`crate::sprint`), a factor on all the paces above.
+/// Sprint's share and speed (`crate::sprint`): from the gait's speed to a multiple of the run's.
 type Sprinting<'w> = (Option<Res<'w, crate::stance::StanceMotion>>, Option<Res<'w, crate::sprint::SprintTuning>>);
 
 /// Turbo's clock for the player, and where the steps' cost is measured: `--log-frame-times`'
@@ -1525,16 +1525,15 @@ fn step(
             *stroke_time = 0.0;
             // Crippled legs slow the player (combat C8) [design].
             let k = limbs.as_deref().map_or(1.0, crate::combat::PlayerLimbs::speed_mult);
-            // Running with a two-handed weapon drawn is slower (`RunPace`).
-            let k = if intent.walk { k } else { k * pace.as_deref().map_or(1.0, |p| p.0) };
+            // Running with a two-handed weapon drawn is slower (`RunPace`): on the run's speed
+            // only (below, with the gait).
+            let run_pace = pace.as_deref().map_or(1.0, |p| p.0);
             // The Modify Run Speed perks (Travel Light, Tunnel Runner, Implant M-5 …).
             let k = k * perk_pace.as_deref().map_or(1.0, |p| p.0);
             // Slower while reloading, when the setting is on (`crate::combat::reload_pace`).
             let k = k * reload_pace.as_deref().map_or(1.0, |p| p.0);
             // Speed Mult and the body armour's class, as people's (`StatSpeed`).
             let k = k * stat_pace.as_deref().map_or(1.0, |p| p.0);
-            // Sprint: a multiple of all of that, by its eased share (`crate::sprint`).
-            let k = k * sprinting.0.as_deref().zip(sprinting.1.as_deref()).map_or(1.0, |(s, t)| crate::sprint::speed_factor(s.sprint_share, t.speed));
             // The player's tweak: wading slows the player, the deeper the more [design: docs/design/tweaks.md].
             let wade = tweaks.as_deref().map_or(1.0, |t| t.wading_pace);
             let k = if wade < 1.0 && !c.swimming {
@@ -1555,10 +1554,21 @@ fn step(
                 _ => k,
             };
             let [x, y] = velocity(&intent, player.heading, *speeds);
-            let key = [x * k, y * k];
+            let gait = if intent.walk { k } else { k * run_pace };
+            let key = [x * gait, y * gait];
+            // Sprint: from the gait's velocity to a multiple of the run's, all of the paces
+            // above with it, by its eased share, walking or running (`crate::sprint`).
+            let sprint = sprinting.0.as_deref().zip(sprinting.1.as_deref()).map_or((0.0, 1.0), |(s, t)| (s.sprint_share, t.speed));
+            let key = if sprint.0 > 0.0 {
+                let [rx, ry] = velocity(&MoveIntent { walk: false, ..*intent }, player.heading, *speeds);
+                let run = k * run_pace;
+                crate::sprint::sprint_velocity(key, [rx * run, ry * run], sprint.0, sprint.1)
+            } else {
+                key
+            };
             // On the ground the velocity speeds up and slows down (`crate::inertia`); in
             // the air the controller's own rules take the keys' velocity.
-            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk, dt) } else { key };
+            let [x, y] = if inertia.ground() && c.grounded { inertia.step(key, intent.walk && sprint.0 < crate::sprint::RUN_GAIT_FROM, dt) } else { key };
             // An attack's clip carries the player (`Lunge`).
             if lunge.carrying && lunge.from.is_none() {
                 lunge.from = Some(c.feet);

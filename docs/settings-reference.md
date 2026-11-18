@@ -1280,8 +1280,9 @@ below cover them all.
   nothing while this is off or the Global Toggle is. While it is on, Left Shift is Sprint's
   and Run acts on X, unless Run was moved off its default Left Shift; the INI keeps Run's own
   key, so turning Sprint off gives Shift back to Run (owner, 2026-11-18). A full sprint is
-  1.45 times the run speed and costs 10 AP a second (none come back meanwhile; it ends at
-  0 AP); forward only, half a sprint diagonally; aiming, attacking, sneaking, lying down,
+  1.45 times the run speed, walking (Always Run off) too, and costs 10 AP a second (none
+  come back meanwhile; it ends at 0 AP); forward only, half a sprint diagonally; aiming,
+  attacking, reloading, sneaking, lying down,
   over-encumbered or in water stop it, eased out. Stopping under 20 % AP leaves you out of
   breath (shown by Camera Motion). The speed and AP perks apply to the sprint
   (docs/design/player-body.md §1.4a.4).

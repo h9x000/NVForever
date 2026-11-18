@@ -3,14 +3,17 @@
 //! runs faster for Action Points; off ([`MovementInertia::sprint_on`] false) the player
 //! moves exactly as in the original.
 //!
-//! - **Speed** ([`speed_factor`]): a multiple of the speed the player would have running,
-//!   applied in `crate::player::step` after every other pace (crippled legs, `RunPace`'s
-//!   two-handed weapon, `PerkSpeed`'s Modify Run Speed perks, `ReloadPace`, `StatSpeed`'s
-//!   Speed Mult and armour, the tweaks' wading and strafe paces), so whatever speeds or
-//!   slows a run speeds or slows a sprint the same: [`SPRINT_SPEED`] × the run at a full
-//!   sprint. It grows with [`StanceMotion::sprint_share`], so it comes and goes smoothly
-//!   with Movement Inertia off; with it on the ground inertia's own spring
-//!   (`crate::inertia`) carries it as any change of the keys' speed.
+//! - **Speed** ([`sprint_velocity`]): a full sprint is [`SPRINT_SPEED`] × the speed the
+//!   player would have running, with every pace `crate::player::step` puts on a run
+//!   (crippled legs, `RunPace`'s two-handed weapon, `PerkSpeed`'s Modify Run Speed perks,
+//!   `ReloadPace`, `StatSpeed`'s Speed Mult and armour, the tweaks' wading and strafe
+//!   paces), so whatever speeds or slows a run speeds or slows a sprint the same. Always
+//!   from the run: walking (Always Run off) a sprint runs too [design: the owner
+//!   2026-11-18]. The velocity goes from the gait's (walk or run) to the sprint's by
+//!   [`StanceMotion::sprint_share`], so it comes and goes smoothly, a walk's change of gait
+//!   with it, also with Movement Inertia off; with it on the ground inertia's own spring
+//!   (`crate::inertia`) carries it as any change of the keys' speed. From
+//!   [`RUN_GAIT_FROM`] of a sprint the body plays the run clips and glides as a run.
 //! - **Direction**: forward only, and less the more the keys go aside
 //!   ([`direction_share`]): straight ahead a full sprint, ahead and aside (W+D) about half
 //!   of one, straight aside or any way back none [design: the owner left it to us; "no
@@ -25,7 +28,8 @@
 //!   for [`StanceMotion::sprinting`]). At 0 the sprint ends and does not start again
 //!   until the control is let go and AP has come back. None is spent in god mode.
 //! - **What stops it** ([`Blocked`]): the control let go, aiming or blocking, the trigger
-//!   (an attack), sneaking or crouching, lying down or still getting up
+//!   (an attack), a reload (`crate::combat::Combat::player_reloading`) [design: the owner
+//!   2026-11-18], sneaking or crouching, lying down or still getting up
 //!   ([`StanceMotion::prone`], [`StanceMotion::prone_share`] over [`PRONE_CLEAR`]),
 //!   over-encumbered (`crate::player::OVERENCUMBERED`), swimming or deeper in water than
 //!   [`WATER_DEPTH`], the keys not going ahead, a script's movement lock (it strikes
@@ -63,6 +67,9 @@ pub const SPRINT_AP_PER_SECOND: f32 = 10.0;
 /// none, in this many seconds, the same both ways (one spring constant, so a change of
 /// mind part way never hitches) [design].
 pub const SHARE_SECONDS: f32 = 0.5;
+/// From this share of a sprint on, a sprint begun from a walk counts as a run: the run clips
+/// play (nvforever `player_body`) and the ground inertia glides as after a run [design].
+pub const RUN_GAIT_FROM: f32 = 0.5;
 /// The keys' share ahead (forward over the length of forward and aside, 1 straight ahead,
 /// 0.71 diagonally) under which there is no sprint; from it to straight ahead the sprint
 /// grows ([`direction_share`]) [design: half a sprint diagonally].
@@ -134,6 +141,14 @@ impl Ap {
 /// The speed factor for a sprint share (0–1): 1 none, `speed` a full sprint.
 pub fn speed_factor(share: f32, speed: f32) -> f32 {
     1.0 + (speed - 1.0) * share.clamp(0.0, 1.0)
+}
+
+/// The velocity at a sprint `share` (0–1): from the gait's own (`gait`, walking or running,
+/// every pace on it) to `speed` × the run's (`run`, the same keys running with every pace),
+/// straight between by the share (which is eased). Running, it is the run × [`speed_factor`].
+pub fn sprint_velocity(gait: [f32; 2], run: [f32; 2], share: f32, speed: f32) -> [f32; 2] {
+    let s = share.clamp(0.0, 1.0);
+    [gait[0] + s * (run[0] * speed - gait[0]), gait[1] + s * (run[1] * speed - gait[1])]
 }
 
 /// How much of a sprint the keys allow (0–1): `forward` and `right` as in
@@ -210,6 +225,7 @@ pub enum Blocked {
     KeyLetGo,
     Aiming,
     Attacking,
+    Reloading,
     Sneaking,
     Prone,
     Encumbered,
@@ -225,6 +241,7 @@ impl Blocked {
             Blocked::KeyLetGo => "the control let go",
             Blocked::Aiming => "aiming",
             Blocked::Attacking => "attacking",
+            Blocked::Reloading => "reloading",
             Blocked::Sneaking => "sneaking",
             Blocked::Prone => "lying down",
             Blocked::Encumbered => "over-encumbered",
@@ -249,6 +266,8 @@ pub struct SprintInput {
     pub sneaking: bool,
     pub aiming: bool,
     pub attacking: bool,
+    /// A reload (or a jam's clearing) plays or was just asked for.
+    pub reloading: bool,
     pub encumbered: bool,
     pub in_water: bool,
     /// [`StanceMotion::prone`] and [`StanceMotion::prone_share`] (the Prone feature's).
@@ -261,7 +280,7 @@ pub struct SprintInput {
 
 impl Default for SprintInput {
     fn default() -> Self {
-        SprintInput { dt: 0.0, on: true, held: false, forward: 0.0, right: 0.0, sneaking: false, aiming: false, attacking: false, encumbered: false, in_water: false, prone: false, prone_share: 0.0, ap: None, ap_per_second: SPRINT_AP_PER_SECOND }
+        SprintInput { dt: 0.0, on: true, held: false, forward: 0.0, right: 0.0, sneaking: false, aiming: false, attacking: false, reloading: false, encumbered: false, in_water: false, prone: false, prone_share: 0.0, ap: None, ap_per_second: SPRINT_AP_PER_SECOND }
     }
 }
 
@@ -306,6 +325,8 @@ impl Sprint {
             Blocked::Aiming
         } else if i.attacking {
             Blocked::Attacking
+        } else if i.reloading {
+            Blocked::Reloading
         } else if i.prone || i.prone_share > PRONE_CLEAR {
             Blocked::Prone
         } else if i.sneaking {
@@ -424,7 +445,7 @@ pub fn update(
     inertia: Option<Res<MovementInertia>>,
     control: Res<PlayerControl>,
     intent: Res<MoveIntent>,
-    phys: Option<Res<crate::phys::PhysState>>,
+    (phys, combat): (Option<Res<crate::phys::PhysState>>, Option<Res<crate::combat::Combat>>),
     (mut sprint, mut stance, tuning): (ResMut<Sprint>, ResMut<StanceMotion>, Res<SprintTuning>),
     mut script: Option<ResMut<crate::script::ScriptState>>,
     mut sim: Option<ResMut<crate::sim::SimState>>,
@@ -450,6 +471,7 @@ pub fn update(
         sneaking: control.sneak || intent.sneak,
         aiming: control.aiming && control.weapon_out,
         attacking: control.trigger,
+        reloading: control.reload || combat.as_deref().is_some_and(crate::combat::Combat::player_reloading),
         encumbered: crate::player::OVERENCUMBERED.load(std::sync::atomic::Ordering::Relaxed),
         in_water,
         prone: stance.prone,
@@ -563,6 +585,7 @@ mod tests {
             (SprintInput { held: false, ..held(ap) }, Blocked::KeyLetGo),
             (SprintInput { aiming: true, ..held(ap) }, Blocked::Aiming),
             (SprintInput { attacking: true, ..held(ap) }, Blocked::Attacking),
+            (SprintInput { reloading: true, ..held(ap) }, Blocked::Reloading),
             (SprintInput { sneaking: true, ..held(ap) }, Blocked::Sneaking),
             (SprintInput { prone: true, sneaking: true, ..held(ap) }, Blocked::Prone),
             (SprintInput { prone_share: 0.3, ..held(ap) }, Blocked::Prone),
@@ -690,6 +713,45 @@ mod tests {
             strength = strength.or(st.winded);
         }
         assert!(strength.is_some_and(|w| (w - 1.0).abs() < 1e-5), "{strength:?}");
+    }
+
+    #[test]
+    fn a_sprint_is_from_the_run_walking_or_running_and_eases_the_change_of_gait() {
+        let (walk, run) = ([0.0, 86.8], [0.0, 344.0]);
+        // Running: the run times the speed factor, as before.
+        for share in [0.0, 0.3, 1.0] {
+            let v = sprint_velocity(run, run, share, SPRINT_SPEED);
+            assert!((v[1] - 344.0 * speed_factor(share, SPRINT_SPEED)).abs() < 1e-3);
+        }
+        // Walking (Always Run off): a full sprint is the run's sprint, not the walk's.
+        assert!((sprint_velocity(walk, run, 1.0, SPRINT_SPEED)[1] - 344.0 * SPRINT_SPEED).abs() < 1e-3);
+        assert_eq!(sprint_velocity(walk, run, 0.0, SPRINT_SPEED), walk);
+        // The change of gait follows the eased share: no step, up only, then down only.
+        let ap = Some(Ap { now: 500.0, max: 500.0 });
+        let mut s = Sprint::default();
+        let mut trace = Vec::new();
+        for f in 0..180 {
+            s.update(SprintInput { held: f < 90, ..held(ap) });
+            trace.push(sprint_velocity(walk, run, s.share(), SPRINT_SPEED)[1]);
+        }
+        assert!(trace[..90].windows(2).all(|w| w[1] >= w[0]) && trace[90..].windows(2).all(|w| w[1] <= w[0]));
+        // At most the share spring's top rate (ω / e a second) of the 412 units/s between: a
+        // twentieth of it a frame, never the whole change at once.
+        let gap = 344.0 * SPRINT_SPEED - 86.8;
+        assert!(trace.windows(2).all(|w| (w[1] - w[0]).abs() < 0.065 * gap), "no step of the speed in a frame");
+        assert!((trace[89] - 344.0 * SPRINT_SPEED).abs() < 0.5 && (trace[179] - 86.8).abs() < 0.5);
+    }
+
+    #[test]
+    fn a_reload_ends_the_sprint_and_held_on_it_comes_back_after() {
+        let ap = Some(Ap { now: 500.0, max: 500.0 });
+        let mut s = Sprint::default();
+        run(&mut s, held(ap), 1.0);
+        let during = run(&mut s, SprintInput { reloading: true, ..held(ap) }, 1.5);
+        assert_eq!(during[0].ended, Some(Blocked::Reloading));
+        assert!(during.iter().all(|st| st.spend == 0.0) && s.share() == 0.0, "eased out, nothing spent");
+        let after = run(&mut s, held(ap), 1.0);
+        assert!(after[0].started && s.share() > 0.99, "Shift held: the sprint comes back after the reload");
     }
 
     #[test]
