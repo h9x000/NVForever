@@ -608,8 +608,14 @@ the Global Toggle off) nothing of it acts [design; `nvf_play::prone`, nvforever
 - **State.** `StanceMotion::prone` (the target) and `prone_share` (0 to 1, a critically
   damped spring, 95 % in `prone::DOWN_SECONDS` 1.2 s down and `UP_SECONDS` 1.3 s up; the
   rate is chosen when it leaves rest and kept through a change of mind, so it starts and
-  ends at rest and turns back without a jump). On the shared key the press crouches at once
+  ends at rest and turns back without a jump). On the shared key, standing, the press crouches at once
   (the crouch's own 1.0 s cross-over) and the hold's second carries on down from there.
+  Crouched, the press waits (`PlayerControl::crouch_deferred`, main chat 2026-11-18: a
+  crouched hold stood up first and came back down): let go before the second, it stands
+  up then; held the second, it lies down straight from the crouch. Lying, the press goes
+  back to the crouch (below). Hold to Sneak: the held key is the crouch, a second's hold
+  lies down and letting go keeps lying. Prone off or on a key of its own: the toggle as
+  ever.
 - **Getting up.** A movement key, Auto Move or Jump: to standing, no longer sneaking (unless
   Hold to Sneak's key is still held); the movement waits until the share is under
   `MOVE_FROM_SHARE` (0.35) and the jump is spent on getting up. Crouch/Sneak (or Prone's own

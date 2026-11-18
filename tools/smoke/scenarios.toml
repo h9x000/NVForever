@@ -1545,6 +1545,24 @@ expect = [
 ]
 
 [[scenario]]
+name = "prone-from-crouch"
+source = "main chat 2026-11-18 (engine/nvf-play/src/control.rs PlayerControl::crouch_deferred; docs/design/player-body.md §1.4a.5): with Prone on Crouch/Sneak's key, a press made crouched waits: held a second it lies down straight from the crouch, never standing in between; a crouched tap stands up when let go"
+areas = ["player-body", "player"]
+paths = ["engine/nvf-play/src/control.rs", "engine/nvf-play/src/prone.rs", "engine/nvf-play/src/stance.rs"]
+env = { NVF_PLAY_TEST_KEYS = "5:ctrl,8:ctrl:1.4,13:ctrl,16:ctrl", NVF_PLAY_TEST_CONSOLE = "18:PrintC \"nvf tap sneak %g\", (player.IsSneaking);18.5:close" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--prone"]
+run_seconds = 20
+order = [[
+  { text = "Crouch/Sneak pressed: sneaking on asked", label = "a tap crouches" },
+  { text = "Crouch/Sneak pressed while crouched: standing up when let go, lying down if held", label = "the crouched press waits" },
+  { re = 'prone: lying down \(Crouch/Sneak held', label = "the hold lies down from the crouch" },
+  { re = 'prone: getting up to the crouch \(Crouch/Sneak pressed', label = "a press lying goes back to the crouch" },
+  { text = "Crouch/Sneak pressed while crouched: standing up when let go, lying down if held", label = "the crouched tap waits" },
+  { text = "Crouch/Sneak let go: sneaking off asked", label = "and stands up when let go" },
+  { re = 'script: print "nvf tap sneak 0"', label = "standing" },
+]]
+
+[[scenario]]
 name = "prone-third-person-fire"
 source = "owner 2026-11-18 (engine/nvforever/src/prone_view.rs, engine/nvf-play/src/combat.rs; docs/design/player-body.md §1.4a.5): with a rifle drawn, lying down in first person and shooting (the kick and the cone halved), then third person: the body lies with the push-up clip and its weapon is hidden; a jump stands up and the weapon shows again"
 areas = ["player-body", "combat"]

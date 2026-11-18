@@ -1303,7 +1303,9 @@ below cover them all.
   movement waits until the body is mostly up), Crouch/Sneak (or Prone's own key) pressed
   again goes back to the crouch. The first-person view lies 17 units over the floor and
   looks at most 40° down; in third person the body lies on its front and the drawn weapon is
-  hidden (`nvf_play::prone`, nvforever `prone_view.rs`; player-body.md §1.4a.5).
+  hidden (`nvf_play::prone`, nvforever `prone_view.rs`; player-body.md §1.4a.5). On the
+  shared key a press while crouched waits: a tap stands up when let go, a second's hold
+  lies down straight from the crouch without standing first.
 - Command-line switches: `--prone`, `--no-prone`
 - Off by default.
 - Registered in `engine/nvf-play/src/player.rs`

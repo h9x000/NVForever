@@ -24,8 +24,13 @@
 //!   toggle, no hold). The Prone feature clears it once it has acted (as `crate::combat`
 //!   clears `PlayerControl::reload`). Struck with the hold by the sneaking lock.
 //! - On the shared key Crouch/Sneak itself still toggles sneaking on the press
-//!   (`PlayerControl::sneak`, before the hold is known): the Prone feature decides what a
-//!   completed hold means for it (prone needs `sneak` true, below).
+//!   (`PlayerControl::sneak`, before the hold is known) while standing, so a hold crouches at
+//!   once and goes on down. Crouched (not lying) the press waits
+//!   (`PlayerControl::crouch_deferred`): let go before the hold's second it stands up then;
+//!   held, it asks to lie down straight from the crouch, never standing in between. Lying,
+//!   the press toggles and the Prone feature reads it (back to the crouch, `crate::prone`).
+//!   Hold to Sneak is unchanged: the key held is the crouch, held a second it lies down, and
+//!   letting go keeps the player lying. Prone off or on a key of its own: as ever.
 //!
 //! **Keys** (`crate::bindings`): Sprint and Prone are bindings of their own (Controls ›
 //! Movement), greyed and not rebindable while their switch is off ([`binding_greyed`]); off,

@@ -178,6 +178,10 @@ pub struct PlayerControl {
     /// `crate::stance::PRONE_HOLD_SECONDS`, on a key of its own at the press. The Prone
     /// feature clears it (`crate::stance`). Struck by the sneaking lock.
     pub prone_request: bool,
+    /// A press of Crouch/Sneak made while crouched, with Prone on Crouch/Sneak's key, waits:
+    /// let go before `crate::stance::PRONE_HOLD_SECONDS` it stands up, held that long it asks
+    /// to lie down straight from the crouch, never standing in between ([`read_controls`]).
+    pub crouch_deferred: bool,
     /// The third-person camera's line through the crosshair, set by [`place_camera`]
     /// each frame; `None` in first person and while the camera circles. Activation and
     /// the player's shots aim along it ([`Crosshair::ray`]).
@@ -214,6 +218,7 @@ impl Default for PlayerControl {
             sprint_held: false,
             prone_hold: 0.0,
             prone_request: false,
+            crouch_deferred: false,
             crosshair: None,
             portrait: None,
             cinematic: false,
@@ -632,12 +637,21 @@ fn read_stance(input: &ControlInput, dt: f32, stance: Option<&crate::inertia::Mo
     if input.bindings.prone_shares_crouch() {
         if before < crate::stance::PRONE_HOLD_SECONDS && c.prone_hold >= crate::stance::PRONE_HOLD_SECONDS {
             c.prone_request = true;
+            // A press made crouched lies down from the crouch: it no longer stands up.
+            c.crouch_deferred = false;
             info!("Prone held {:.1} s on Crouch/Sneak: lying down or getting up asked", c.prone_hold);
         }
     } else if input.just_pressed(Control::Prone) {
         c.prone_request = true;
         info!("Prone pressed: lying down or getting up asked");
     }
+}
+
+/// Whether a press of Crouch/Sneak waits ([`PlayerControl::crouch_deferred`]): Prone on and
+/// sharing Crouch/Sneak's key, the player crouched (`sneak`) and not lying. Standing, a press
+/// crouches at once as ever; lying, the Prone feature takes the press (`crate::prone`).
+fn defers_crouch(stance: Option<&crate::inertia::MovementInertia>, motion: Option<&crate::stance::StanceMotion>, bindings: &Bindings, sneak: bool) -> bool {
+    sneak && stance.is_some_and(|m| m.prone_on()) && bindings.prone_shares_crouch() && !motion.is_some_and(|m| m.prone)
 }
 
 /// Toggles, holds, the third-person zoom; see the module notes.
@@ -651,7 +665,7 @@ pub fn read_controls(
     mut control: ResMut<PlayerControl>,
     hud: Option<ResMut<HudMessage>>,
     switches: Option<Res<crate::script_switches::ScriptSwitches>>,
-    stance: Option<Res<crate::inertia::MovementInertia>>,
+    (stance, motion): (Option<Res<crate::inertia::MovementInertia>>, Option<Res<crate::stance::StanceMotion>>),
 ) {
     if *state.get() != PlayState::Playing {
         control.aiming = false;
@@ -660,6 +674,7 @@ pub fn read_controls(
         control.orbit.held = false;
         control.sprint_held = false;
         control.prone_hold = 0.0;
+        control.crouch_deferred = false;
         return;
     }
     read_stance(&input, time.delta_secs(), stance.as_deref(), &mut control);
@@ -674,8 +689,23 @@ pub fn read_controls(
             info!("Crouch/Sneak held: sneaking {} asked", if c.sneak { "on" } else { "off" });
         }
     } else if input.just_pressed(Control::CrouchSneak) {
-        c.sneak = !c.sneak;
-        info!("Crouch/Sneak pressed: sneaking {} asked", if c.sneak { "on" } else { "off" });
+        if defers_crouch(stance.as_deref(), motion.as_deref(), &input.bindings, c.sneak) {
+            // Prone on Crouch/Sneak's key, crouched (not lying): a hold lies down from the
+            // crouch, so the stand waits for the key to be let go (`crate::stance`).
+            c.crouch_deferred = true;
+            info!("Crouch/Sneak pressed while crouched: standing up when let go, lying down if held");
+        } else {
+            c.sneak = !c.sneak;
+            info!("Crouch/Sneak pressed: sneaking {} asked", if c.sneak { "on" } else { "off" });
+        }
+    }
+    if c.crouch_deferred && !input.pressed(Control::CrouchSneak) {
+        // Let go before the hold's second: the press's stand, now.
+        c.crouch_deferred = false;
+        if c.sneak {
+            c.sneak = false;
+            info!("Crouch/Sneak let go: sneaking off asked");
+        }
     }
     if input.just_pressed(Control::AlwaysRun) {
         c.always_run = !c.always_run;
@@ -1304,6 +1334,80 @@ mod tests {
         assert!(!c.prone_request && c.prone_hold == 0.0 && c.sprint_held);
         ControlLocks { movement: true, ..Default::default() }.apply(&mut i, &mut c);
         assert!(!c.sprint_held);
+    }
+
+    /// Prone on Crouch/Sneak's key (`crate::stance`): crouched, a press waits; a tap stands
+    /// up when let go, a second's hold asks to lie down without standing in between.
+    /// Standing, a press crouches at once; lying, the press is the Prone feature's; Prone
+    /// off or on a key of its own, the toggle is as ever.
+    #[test]
+    fn a_crouched_press_waits_for_the_hold_with_prone_on_the_crouch_key() {
+        let mut app = app();
+        app.init_resource::<crate::inertia::MovementInertia>().init_resource::<crate::stance::StanceMotion>();
+        let step = |app: &mut App, secs: f32| {
+            app.world_mut().resource_mut::<Time>().advance_by(std::time::Duration::from_secs_f32(secs));
+            app.update();
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>().clear();
+        };
+        fn keys(app: &mut App) -> Mut<'_, ButtonInput<KeyCode>> {
+            app.world_mut().resource_mut::<ButtonInput<KeyCode>>()
+        }
+        let sneak = |app: &App| control(app).sneak;
+        // Prone off: a crouched tap stands up at the press, as ever.
+        app.world_mut().resource_mut::<PlayerControl>().sneak = true;
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(!sneak(&app) && !control(&app).crouch_deferred, "off: stands at the press");
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        app.world_mut().resource_mut::<crate::inertia::MovementInertia>().prone = true;
+        app.world_mut().resource_mut::<Bindings>().prone_on = true;
+        // Standing: the press crouches at once.
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(sneak(&app) && !control(&app).crouch_deferred, "standing: crouched at the press");
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(sneak(&app));
+        // Crouched, a tap: still crouched while held, standing once let go.
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(sneak(&app) && control(&app).crouch_deferred, "crouched: the press waits");
+        step(&mut app, 0.3);
+        assert!(sneak(&app));
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(!sneak(&app) && !control(&app).crouch_deferred && !control(&app).prone_request, "a tap stands up when let go");
+        // Crouch again, then hold a second: lying down asked, never standing.
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(sneak(&app));
+        keys(&mut app).press(KeyCode::ControlLeft);
+        for _ in 0..12 {
+            step(&mut app, 0.1);
+            assert!(sneak(&app), "never standing during the hold");
+        }
+        assert!(control(&app).prone_request && !control(&app).crouch_deferred);
+        app.world_mut().resource_mut::<PlayerControl>().prone_request = false;
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(sneak(&app), "let go after the hold: no stand");
+        // Lying: the press toggles for the Prone feature to read (`crate::prone`).
+        app.world_mut().resource_mut::<crate::stance::StanceMotion>().prone = true;
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(!sneak(&app) && !control(&app).crouch_deferred);
+        keys(&mut app).release(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        app.world_mut().resource_mut::<crate::stance::StanceMotion>().prone = false;
+        // Prone on a key of its own: Crouch/Sneak toggles at the press as ever.
+        app.world_mut().resource_mut::<PlayerControl>().sneak = true;
+        app.world_mut().resource_mut::<Bindings>().rebind(Control::Prone, crate::bindings::Input::Key(KeyCode::KeyK));
+        keys(&mut app).press(KeyCode::ControlLeft);
+        step(&mut app, 0.05);
+        assert!(!sneak(&app) && !control(&app).crouch_deferred, "own key: stands at the press");
     }
 
     #[test]
