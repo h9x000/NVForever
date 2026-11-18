@@ -1434,6 +1434,57 @@ forbid = [
 ]
 
 [[scenario]]
+name = "sprint-run"
+source = "owner 2026-11-18 (engine/nvf-play/src/sprint.rs; docs/design/player-body.md §1.4a.4): with Sprint on, Left Shift held while walking ahead sprints for AP until the AP runs out, which ends it and leaves the player fully out of breath; it starts again only after Shift is let go, and letting go ends it"
+note = "NVF_SPRINT_AP_PER_SECOND=40 drains a level-1 character's AP within a few seconds (the shipped rate is 10)"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/stance.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/vats_mode.rs", "engine/nvforever/src/sprint_view.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "40", NVF_PLAY_TEST_MOVE = "5:1:0,22:0:0", NVF_PLAY_TEST_KEYS = "6:shift:6,18:shift:1.5" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--head-bob"]
+run_seconds = 24
+expect = [
+  { text = "sprint: test aid: 1.45 x the run, 40.0 AP a second", label = "the test aid's AP rate" },
+  { re = 'sprint: started, \d+ of \d+ AP', label = "Shift held while walking ahead sprints" },
+  { re = 'sprint: ended \(out of AP\) after [\d.]+ s, [\d.]+ AP spent, 0 of \d+ AP left', label = "the AP runs out, to 0 and not under" },
+  { text = "sprint: out of breath, strength 1.00", label = "out of AP: fully out of breath" },
+  { re = 'sprint: ended \(the control let go\)', label = "the second, short sprint ends when Shift is let go" },
+  { re = 'sprint: started', count = 2, label = "two presses, two sprints: running out does not start one again while Shift stays held" },
+]
+
+[[scenario]]
+name = "sprint-off-original"
+source = "owner 2026-11-18 (engine/nvf-play/src/sprint.rs, engine/nvf-play/src/bindings.rs): with Sprint off (the default) Left Shift is Run's as in the original: held while running it walks, and nothing sprints or spends AP for it"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvf-play/src/player.rs", "engine/nvf-play/src/bindings.rs"]
+env = { NVF_PLAY_TEST_MOVE = "5:1:0,12:0:0", NVF_PLAY_TEST_KEYS = "6:shift:4" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 13
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off, Prone off", label = "Sprint off by default" },
+]
+forbid = [
+  { re = 'sprint: (started|ended|test aid|out of breath)', label = "nothing of the sprint with its switch off" },
+]
+
+[[scenario]]
+name = "sprint-trace"
+source = "owner 2026-11-18 (engine/nvforever/src/player_body.rs MotionTrace, engine/nvforever/src/sprint_view.rs; docs/design/player-body.md §1.4a.4): a frame-by-frame trace of the first-person view and gun through a sprint with the 10mm pistol out (the sprint pose easing in, the bigger bob), Crouch/Sneak pressed mid-sprint (eased out), standing up and sprinting again until the AP runs out, and the out-of-breath breathing standing still after it, for finding steps and pops (tools/smoke/motion_trace.py reads it)"
+note = "NVF_SPRINT_AP_PER_SECOND=15 so the second sprint runs out of AP within the run"
+areas = ["player-body"]
+paths = ["engine/nvf-play/src/sprint.rs", "engine/nvforever/src/sprint_view.rs", "engine/nvforever/src/head_bob.rs", "engine/nvforever/src/view_sway.rs", "engine/nvforever/src/player_body.rs"]
+env = { NVF_SPRINT_AP_PER_SECOND = "15", NVF_PLAY_TEST_MOTION_TRACE = "sprint-trace.csv", NVF_PLAY_TEST_EQUIP = "000E3778", NVF_PLAY_TEST_GIVE = "0008ED03:50", NVF_PLAY_TEST_CONTROL = "4:weapon,11:sneak,13:sneak", NVF_PLAY_TEST_MOVE = "7:1:0,21:0:0", NVF_PLAY_TEST_KEYS = "8:shift:12" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12", "--sprint", "--movement-inertia", "--animation-smoothing", "--weapon-sway", "--head-bob"]
+run_seconds = 30
+expect = [
+  { text = "motion trace: writing", label = "the trace is written" },
+  { re = 'sprint: started', label = "the sprint starts" },
+  { re = 'sprint: ended \(sneaking\)', label = "Crouch/Sneak ends it" },
+  { re = 'sprint: ended \(out of AP\)', label = "the second sprint runs out of AP" },
+  { re = 'sprint: out of breath, strength', label = "and leaves the player out of breath" },
+  { re = 'player body summary: weapon sway on', label = "the run reached its end" },
+]
+
+[[scenario]]
 name = "graphics-glow-switches"
 source = "docs/spec-notes/world.md §6 \"HDR and bloom\", \"Eye adaptation\" (owner 2026-10-25: the HDR effects as settings switches): the settings page's Eye adaptation and Neon glow switches, and the light glow (HDR) they need, change while the game runs, without a rendering error"
 areas = ["renderer", "graphics", "settings"]

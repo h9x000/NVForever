@@ -536,6 +536,67 @@ stays. At the start and at each change the log says which of the switches kept i
 `MovementInertia` are on (`advanced movement: Global Toggle on, ...`; smoke
 `advanced-movement-defaults`). Until 2026-11-16 all were on by default.
 
+### 1.4a.4 Advanced Movement: Sprint (owner, 2026-11-18)
+
+NVF Features › Advanced Movement › Gameplay › Sprint (`sprint`, off by default; the shared
+state and input: `nvf_play::stance`). Holding Sprint (Left Shift; Run moves to X while it is
+on) runs faster for Action Points. Off, the player moves exactly as in the original. Code:
+`engine/nvf-play/src/sprint.rs` (the rules, the speed and the AP) and
+`engine/nvforever/src/sprint_view.rs` (the look); every constant named there [design, tuned
+by eye; the speed and the AP rate the owner's].
+
+- **Speed**: a full sprint is 1.45 × (`sprint::SPRINT_SPEED`) the speed the player would run
+  at, applied in `player::step` after every pace there (crippled legs, `RunPace`, `PerkSpeed`,
+  `ReloadPace`, `StatSpeed`, the tweaks' wading and strafe paces), so whatever changes a run
+  changes a sprint alike. It grows with `StanceMotion::sprint_share`, one critically damped
+  spring of 0.5 s both ways (`sprint::SHARE_SECONDS`; no change of constant, so a change of
+  mind part way never hitches), so the speed comes and goes smoothly with Movement Inertia
+  off; with it on the ground inertia's spring carries it too.
+- **Direction**: straight ahead a full sprint; ahead and aside (W+D) about half
+  (`sprint::direction_share`, none under a share ahead of 0.4, `LEAST_AHEAD`); straight
+  aside or back none.
+- **Action Points**: 10 AP a second (`sprint::SPRINT_AP_PER_SECOND`), a fixed amount, so more
+  AP sprints longer (100 AP ten seconds, 60 six). Spent as the game's other AP costs (damage
+  on the Action Points actor value, as VATS and the tweaks' run cost), never below 0 (issue
+  #2601). AP does not come back while sprinting (`vats_mode`'s regeneration waits). At 0 the
+  sprint ends and starts again only after Sprint is let go and AP came back. God mode spends
+  none.
+- **What stops it**: Sprint let go, aiming or blocking, the trigger, sneaking or crouching
+  (the press stops it at once, eased out), lying down or still getting up (`StanceMotion::prone`
+  or `prone_share` over 0.02: getting up with Shift held stands up first, then the sprint
+  ramps in), over-encumbered, swimming or more than 30 units deep in water, a script's
+  movement lock, no AP. A jump does not: its speed carries into the air. Held on, the sprint
+  comes back once the stop is gone. The log: `sprint: started, …`, `sprint: ended (<why>)
+  after <s> s, <n> AP spent, …`.
+- **Out of breath**: stopping with AP under 20 % of the most (`WINDED_BELOW`) winds the player,
+  0.35 just under it to 1 at none (`winded_strength`; the log `sprint: out of breath,
+  strength <n>`). `StanceMotion::winded` comes on through a 0.6 s spring and fades over 6 s
+  along the settling curve, slow at the end (`sprint::Winded`). Camera Motion shows it through
+  the existing out-of-breath breathing (§1.4a.1; `head_bob::HeadBob::exertion` is the larger of
+  running's and the sprint's): the view rises and falls faster and deeper, at full about 2.9
+  units every 1.3 s (`sprint_view::WINDED_PACE` 1.6 and `WINDED_SIZE` 1.1 on top of the
+  existing 2.2 and 2.2), clearly more than a walk's bob (1.5 units), less than a run's (5.25).
+  The camera's place only, as the existing breath: its rotation never moves. The gun breathes
+  the same way under Weapon Inertia.
+- **First person**: the gun goes into a sprint pose by the share (`sprint_view::pose`: the
+  Lower Weapon pose's kind, further: 14° down, 16° in, 14° of cant, 1.5 units lower; rifles
+  0.8 of it, heavy weapons and launchers 0.35, fists 0.5), faded through its own 0.3 s spring
+  under the Pip-Boy or an idle. The head bob grows to 1.4 × the run's (Camera Motion) and the
+  gun's bob to 1.6 × (Weapon Inertia).
+- **Third person**: the run clip plays faster by itself (the movement clips play at the body's
+  speed over theirs, up to 2.5 ×; no sprint clip exists: upstream closed #2176, the data has
+  none) and the body leans 4° forward about its feet (`sprint_view::lean`).
+- **Perks and effects**: the Modify Run Speed perks (`PerkSpeed`, `combat::perk_speed`), Speed
+  Mult and the armour (`StatSpeed`), the two-handed weapon's run (`RunPace`), crippled legs
+  and the reload pace all scale the sprint as the run. The most AP (Agility, Action Boy/Girl,
+  chems such as Jet, the armour's AP effects: base, modifiers and temporary changes of the
+  actor value) sets how long a sprint lasts; the Action Point Regen perks (Nerves of Steel and
+  the rest, `Game::ap_regen_mult`) speed the AP's return after it.
+- **Switches**: Sprint (and the Global Toggle) for the speed, the AP, the pose and the lean;
+  Camera Motion for the bigger head bob and out of breath; Weapon Inertia for the gun's bigger
+  bob and breath. Test aids `NVF_SPRINT_SPEED` and `NVF_SPRINT_AP_PER_SECOND` replace the two
+  values for a run. Smoke: `sprint-run`, `sprint-off-original`, `sprint-trace` (not yet run).
+
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
 The owner, from a report: "we had headbob in third person, but none in first person?

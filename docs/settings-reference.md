@@ -1279,8 +1279,12 @@ below cover them all.
 - In full: the Sprint control (Controls › Movement, Left Shift by default) is greyed and does
   nothing while this is off or the Global Toggle is. While it is on, Left Shift is Sprint's
   and Run acts on X, unless Run was moved off its default Left Shift; the INI keeps Run's own
-  key, so turning Sprint off gives Shift back to Run (owner, 2026-11-18). The speed and AP
-  perks apply to the sprint.
+  key, so turning Sprint off gives Shift back to Run (owner, 2026-11-18). A full sprint is
+  1.45 times the run speed and costs 10 AP a second (none come back meanwhile; it ends at
+  0 AP); forward only, half a sprint diagonally; aiming, attacking, sneaking, lying down,
+  over-encumbered or in water stop it, eased out. Stopping under 20 % AP leaves you out of
+  breath (shown by Camera Motion). The speed and AP perks apply to the sprint
+  (docs/design/player-body.md §1.4a.4).
 - Command-line switches: `--sprint`, `--no-sprint`
 - Off by default.
 - Registered in `engine/nvf-play/src/player.rs`
