@@ -386,6 +386,8 @@ impl Plugin for PlayerPlugin {
         app.init_resource::<crate::inertia::MovementInertia>().add_systems(Update, (crate::inertia::follow_weapon, crate::inertia::log_switches));
         // Sprint and Prone's shared state and the bindings kept on their switches.
         app.add_plugins(crate::stance::StancePlugin);
+        // Prone: lying down, its share and its bonuses (`crate::prone`).
+        app.add_plugins(crate::prone::PronePlugin);
         // The Advanced Movement section's switches kept here (NVF Features; Weapon Inertia and
         // Camera Motion are nvforever's `settings.rs`): the Global Toggle, then Gameplay's and
         // Animation Smoothing [design: the owner, 2026-11-15, the menu's names and order].

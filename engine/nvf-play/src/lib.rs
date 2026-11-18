@@ -116,6 +116,7 @@ pub mod phys_rate;
 pub mod pickpocket;
 pub mod pipboy;
 pub mod player;
+pub mod prone;
 pub mod quest_messages;
 pub mod radiation;
 pub mod radio;
