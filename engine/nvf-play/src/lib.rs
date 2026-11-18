@@ -145,6 +145,7 @@ pub mod settings_view;
 pub mod start_menu;
 pub mod sim;
 pub mod space;
+pub mod stance;
 pub mod terminal;
 pub mod tiles;
 pub mod tutorial_menu;

@@ -128,7 +128,8 @@ fn script_input(
     if let Some(b) = bindings.as_deref() {
         // The engine's controls are the extender's 0–27, in the same order.
         input.bindings = GAME_CONTROLS[..GAME_INI_CONTROLS].iter().map(|(c, _, _)| {
-            let bind = b.get(*c);
+            // What the control acts on now (Run on X while Sprint has Shift).
+            let bind = b.effective(*c);
             (bind.key.and_then(key_code), bind.mouse.and_then(mouse_code))
         }).collect();
     }
@@ -140,7 +141,7 @@ fn script_input(
         let keys = !controller || crate::bindings::keys_with_pad();
         GAME_CONTROLS.iter().take(fnv_game::script_input::CONTROLS).enumerate().fold(0, |mask, (c, (control, _, _))| {
             let keyboard = keys && input.bindings.get(c).is_some_and(|(k, m)| [*k, *m].into_iter().flatten().any(|code| input.held.contains(&code)));
-            let pad = controller && crate::bindings::pad_binding_held(b.pad(*control), &pads, sticks.as_deref());
+            let pad = controller && crate::bindings::pad_binding_held(b.pad_effective(*control), &pads, sticks.as_deref());
             mask | (u32::from(keyboard || pad) << c)
         })
     });

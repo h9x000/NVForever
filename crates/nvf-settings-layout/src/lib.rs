@@ -72,12 +72,14 @@ pub const fn group_section(subgroup: &'static str, heading: &'static str, keys: 
 /// The rows the NVF Features tab may hold: only what the owner named there [design: owner
 /// 2026-11-15]. Adding a key needs the owner's word; a bigger gameplay change is offered to
 /// the owner for this tab, never moved here unasked (docs/design/settings-page.md).
-pub const NVF_FEATURES_KEYS: [&str; 9] = [
+pub const NVF_FEATURES_KEYS: [&str; 11] = [
     "advanced-movement",
     "movement-weight",
     "movement-inertia",
     "weapon-handling",
     "advanced-recoil",
+    "sprint",
+    "prone",
     "weapon-inertia",
     "animation-smoothing",
     "camera-motion",
@@ -141,6 +143,9 @@ pub const SECTIONS: &[Section] = &[
             "controls:bind:Run",
             "controls:bind:Always Run",
             "controls:bind:Auto Move",
+            // NVForever's own, greyed while their NVF Features switch is off (owner 2026-11-18).
+            "controls:bind:Sprint",
+            "controls:bind:Prone",
         ],
     ),
     section("Controls", Some("Combat"), &["controls:bind:Use", "controls:bind:Block", "controls:bind:Ready Item", "controls:bind:Vats", "controls:bind:Ammo Swap", "controls:bind:Lower Weapon"]),
@@ -202,7 +207,8 @@ pub const SECTIONS: &[Section] = &[
     section("Graphics", Some("World and Animation"), &["head-tracking", "foot-ik", "sky-clock"]),
     // The owner's own layout of the movement work (tech/movement-inertia, 2026-11-15).
     section(NVF_FEATURES_TAB, Some("Advanced Movement"), &["advanced-movement", "movement-weight"]),
-    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil"]),
+    // Sprint and Prone after Advanced Recoil (owner 2026-11-18).
+    section(NVF_FEATURES_TAB, Some("Gameplay"), &["movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "prone"]),
     section(NVF_FEATURES_TAB, Some("Visual Only"), &["weapon-inertia", "animation-smoothing", "camera-motion"]),
     section(NVF_FEATURES_TAB, Some("World Interaction"), &["grass-fire"]),
     // The Tweaks tab (#1892), placed ahead of it: Stewie's Tweaks' groups, each in its
@@ -944,6 +950,9 @@ pub const NEEDS: &[(&str, &str, &str)] = &[
     ("fps-counter-upscaling", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter", "Needs the Frame Rate Counter."),
     ("fps-counter-low", "fps-counter-fps", "Needs Counter: Frame Rate."),
+    // Sprint and Prone act only under the Global Toggle (owner 2026-11-18).
+    ("sprint", "advanced-movement", "Needs the Global Toggle."),
+    ("prone", "advanced-movement", "Needs the Global Toggle."),
 ];
 
 /// The Controls tab's rows that are shown only while the input device is a controller

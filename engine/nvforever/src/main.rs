@@ -819,6 +819,22 @@ struct Args {
     /// (nvf_play::inertia); a switch of the settings page (on by default).
     #[arg(long, requires = "play")]
     no_advanced_recoil: bool,
+    /// Sprint: the Sprint control (Left Shift; Run moves to X) runs faster for AP
+    /// (nvf_play::stance); off unless given; a switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_sprint")]
+    sprint: bool,
+    /// No Sprint: Shift is Run as in the original (nvf_play::stance), the default; a switch of
+    /// the settings page.
+    #[arg(long, requires = "play")]
+    no_sprint: bool,
+    /// Prone: a held Crouch/Sneak lies the player down (nvf_play::stance); off unless given; a
+    /// switch of the settings page.
+    #[arg(long, requires = "play", conflicts_with = "no_prone")]
+    prone: bool,
+    /// No Prone: Crouch/Sneak only crouches, as in the original (nvf_play::stance), the
+    /// default; a switch of the settings page.
+    #[arg(long, requires = "play")]
+    no_prone: bool,
     /// Keep the first-person weapon up against walls and friendly actors close ahead
     /// (weapon_lower.rs); a switch of the settings page.
     #[arg(long, requires = "play")]
@@ -1858,6 +1874,8 @@ fn main() -> AppExit {
             inertia.weapon_handling = args.weapon_handling;
             inertia.smooth = args.animation_smoothing;
             inertia.recoil = !args.no_advanced_recoil;
+            inertia.sprint = args.sprint;
+            inertia.prone = args.prone;
             inertia.advanced = !args.no_advanced_movement;
             app.insert_resource(inertia);
             app.add_plugins(decals::DecalsPlugin);

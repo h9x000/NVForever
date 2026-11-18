@@ -892,7 +892,11 @@ below cover them all.
 - On the page: Enter or a click: bind a new key or mouse button to the control (a control
   that had it gets the old one). Delete clears its key.
 - In full: a key replaces the control's key, a mouse button its mouse button. Kept under the
-  control's name in [Controls] of NVForever.ini.
+  control's name in [Controls] of NVForever.ini. Sprint and Prone (NVForever's own, at the end
+  of Movement) are greyed and cannot be rebound while their NVF Features › Advanced Movement
+  switch is off; their note says so. Sprint shares Run's Left Shift and Prone Crouch/Sneak's
+  key on purpose: a rebind never swaps within those pairs, and while Sprint is on the Run row
+  shows X, the key Run acts on then (`sprint`, `prone` under NVF Features › Gameplay below).
 
 ### A control (controller)
 
@@ -1267,6 +1271,29 @@ below cover them all.
 - On the page: On: a shot's kick eases the view up and part of it settles back down, and the view nudges back. Off: the whole kick stays, as in the original.
 - Command-line switches: `--no-advanced-recoil`
 - On by default, the one Advanced Movement part that is.
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `sprint`: Sprint
+
+- On the page: On: hold Sprint (Left Shift; Run moves to X) to run faster, spending AP every second; stopping low on AP leaves you out of breath. Off: as in the original.
+- In full: the Sprint control (Controls › Movement, Left Shift by default) is greyed and does
+  nothing while this is off or the Global Toggle is. While it is on, Left Shift is Sprint's
+  and Run acts on X, unless Run was moved off its default Left Shift; the INI keeps Run's own
+  key, so turning Sprint off gives Shift back to Run (owner, 2026-11-18). The speed and AP
+  perks apply to the sprint.
+- Command-line switches: `--sprint`, `--no-sprint`
+- Off by default; greyed while the Global Toggle is off.
+- Registered in `engine/nvf-play/src/player.rs`
+
+### `prone`: Prone
+
+- On the page: On: hold Crouch/Sneak for a second to lie down: counts as sneaking, steadier aim, less recoil, better V.A.T.S. odds; moving stands you up. Off: as in the original.
+- In full: the Prone control (Controls › Movement) shares Crouch/Sneak's key by default, where
+  a one-second hold lies down; given a key of its own, a press of it does. Lying down is
+  sneaking: the sneak bonuses, sneak attacks, detection, the sneak label and the perks on
+  sneaking all apply (owner, 2026-11-18). The control is greyed while this is off.
+- Command-line switches: `--prone`, `--no-prone`
+- Off by default; greyed while the Global Toggle is off.
 - Registered in `engine/nvf-play/src/player.rs`
 
 ## NVF Features › Visual Only

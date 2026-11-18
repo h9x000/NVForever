@@ -1310,8 +1310,8 @@ env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:15", NVF_P
 args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
 run_seconds = 16
 expect = [
-  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, , [NVF Features > Visual Only], weapon-inertia", label = "the Global Toggle, Movement Weight, an empty line, Gameplay, an empty line, Visual Only, in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
-  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 16', label = "sixteen lines in the tab: World Interaction's grass fires (#2804) after Visual Only" },
+  { text = "pause menu: inspect: shown [NVF Features > Advanced Movement], advanced-movement, movement-weight, , [NVF Features > Gameplay], movement-inertia, weapon-handling, advanced-recoil, sprint, prone", label = "the Global Toggle, Movement Weight, an empty line, Gameplay with Sprint and Prone last (owner 2026-11-18), in the owner's order (the window shows 11 lines since the menu overhaul, #2804; settings-layout places the rest)" },
+  { re = 'pause menu: inspect: NVF Features, .*lines 1-11 of 18', label = "eighteen lines in the tab: Visual Only, then World Interaction's grass fires (#2804)" },
 ]
 
 [[scenario]]
@@ -1381,7 +1381,7 @@ env = { NVF_PLAY_TEST_MOVE = "5:1:0,8:0:0", NVF_PLAY_TEST_CONTROL = "10:sneak,12
 args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
 run_seconds = 16
 expect = [
-  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off", label = "the Global Toggle and Advanced Recoil on, the other parts off" },
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint off, Prone off", label = "the Global Toggle and Advanced Recoil on, the other parts off (Sprint and Prone too, owner 2026-11-18)" },
   { re = 'weapon handling: draws at x1\.00 before perks.*Weapon Handling off', label = "the original's draw pace at Agility 5" },
   { re = 'movement inertia: (up to|glided)', count = 0, label = "by default no start or glide under inertia" },
   { re = 'eased crouch', count = 0, label = "by default the crouch follows the clips" },
@@ -1402,6 +1402,35 @@ expect = [
   { re = 'movement inertia: glided (?P<n>[\d.]+) units', range = [25, 50], label = "the glide stays: Movement Inertia is its own switch" },
   { text = "player view: crouched (eased crouch)", label = "and so does its eased crouch" },
   { re = 'player body summary: head bob off, deepest first-person dip (?P<n>[\d.]+) units', range = [0, 0.05], label = "the view no longer bobs" },
+]
+
+[[scenario]]
+name = "sprint-prone-on"
+source = "owner 2026-11-18 (engine/nvf-play/src/stance.rs, engine/nvf-play/src/bindings.rs Bindings::effective; docs/design/player-body.md §1.4a.3): Sprint and Prone switched on from the command line are logged on, and while Sprint holds Left Shift Run acts on X (never saved)"
+note = "the groundwork only: the features' own scenarios check the sprint and the lying down"
+areas = ["player-body", "settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/inertia.rs", "engine/nvforever/src/main.rs"]
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--sprint", "--prone"]
+run_seconds = 8
+expect = [
+  { text = "advanced movement: Global Toggle on, Movement Inertia off, Weapon Handling off, Advanced Recoil on, Animation Smoothing off, Sprint on, Prone on", label = "both switches on from the command line" },
+  { text = "controls: Sprint on, Prone on; Run on X while Sprint has Left Shift", label = "Run moves off Shift to X while Sprint is on" },
+]
+
+[[scenario]]
+name = "sprint-prone-greyed-bindings"
+source = "owner 2026-11-18 (engine/nvf-play/src/stance.rs binding_greyed, engine/nvf-play/src/pause.rs; docs/settings-reference.md Controls): with Prone off (the default) its binding on the Controls tab is greyed and cannot be rebound; a control of the game's still rebinds"
+areas = ["settings"]
+paths = ["engine/nvf-play/src/stance.rs", "engine/nvf-play/src/bindings.rs", "engine/nvf-play/src/pause.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "5:10", NVF_PLAY_TEST_SETTINGS = "6:controls,7:bind:Prone=K,8:bind:Jump=J" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages"]
+run_seconds = 11
+expect = [
+  { text = "controls: Prone not changed: greyed (Turn on Prone in NVF Features > Advanced Movement first.)", label = "the greyed Prone binding is not rebound" },
+  { text = "controls: Jump bound to J (was Space)", label = "a game control still rebinds" },
+]
+forbid = [
+  { text = "controls: Prone bound to", label = "nothing binds a greyed control" },
 ]
 
 [[scenario]]
@@ -11990,6 +12019,8 @@ expect = [
   "settings layout: movement-inertia -> NVF Features > Gameplay",
   "settings layout: weapon-handling -> NVF Features > Gameplay",
   "settings layout: advanced-recoil -> NVF Features > Gameplay",
+  "settings layout: sprint -> NVF Features > Gameplay",
+  "settings layout: prone -> NVF Features > Gameplay",
   "settings layout: weapon-inertia -> NVF Features > Visual Only",
   "settings layout: animation-smoothing -> NVF Features > Visual Only",
   "settings layout: camera-motion -> NVF Features > Visual Only",
