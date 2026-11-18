@@ -536,6 +536,58 @@ stays. At the start and at each change the log says which of the switches kept i
 `MovementInertia` are on (`advanced movement: Global Toggle on, ...`; smoke
 `advanced-movement-defaults`). Until 2026-11-16 all were on by default.
 
+### 1.4a.5 Advanced Movement: Prone (owner, 2026-11-18)
+
+The owner's spec: hold Crouch/Sneak a second (or press Prone's own key) to lie down; lying
+counts as sneaking; no crawl, any movement stands up; steadier aim, less recoil, better
+V.A.T.S. odds; the rules of §1.4a (springs, no linear curves, no pops). Off (the default, or
+the Global Toggle off) nothing of it acts [design; `nvf_play::prone`, nvforever
+`prone_view.rs`; the shared contract `nvf_play::stance`]:
+
+- **State.** `StanceMotion::prone` (the target) and `prone_share` (0 to 1, a critically
+  damped spring, 95 % in `prone::DOWN_SECONDS` 1.2 s down and `UP_SECONDS` 1.3 s up; the
+  rate is chosen when it leaves rest and kept through a change of mind, so it starts and
+  ends at rest and turns back without a jump). On the shared key the press crouches at once
+  (the crouch's own 1.0 s cross-over) and the hold's second carries on down from there.
+- **Getting up.** A movement key, Auto Move or Jump: to standing, no longer sneaking (unless
+  Hold to Sneak's key is still held); the movement waits until the share is under
+  `MOVE_FROM_SHARE` (0.35) and the jump is spent on getting up. Crouch/Sneak (or Prone's own
+  key) pressed again: back to the crouch, still sneaking; the hold of that press does not lie
+  down again [design: this choice]. A script's sneaking lock or TogglePlayerSneaking off: to
+  standing. In the air 0.25 s, swimming, furniture or an idle, Prone switched off: to the
+  crouch. It refuses to lie down while moving, in the air, swimming, seated or locked.
+- **Sneaking.** `PlayerControl::sneak` stays true while lying, so every reader in
+  `nvf_play::stance`'s list sees a sneaking player (IsSneaking and the perk conditions on it,
+  detection, sneak attack criticals, the spread's sneaking term, the HUD label, pickpocketing,
+  companions, the compass).
+- **Bonuses**, by the share (full only flat): the shot's cone and the crosshair's
+  (`prone::SPREAD` 0.5: hip, iron sights and 2D and 3D scopes alike, `combat::fire`), the view's
+  kick and the gun's (`RECOIL` 0.5; `combat::fire`, the arms' kick in `player_body.rs`), a
+  scope's sway (`SWAY` 0.5, `scope_view.rs`), V.A.T.S. chances `VATS_POINTS` +15 before the cap
+  (`vats_mode::chance_of`; 95 % as before).
+- **First person** (no lying clip exists for the arms): the arms rig, its camera node with
+  it, goes down by the share from the crouch's 78 units to `prone_view::PRONE_EYE` 17 over the
+  floor; where the ground under the eye rises (a slope ahead) it is lifted to keep
+  `MIN_CLEARANCE` 12 units, on a 0.2 s spring. The view looks at most `PITCH_DOWN_DEG` 40°
+  down (`prone::pitch_floor`, by the share). The arms sway and the head bobs and breathes at
+  half (`ARMS_STEADY`, `HEAD_STEADY`); off the sights the gun rests 1.2 units lower, 0.6
+  nearer, its muzzle 2° down (`rest_pose`). The collision stays the crouch's.
+- **Third person**: `idleanims\pushups.kf` over every clip (sequence priority 100): down from
+  0.5 s to the plank (1.67 s), then from the loop's end (6.67 s, the same plank) back to the
+  bottom of the last push-up (6.17 s: pelvis 14, head 11 up), held with a slow breath of our
+  own (0.05 s of the clip every 4 s); getting up, the clip on from there (push up, then its
+  own getting up to 8.0 s, the motion `pushupsgetup.kf` has too). The knockdown's face-down
+  get-up was not used: it starts from another lying pose with its root 68 units off. The
+  clip's time follows the share; going down and getting up are two layers crossing over on a
+  0.35 s spring; they fade in over the crouch and out into the standing or crouching clips
+  over the share's first 0.3 along the settling curve. The weapon is hidden in third person
+  over a share of 0.35 (the hands are on the floor) and shots leave the eye; an aiming arm
+  layer would be new work. The camera's pivot stays at least 45 units up by the share.
+- Logs: `prone: lying down (…)`, `prone: flat on the ground: spread x0.50, …`, `prone view:
+  flat on the ground, the eye … units over the feet`, `prone body: the weapon hidden while
+  lying (third person)`, `prone: getting up (moved; …)`, `prone: up`, `prone summary: …`.
+  Smoke: `prone-*` scenarios (not run yet).
+
 ### 1.4a.1 The camera's bob: first person yes, third person no (owner, 2026-11-07)
 
 The owner, from a report: "we had headbob in third person, but none in first person?
@@ -812,6 +864,7 @@ body's own shadow).
 | Controls and camera | `engine/nvf-play/src/control.rs` | `PlayerControl` (sneak, weapon, Block, Always Run, Auto Move, view, distance, `Orbit`), `ControlSettings` (GMSTs), `BodyView`, `place_camera` |
 | Movement keys, mouse look | `engine/nvf-play/src/player.rs` | movement through the bindings; mouse look turns the orbit while Toggle POV is held; `Player::body_eye`, `BodySet` |
 | Body | `engine/nvforever/src/player_body.rs` (`PlayerBodyPlugin`, with `--play` and actors on) | both rigs, weapon models, clip caches, per-frame clip choice, eye and pivot, which rig is shown; the body in first person (§1.5: `PlayerBody::first_person_body`, `Seen`, `seated_heading`, `lying_view`); the shadow (§1.6: `Seen`, `show_rigs`, `ArmsShade`) |
+| Prone | `engine/nvf-play/src/prone.rs` (state, share, bonuses), `engine/nvforever/src/prone_view.rs` (eye, arms, push-up layers) | §1.4a.5; hooks marked "Prone" in `combat.rs`, `vats_mode.rs`, `scope_view.rs`, `player_body.rs` |
 | Shade light for the arms | `engine/nvf-assets/src/nif_material.rs` (`NifSurface::shade_light`), `nif_material.wesl` (`with_shade_light`); layers in `engine/nvforever/src/sky.rs` (`SHADOW_LAYER`, `ARMS_LAYER`) | §1.6 |
 | Shared part building | `engine/nvforever/src/actors.rs` (`part_uses`) | NPCs and the player build parts the same way |
 | Test aids | `engine/nvf-play/src/test_aid.rs` | `NVF_PLAY_TEST_EQUIP`, `NVF_PLAY_TEST_MOVE`, `NVF_PLAY_TEST_CONTROL` (`sneak`, `weapon`, `aim`, `view`, `jump`, `zoom=`, `orbit=<yaw>:<pitch>`, `release`); for a session played by hand, the debug switches `NVF_PLAY_DEBUG_GIVE` and `NVF_PLAY_DEBUG_EQUIP` (same values as the `TEST` ones, the run stays attended) |
