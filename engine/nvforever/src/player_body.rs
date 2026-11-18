@@ -1045,6 +1045,8 @@ struct Motion {
     head: crate::head_bob::HeadBob,
     /// The first-person weapon lowered against a wall or a friend (`weapon_lower.rs`).
     lower: WeaponLower,
+    /// The first-person sprint pose's fade (`sprint_view.rs`).
+    sprint: crate::sprint_view::SprintView,
     /// The true iron sights were last reported on the eye (a smoke check).
     sights_told: bool,
     /// The weapon was last reported lowered (a smoke check).
@@ -1109,6 +1111,7 @@ impl Default for Motion {
             sway: ViewSway::default(),
             head: crate::head_bob::HeadBob::default(),
             lower: WeaponLower::default(),
+            sprint: crate::sprint_view::SprintView::default(),
             sights_told: false,
             lower_told: false,
             sights_share: 0.0,
@@ -3135,7 +3138,7 @@ fn drive_weapon_emitters(state: Res<PlayerBody>, mut emitters: Query<&mut crate:
 #[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn drive_body(
     mut commands: Commands,
-    (time, turbo, sim, mut told_scale, sequences, mut trace): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>, Res<crate::script_sequences::PlayerSequences>, Local<MotionTrace>),
+    (time, turbo, sim, mut told_scale, sequences, mut trace, sprint): (Res<Time>, Option<Res<nvf_play::script::PlayerTimeScale>>, Option<Res<nvf_play::sim::SimState>>, Local<Option<f32>>, Res<crate::script_sequences::PlayerSequences>, Local<MotionTrace>, Option<Res<nvf_play::stance::StanceMotion>>),
     d: Res<PlayWorld>,
     intent: Res<MoveIntent>,
     control: Res<PlayerControl>,
@@ -3557,7 +3560,11 @@ fn drive_body(
         }
         *told_scale = Some(script_scale);
     }
-    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading), scale: Vec3::splat(body.scale * script_scale) };
+    // Sprint (`sprint_view.rs`): its share, how out of breath it left the player, and in
+    // third person the body's lean about its feet.
+    let (sprint_share, winded) = sprint.as_deref().map_or((0.0, 0.0), |s| (s.sprint_share, s.winded));
+    let lean = if third_view { crate::sprint_view::lean(sprint_share) } else { Quat::IDENTITY };
+    let root = Transform { translation: Vec3::from_array(feet) - sink, rotation: Quat::from_rotation_z(-player.heading) * lean, scale: Vec3::splat(body.scale * script_scale) };
     let third = Posed { root, look_pitch: player.pitch, special: &idles.third, sequences:&sequences.third, sequence_dt: dt, pipboy: None, sway: SwayPose::NONE, sights: None };
     let third_eye = pose_rig(&mut body.third, &frame, &events, third, &mut ctx, &mut transforms).map(|(e, _)| e + eye_sink);
     // The third-person body's melee attack clip carries the player by its root's travel
@@ -3629,6 +3636,7 @@ fn drive_body(
             exertion: if advanced && state.head_bob { m.head.exertion() } else { 0.0 },
             reloading: f32::from(u8::from(f.animator.layers.iter().any(|l| l.tag == TAG_RELOAD && !l.finished() && !l.is_leaving()))),
             on: advanced && state.weapon_sway && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            sprint: sprint_share,
         })
     });
     let sway = crate::view_sway::rescale(sway, sway_share);
@@ -3654,6 +3662,9 @@ fn drive_body(
             kick: if soft_recoil { kick } else { 0.0 },
             punch,
             on: advanced && state.head_bob && !third_view && idles.held.is_none() && !idles.first.covers() && pipboy.is_none(),
+            // Sprint's bob and its out of breath, Camera Motion's (`sprint_view.rs`).
+            sprint: sprint_share,
+            winded: if advanced && state.head_bob { winded } else { 0.0 },
         });
         at = [at[0] + o.x, at[1] + o.y, at[2] + o.z];
     }
@@ -3679,6 +3690,11 @@ fn drive_body(
         info!("weapon lowering: {}", if m.lower.down { if control.lowered { "lowered by hand" } else if ahead.friendly { "lowered for a friendly actor ahead" } else { "lowered against a surface ahead" } } else { "raised" });
     }
     let sway = crate::weapon_lower::then(sway, crate::weapon_lower::pose(lowered, crate::weapon_lower::weight(prefix)));
+    // Sprinting lowers the gun further (`sprint_view.rs`), faded where the arms are not the
+    // player's.
+    let sprint_pose = m.sprint.pose_share(sprint_share, idles.held.is_none() && !idles.first.covers() && pipboy.is_none(), dt);
+    let sprint_weight = if prefix == UNARMED { crate::sprint_view::FISTS } else { crate::weapon_lower::weight(prefix) };
+    let sway = crate::weapon_lower::then(sway, crate::sprint_view::pose(sprint_pose, sprint_weight));
     // True iron sights: brought up at their own pace while the view zooms in, for the
     // guns whose model has a sighting node, while the player looks through the arms rig
     // by themself.

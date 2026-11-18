@@ -129,6 +129,11 @@ pub struct BobInput {
     pub kick: f32,
     /// A blow taken this frame (view frame: x right, y ahead, z up; 0: none).
     pub punch: Vec3,
+    /// Sprint (`crate::sprint_view`): the sprint's share (0–1), a larger bob, and how out
+    /// of breath a sprint left the player (0–1; 0 with Camera Motion off), which the
+    /// out-of-breath breathing below shows.
+    pub sprint: f32,
+    pub winded: f32,
 }
 
 /// The bob's state across frames.
@@ -157,6 +162,8 @@ pub struct HeadBob {
     pub peak_breath: f32,
     /// How out of breath (0–1), and the most since the start (for the exit summary).
     exertion: f32,
+    /// How out of breath a sprint left the player (0–1; `BobInput::winded`).
+    winded: f32,
     pub peak_exertion: f32,
     /// The third-person pivot's two lags (head height above the feet).
     pivot: Option<(f32, f32)>,
@@ -177,7 +184,8 @@ impl HeadBob {
         let follow = |t: f32| if dt <= 0.0 { 0.0 } else { 1.0 - (-dt / t).exp() };
         self.gain += (f32::from(u8::from(i.on)) - self.gain) * follow(FOLLOW_SECONDS);
         self.land_gain += (f32::from(u8::from(i.landing)) - self.land_gain) * follow(FOLLOW_SECONDS);
-        let target = if i.airborne { 0.0 } else { (i.speed / FULL_SPEED).min(1.0) };
+        // A sprint bobs more (`crate::sprint_view`).
+        let target = if i.airborne { 0.0 } else { (i.speed / FULL_SPEED).min(1.0) * crate::sprint_view::head_bob_gain(i.sprint) };
         self.amount.step(target, omega_for(AMOUNT_SETTLE_SECONDS), dt);
         // The calmer shares down the sights and sneaking come and go on springs.
         let stance = omega_for(crate::view_sway::STANCE_SHARE_SECONDS);
@@ -211,7 +219,10 @@ impl HeadBob {
             -dt / RECOVER_WALKING_SECONDS
         };
         self.exertion = (self.exertion + wind + if took_off { JUMP_BREATH } else { 0.0 }).clamp(0.0, 1.0);
-        self.peak_exertion = self.peak_exertion.max(self.exertion);
+        // A sprint's stop low on AP winds the player as running does (`crate::sprint_view`).
+        self.winded = i.winded.clamp(0.0, 1.0);
+        let exertion = self.exertion();
+        self.peak_exertion = self.peak_exertion.max(exertion);
         // A shot nudges the head back and a blow jolts it: the springs set moving.
         self.lag[0].out.rate += i.punch.x * PUNCH_SPEED;
         self.lag[1].out.rate += i.punch.y * PUNCH_SPEED - i.kick * SHOT_NUDGE;
@@ -235,12 +246,12 @@ impl HeadBob {
         let breath_target = if !i.breathing || i.airborne {
             0.0
         } else {
-            (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING.max(self.exertion) }) * if i.sights { 0.5 } else { 1.0 }
+            (if i.speed < STILL_SPEED { 1.0 } else { BREATH_MOVING.max(exertion) }) * if i.sights { 0.5 } else { 1.0 }
         };
         self.breath += (breath_target - self.breath) * follow(BREATH_FADE_SECONDS);
         // Out of breath: faster and deeper (the phase runs on, so a change of pace is smooth).
-        let pace = 1.0 + (crate::view_sway::EXERTED_PACE - 1.0) * self.exertion;
-        let size = self.breath * (1.0 + (crate::view_sway::EXERTED_SIZE - 1.0) * self.exertion);
+        let pace = (1.0 + (crate::view_sway::EXERTED_PACE - 1.0) * exertion) * crate::sprint_view::winded_pace(self.winded);
+        let size = self.breath * (1.0 + (crate::view_sway::EXERTED_SIZE - 1.0) * exertion) * crate::sprint_view::winded_size(self.winded);
         self.breath_phase = (self.breath_phase + dt * pace / BREATH_SECONDS).fract();
         let b = std::f32::consts::TAU * self.breath_phase;
         let rise = BREATH_RISE * b.sin() * size;
@@ -252,9 +263,9 @@ impl HeadBob {
         right * (swing + lag.x) + ahead * (lag.y + lean) + Vec3::Z * (dip + land + jolt + rise)
     }
 
-    /// How out of breath the player is (0–1).
+    /// How out of breath the player is (0–1): from running and jumping, or after a sprint.
     pub fn exertion(&self) -> f32 {
-        self.exertion
+        self.exertion.max(self.winded)
     }
 
     /// The third-person pivot's height above the feet this frame, from the head's.
@@ -303,7 +314,7 @@ mod tests {
     const DT: f32 = 1.0 / 60.0;
 
     fn input(speed: f32, phase: f32) -> BobInput {
-        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, out_of_breath: true, hard_landings: true, landing: true, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO }
+        BobInput { dt: DT, speed, phase, heading: 0.0, sights: false, sneaking: false, airborne: false, velocity: Vec2::ZERO, vertical: 0.0, out_of_breath: true, hard_landings: true, landing: true, on: true, breathing: false, kick: 0.0, punch: Vec3::ZERO, sprint: 0.0, winded: 0.0 }
     }
 
     #[test]

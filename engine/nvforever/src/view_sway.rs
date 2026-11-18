@@ -322,11 +322,13 @@ pub struct SwayInput {
     pub reloading: f32,
     /// Whether the arms may sway at all this frame.
     pub on: bool,
+    /// The sprint's share (0–1): a larger bob (`crate::sprint_view`).
+    pub sprint: f32,
 }
 
 impl Default for SwayInput {
     fn default() -> Self {
-        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, breathing: true, hard_landings: true, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false }
+        SwayInput { dt: 0.0, heading: 0.0, pitch: 0.0, velocity: Vec2::ZERO, vertical: 0.0, phase: 0.0, sights: false, sneaking: false, airborne: false, heft: 1.0, breathing: true, hard_landings: true, raised: 0.0, drawn: 0.0, kick: 0.0, punch: Vec3::ZERO, exertion: 0.0, reloading: 0.0, on: false, sprint: 0.0 }
     }
 }
 
@@ -513,7 +515,7 @@ impl ViewSway {
         // The bob follows the speed; breathing shows standing still, and out of breath
         // always, faster and larger.
         let speed = i.velocity.length();
-        let bob_target = if i.airborne { 0.0 } else { (speed / FULL_BOB_SPEED).min(1.0) };
+        let bob_target = if i.airborne { 0.0 } else { (speed / FULL_BOB_SPEED).min(1.0) * crate::sprint_view::weapon_bob_gain(i.sprint) };
         self.bob.step(bob_target, omega_for(BOB_SETTLE_SECONDS * slow), dt);
         let exertion = i.exertion.clamp(0.0, 1.0);
         let still = if !i.airborne && speed < BREATH_BELOW_SPEED { 1.0 } else { 0.0f32 };
