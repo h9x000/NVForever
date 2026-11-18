@@ -303,9 +303,9 @@ mod tests {
     /// #2688's sound cover, #2670's cloud shadows, #2149's smooth terrain and its Debug row terrain wireframe, the
     /// overhaul's menu font, the Advanced Movement rows of tech/movement-inertia, Weapon
     /// Inertia and Camera Motion in place of weapon sway and head bob, #2843's Shadow
-    /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row;
-    /// Sprint and Prone), by the group it registers with.
-    const KNOWN: [(&str, &str); 130] = [
+    /// resolution row, Gore Shake and #2670's Cloud shadows; #2661's mesh terrain blend row, the
+    /// Quick Loot rows, Sprint and Prone), by the group it registers with.
+    const KNOWN: [(&str, &str); 136] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -321,6 +321,12 @@ mod tests {
         ("dialogue-goodbye-hint", "Gameplay"),
         ("reload-slows", "Gameplay"),
         ("grass-fire", "Gameplay"),
+        ("quick-loot", "Gameplay"),
+        ("quick-loot-scale", "Gameplay"),
+        ("quick-loot-background", "Gameplay"),
+        ("quick-loot-weight", "Gameplay"),
+        ("quick-loot-value", "Gameplay"),
+        ("quick-loot-value-per-weight", "Gameplay"),
         ("music", "Gameplay"),
         ("voice", "Gameplay"),
         ("dialogue-look", "Gameplay"),
@@ -637,7 +643,7 @@ mod tests {
         assert_eq!(keys(&list, &l, "Controls")[..6], ["[Input]", "@device", "button-style", "@automatic-input", "@rumble", ""]);
         assert_eq!(
             keys(&list, &l, NVF_FEATURES_TAB),
-            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "prone", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire"]
+            ["[Advanced Movement]", "advanced-movement", "movement-weight", "", "[Gameplay]", "movement-inertia", "weapon-handling", "advanced-recoil", "sprint", "prone", "", "[Visual Only]", "weapon-inertia", "animation-smoothing", "camera-motion", "", "[World Interaction]", "grass-fire", "", "[Quick Loot]", "quick-loot", "quick-loot-scale", "quick-loot-background", "quick-loot-weight", "quick-loot-value", "quick-loot-value-per-weight"]
         );
         assert_eq!(keys(&list, &l, "Debug"), ["overlay", "hit-markers", "god-mode", "navmesh", "terrain-wireframe", "scope-3d"]);
         assert!(keys(&list, &l, "Tweaks").is_empty(), "an empty tab is still a tab");
@@ -647,6 +653,7 @@ mod tests {
         assert_eq!(at("upscaler"), "Display > Upscaling and Anti-Aliasing");
         assert_eq!(at("sky-clock"), "Graphics > World and Animation");
         assert_eq!(at("grass-fire"), "NVF Features > World Interaction");
+        assert_eq!(at("quick-loot"), "NVF Features > Quick Loot");
         assert_eq!(at("button-style"), "Controls > Input");
         assert_eq!(at("terrain-anti-tiling"), "Graphics > Detail and Distance", "beside terrain height blending (#2551)");
         assert_eq!(at("mesh-terrain-blend"), "Graphics > Detail and Distance", "beside the terrain rows (#2661)");

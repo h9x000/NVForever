@@ -40,6 +40,7 @@ pub mod cells;
 pub mod drawn;
 mod loader;
 pub mod prepare;
+pub mod sinking;
 pub mod step_lift;
 #[cfg(test)]
 mod tests;
@@ -438,6 +439,11 @@ pub struct CreatedBody {
     pub settled: bool,
     /// How many of the pose marks (`CREATED_MARKS`) were logged.
     pub marks: usize,
+    /// The game seconds the world had stepped when it last came to rest, if it has
+    /// (`sinking`, #2753).
+    pub rested_at: Option<f64>,
+    /// Its sinking under the terrain was logged (`sinking`, #2753): once.
+    pub sank: bool,
 }
 
 /// The most a created dynamic reference may reach into the contact shell under it and be
@@ -1576,9 +1582,10 @@ impl PhysState {
         );
         if dynamic {
             self.lift_onto_support(id);
+            self.lift_out_of_terrain(id);
         }
         let added_at = self.world.stepped_secs();
-        self.created.insert(id, CreatedBody { local, dynamic, start: s.pos, added_at, settled: false, marks: 0 });
+        self.created.insert(id, CreatedBody { local, dynamic, start: s.pos, added_at, settled: false, marks: 0, rested_at: None, sank: false });
         true
     }
 
@@ -1609,6 +1616,11 @@ impl PhysState {
     pub fn settle_created(&mut self, index: &WorldIndex, world_id: u32, sim: &mut World) -> Vec<u32> {
         let mut moved = Vec::new();
         let mut lost = Vec::new();
+        // Moving bodies to check against the terrain, and those that woke after resting
+        // (`sinking`, #2753).
+        let mut awake = Vec::new();
+        let mut woke = Vec::new();
+        let now = self.world.stepped_secs();
         // Game seconds stepped since: under a slowed clock the steps are shorter, so the steps
         // times the step now would count the ones before at the wrong length.
         let elapsed = |since: f64| (self.world.stepped_secs() - since) as f32;
@@ -1616,6 +1628,9 @@ impl PhysState {
             let Some(local) = cb.local.filter(|_| cb.dynamic) else { continue };
             let Some(b) = self.world.ref_bodies(id).first().copied() else { continue };
             let (pos, rot) = dropped::ref_pose_from_body(&b, &local, 1.0);
+            if !b.sleeping && !cb.sank {
+                awake.push((id, b.linvel));
+            }
             let t = elapsed(cb.added_at);
             if CREATED_MARKS.get(cb.marks).is_some_and(|&m| t >= m) {
                 cb.marks += 1;
@@ -1648,6 +1663,7 @@ impl PhysState {
             }
             if b.sleeping && !cb.settled {
                 cb.settled = true;
+                cb.rested_at = Some(now);
                 info!(
                     "dropped 0x{id:08X} came to rest at ({:.1}, {:.1}, {:.2}), {:.1} below where its collision was added, {:.2} s after",
                     pos[0],
@@ -1657,9 +1673,13 @@ impl PhysState {
                     elapsed(cb.added_at)
                 );
             } else if !b.sleeping {
+                if cb.settled {
+                    woke.push((id, cb.rested_at.map_or(0.0, |r| (now - r) as f32), pos));
+                }
                 cb.settled = false;
             }
         }
+        self.note_created_sinking(woke, awake);
         for id in lost {
             let start = self.created.remove(&id).map(|c| c.start);
             self.world.remove_ref(id);
