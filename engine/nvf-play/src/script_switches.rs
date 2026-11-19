@@ -63,6 +63,9 @@ fn category_index(c: SoundCategory) -> usize {
     }
 }
 
+// On Windows the cursor parameters (commands, requests, page) make 8 arguments; elsewhere
+// 5. CI's clippy runs on Linux, so only a Windows build saw the lint.
+#[cfg_attr(target_os = "windows", allow(clippy::too_many_arguments))]
 pub(crate) fn sync(
     mut script: Option<ResMut<ScriptState>>,
     mut switches: ResMut<ScriptSwitches>,
