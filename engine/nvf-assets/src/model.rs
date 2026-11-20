@@ -1040,7 +1040,7 @@ fn model_in_use(m: &Arc<PreparedModel>) -> bool {
 }
 
 /// The asset stores [`prepare_into`] puts a model's meshes, materials and skins into.
-trait ModelSink: TextureSource {
+pub(crate) trait ModelSink: TextureSource {
     fn data(&self) -> &GameData;
     fn mesh(&mut self, mesh: Mesh) -> Handle<Mesh>;
     fn material(&mut self, material: NifMaterial) -> Handle<NifMaterial>;
@@ -1050,7 +1050,7 @@ trait ModelSink: TextureSource {
 }
 
 /// The main thread's asset stores.
-struct Stores<'a> {
+pub(crate) struct Stores<'a> {
     textures: StoreTextures<'a>,
     meshes: &'a mut Assets<Mesh>,
     materials: &'a mut Assets<NifMaterial>,
@@ -1095,7 +1095,7 @@ impl ModelSink for Stores<'_> {
 /// kept until the main thread puts them in ([`ModelCtx::take_fetched`]). Textures come
 /// from the cache's list as it was when the work was sent, or are decoded here
 /// (`texture::worker_texture`).
-struct Deferred {
+pub(crate) struct Deferred {
     data: GameData,
     providers: Providers,
     cached: Arc<TextureSnapshot>,
@@ -1114,9 +1114,16 @@ struct Providers {
     images: AssetHandleProvider,
 }
 
+impl Deferred {
+    /// What it made, for [`ModelCtx::put_in`].
+    pub(crate) fn into_assets(self) -> DeferredAssets {
+        self.out
+    }
+}
+
 /// What a worker made for one model, by the handles it reserved.
 #[derive(Default)]
-struct DeferredAssets {
+pub(crate) struct DeferredAssets {
     meshes: Vec<(Handle<Mesh>, Mesh)>,
     materials: Vec<(Handle<NifMaterial>, NifMaterial)>,
     bindposes: Vec<(Handle<SkinnedMeshInverseBindposes>, SkinnedMeshInverseBindposes)>,
@@ -1377,7 +1384,16 @@ impl ModelCtx<'_> {
             *shared = Some((self.texture_snapshot(), providers));
         }
         let (cached, providers) = shared.clone().expect("made above");
-        let mut sink = Deferred {
+        let mut sink = self.deferred_with(cached, providers);
+        let task = crate::read_pool::read_pool().spawn(async move {
+            let m = prepare_into(&mut sink, &path, keep_cpu, false, &swaps);
+            (m, sink.out)
+        });
+        self.cache.fetching.insert(key, task);
+    }
+
+    fn deferred_with(&self, cached: Arc<TextureSnapshot>, providers: Providers) -> Deferred {
+        Deferred {
             data: (*self.data).clone(),
             providers,
             cached,
@@ -1385,12 +1401,52 @@ impl ModelCtx<'_> {
             bc_supported: self.formats.as_deref().is_none_or(|f| f.0.contains(CompressedImageFormats::BC)),
             unmasked: HashMap::new(),
             out: DeferredAssets::default(),
+        }
+    }
+
+    /// A sink for preparing on a worker thread (an actor part, `actor::ActorCtx::parts_ready`):
+    /// handles reserved from these stores, textures from the cache's list or decoded there.
+    /// Its assets go in with [`Self::put_in`].
+    pub(crate) fn deferred(&mut self) -> Deferred {
+        let providers = Providers {
+            meshes: self.meshes.get_handle_provider(),
+            materials: self.materials.get_handle_provider(),
+            bindposes: self.bindposes.get_handle_provider(),
+            images: self.images.get_handle_provider(),
         };
-        let task = crate::read_pool::read_pool().spawn(async move {
-            let m = prepare_into(&mut sink, &path, keep_cpu, false, &swaps);
-            (m, sink.out)
-        });
-        self.cache.fetching.insert(key, task);
+        let cached = self.texture_snapshot();
+        self.deferred_with(cached, providers)
+    }
+
+    /// The main thread's stores as a sink (an actor part prepared here).
+    pub(crate) fn stores(&mut self) -> Stores<'_> {
+        Stores {
+            textures: StoreTextures { textures: &mut self.textures, data: &self.data, images: &mut self.images, formats: self.formats.as_deref() },
+            meshes: &mut self.meshes, materials: &mut self.materials,
+            bindposes: &mut self.bindposes, morphs: &mut self.cache.morphs,
+        }
+    }
+
+    /// Put what a worker's sink made into the stores: the textures every worker decoded so
+    /// far, then the sink's meshes, materials, skins and morphs under their reserved handles.
+    pub(crate) fn put_in(&mut self, out: DeferredAssets, now: f64) {
+        self.textures.take_workers(&mut self.images, now);
+        self.insert_deferred(out);
+    }
+
+    fn insert_deferred(&mut self, out: DeferredAssets) {
+        for (h, mesh) in out.meshes {
+            let _ = self.meshes.insert(h.id(), mesh);
+        }
+        for (h, material) in out.materials {
+            let _ = self.materials.insert(h.id(), material);
+        }
+        for (h, binds) in out.bindposes {
+            let _ = self.bindposes.insert(h.id(), binds);
+        }
+        for (id, morph) in out.morphs {
+            self.cache.morphs.add(id, morph);
+        }
     }
 
     /// The texture cache's list for workers: the last copy while it is unchanged and a
@@ -1440,18 +1496,7 @@ impl ModelCtx<'_> {
         if let Some(m) = self.cache.map.get(&key) {
             return m.clone();
         }
-        for (h, mesh) in out.meshes {
-            let _ = self.meshes.insert(h.id(), mesh);
-        }
-        for (h, material) in out.materials {
-            let _ = self.materials.insert(h.id(), material);
-        }
-        for (h, binds) in out.bindposes {
-            let _ = self.bindposes.insert(h.id(), binds);
-        }
-        for (id, morph) in out.morphs {
-            self.cache.morphs.add(id, morph);
-        }
+        self.insert_deferred(out);
         let m = match m {
             Ok(m) => Some(Arc::new(m)),
             Err(e) => {

@@ -598,7 +598,16 @@ fn read_ahead(world: &WorldData, streamer: &mut Streamer, centre: (i32, i32), ri
     }
     let steps = |c: &(i32, i32)| (c.0 - centre.0).abs().max((c.1 - centre.1).abs());
     ahead.listing.retain(|c, _| steps(c) <= ring + 1);
-    ahead.listed.retain(|c, _| steps(c) <= ring + 1);
+    // [design] #3082: what a cell left behind was read ahead for (its landscape, the
+    // smoothed surface and every quadrant's meshes, all CPU data, no asset handles) is
+    // freed on a worker thread. A crossing leaves a row of the outer ring's cells, mostly
+    // never loaded; freeing them here took 9-16 ms of the frame [observed 2026-11-19,
+    // `profile hitch` spans, stress tour Goodsprings-Primm at --step 2048].
+    let far: Vec<(i32, i32)> = ahead.listed.keys().filter(|c| steps(c) > ring + 1).copied().collect();
+    let left: Vec<CellAhead> = far.iter().filter_map(|c| ahead.listed.remove(c)).collect();
+    if !left.is_empty() {
+        nvf_assets::read_pool::read_pool().spawn(async move { drop(left) }).detach();
+    }
     ahead.waiting.retain(|c, _| steps(c) <= ring);
     for dx in -ring..=ring {
         for dy in -ring..=ring {

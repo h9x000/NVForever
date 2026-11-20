@@ -331,21 +331,26 @@ impl Anims {
     }
 
     /// Whether the standing set of `skeleton` and `body` and the stance `prefix` (if any)
-    /// are loaded (or known not to load).
-    pub fn loaded(&self, skeleton: &str, body: Body, prefix: Option<&str>) -> bool {
+    /// are loaded (or known not to load), and the stances of its body weapons `arms`.
+    pub fn loaded(&self, skeleton: &str, body: Body, prefix: Option<&str>, arms: &[&str]) -> bool {
         let skeleton = fnv_vfs::normalize(skeleton);
-        self.sets.lock().expect("clip sets").contains_key(&(skeleton.clone(), body, crate::locomotion::STANCE))
-            && prefix.is_none_or(|p| {
-                let stances = self.stances.lock().expect("stances");
-                stances.contains_key(&(skeleton.clone(), p.to_string()))
-                    && stances.contains_key(&(skeleton, AnimType::HandToHand.prefix().to_string()))
-            })
+        if !self.sets.lock().expect("clip sets").contains_key(&(skeleton.clone(), body, crate::locomotion::STANCE)) {
+            return false;
+        }
+        let stances = self.stances.lock().expect("stances");
+        let has = |p: &str| stances.contains_key(&(skeleton.clone(), p.to_string()));
+        prefix.is_none_or(|p| has(p) && has(AnimType::HandToHand.prefix())) && arms.iter().all(|p| has(p))
     }
 
     /// Load what drawing an actor of `skeleton` and `body` takes (as [`spawn`] and
-    /// [`spawn_creature`] ask for it), and the stance `prefix` it holds its weapon in: run
-    /// on a worker thread ahead of the actor (`readahead.rs`).
-    pub fn warm(&self, ctx: &mut impl ClipSource, skeleton: &str, skel: &PreparedSkeleton, body: Body, creature: bool, prefix: Option<&str>) {
+    /// [`spawn_creature`] ask for it), the stance `prefix` it holds its weapon in and the
+    /// stances of a creature's body weapons `arms` (`body_weapons::attach`): run on a
+    /// worker thread ahead of the actor (`readahead.rs`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn warm(&self, ctx: &mut impl ClipSource, skeleton: &str, skel: &PreparedSkeleton, body: Body, creature: bool, prefix: Option<&str>, arms: &[&str]) {
+        for arm in arms {
+            self.stance(ctx, skeleton, skel, arm);
+        }
         if let Some(set) = self.clip_set(ctx, skeleton, skel, body) {
             if creature {
                 self.clip_set_hurt(ctx, skeleton, skel, body, &set, false);
@@ -428,9 +433,9 @@ pub struct ActorStats {
 
 /// Take back what worker threads made for actors: parts read ahead
 /// (`ActorParts::take_fetched`).
-pub fn take_background_work(parts: Option<ResMut<nvf_assets::actor::ActorParts>>, textures: Option<ResMut<nvf_assets::TextureCache>>, time: Res<Time>) {
-    if let (Some(mut parts), Some(mut textures)) = (parts, textures) {
-        parts.take_fetched(&mut textures, time.elapsed_secs_f64());
+pub fn take_background_work(parts: Option<ResMut<nvf_assets::actor::ActorParts>>, mut models: nvf_assets::model::ModelCtx, time: Res<Time>) {
+    if let Some(mut parts) = parts {
+        parts.take_fetched(&mut models, time.elapsed_secs_f64());
     }
 }
 

@@ -75,14 +75,21 @@ uGridsToLoad=5).
   (`nav::show_actor`) wait so; so do the placed actors of a cell loaded after the start
   (`world::load_cell` puts them in `Streamer::waiting`, `world::draw_waiting_actors`
   draws them); before the start's cells are in, behind the loading screen, they are drawn
-  at once. Preparing a part (meshes, materials, GPU textures) needs the asset stores and
-  stays on the main thread.
+  at once. A part is prepared whole on that worker thread too (#3072): meshes, tangents,
+  textures decoded, materials and skins, under handles reserved from the asset stores, as
+  a cell's models are (below, "Cells"); the main thread only puts its assets in
+  (`ActorParts::take_fetched`). A part asked for before its worker is done is prepared
+  on the main thread, and the worker's copy dropped. The skeleton makes no assets: it is
+  read and parsed there and prepared on the main thread. On the fast tour (Goodsprings to
+  Primm, `--step 2048`, mesh blend off) the read-ahead's main-thread time went from 342
+  ms in 101 frames (slowest 19.8 ms, one part's preparation past the budget) to 44 ms in
+  92 frames (slowest 4.3 ms) [observed 2026-11-19, 7700X + RTX 3070].
 - **Read-ahead** (`nvforever/src/readahead.rs`). When the cell the loaded grid is around
   changes (outdoors, after the start), the actors of the band just outside the grid (the
   ring between the loaded 5 × 5 cells and 7 × 7: placed NPCs and creatures enabled there,
   and residents not drawn whose walkers stand there) are listed. Within 4 ms a frame
-  (`PREPARE_BUDGET`) they are resolved, the reads above started for them, and what has
-  been read prepared on the main thread (`ActorCtx::part`, `ActorCtx::skeleton`). An
+  (`PREPARE_BUDGET`) they are resolved, the reads and part preparations above started for
+  them, and the skeletons read prepared on the main thread (`ActorCtx::skeleton`). An
   NPC's FaceGen files (the `.egm` beside each part, the head's `.egt`, the race's body
   and hand `.egt`) are read on a worker thread and offered to `FaceGenCache`
   (`facegen::read_file`, `FaceGenCache::offer`). Once an actor's skeleton is
@@ -151,6 +158,10 @@ uGridsToLoad=5).
     other workers and the main thread (`texture::WorkerTextures`), so each is decoded
     once and keeps one handle; a texture the cache already holds is found in a copy of
     the cache's list sent with the work.
+    What a cell was read ahead for is dropped on a worker thread once the cell is more
+    than two steps beyond the loaded square (#3082): the outer ring's cells the player
+    passes beside, a row a crossing, were freed on the main thread for 9-16 ms of the
+    frame [observed 2026-11-19, `profile hitch` spans, #3082].
   - *Spawning over frames.* A cell is started once its models are all prepared (or after
     1.5 s, preparing what is missing on the main thread). Its references are spawned
     within 3 ms of main-thread time a frame, nearest cell first; the cell's entity is
