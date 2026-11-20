@@ -85,7 +85,9 @@
 //! contents are taken there too, not on the main thread) to a temporary file of this
 //! process's own (its PID and a count in the name, so two instances on one home never write
 //! the same one) that is renamed over the old one, so a crash mid-write leaves the previous
-//! one; a driver cache whose contents did not change is not written again.
+//! one; the temporary file such a crash leaves is removed by a later run once it is
+//! [`STALE_TEMP_SECS`] old. A driver cache whose contents did not change is not written
+//! again, and one past the cap is not even copied out again that run.
 
 use crate::pipeline_gate::PipelineGate;
 use bevy::prelude::*;
@@ -178,6 +180,17 @@ impl Plugin for PipelineDiskCachePlugin {
             return;
         }
         let Some(dir) = cache_dir() else { return };
+        let stale_dir = dir.clone();
+        IoTaskPool::get()
+            .spawn(async move {
+                for stale in stale_temp_files(&stale_dir, std::process::id(), std::time::SystemTime::now()) {
+                    match std::fs::remove_file(&stale) {
+                        Ok(()) => info!("pipeline cache: removed {}, left by a save that did not finish", stale.display()),
+                        Err(e) => warn!("pipeline cache: {} not removed: {e}", stale.display()),
+                    }
+                }
+            })
+            .detach();
         let Some(render) = app.get_sub_app_mut(RenderApp) else { return };
         let world = render.world_mut();
         // The composed shaders and the driver cache are read here, not on the I/O pool as the
@@ -326,6 +339,32 @@ fn driver_cache(world: &World, dir: &Path) -> Option<(wgpu::PipelineCache, PathB
     Some((cache, file))
 }
 
+/// A temporary file of another process not written for this long is left by a save that
+/// did not finish (a crash or a kill mid-write, `write_replacing`) and is removed.
+const STALE_TEMP_SECS: u64 = 10 * 60;
+
+/// The temporary files of [`write_replacing`] in `dir` (`<name>.bin.<pid>-<n>.tmp`) that
+/// are not this process's (`pid`) and were not written for [`STALE_TEMP_SECS`].
+fn stale_temp_files(dir: &Path, pid: u32, now: std::time::SystemTime) -> Vec<PathBuf> {
+    let Ok(read) = std::fs::read_dir(dir) else { return Vec::new() };
+    let ours = format!(".{pid}-");
+    read.flatten()
+        .map(|e| e.path())
+        .filter(|p| {
+            p.file_name()
+                .and_then(|n| n.to_str())
+                .is_some_and(|n| n.ends_with(".tmp") && n.contains(".bin.") && !n.contains(&ours))
+        })
+        .filter(|p| {
+            std::fs::metadata(p)
+                .and_then(|m| m.modified())
+                .ok()
+                .and_then(|t| now.duration_since(t).ok())
+                .is_some_and(|age| age.as_secs() >= STALE_TEMP_SECS)
+        })
+        .collect()
+}
+
 /// Another GPU's driver cache not written for this many days is removed (a machine that
 /// switches between two GPUs keeps both).
 const STALE_DAYS: u64 = 30;
@@ -424,7 +463,9 @@ fn save_when_quiet(gate: Option<Res<PipelineGate>>, mut disk: ResMut<DiskCache>)
     disk.last_save = Some(now);
     // The driver cache's contents (up to MAX_DRIVER_BYTES) are copied out on the I/O pool,
     // not here on the main thread.
-    let driver = disk.driver.clone();
+    // Once over the cap (`save_driver`) nothing more is written this run: the contents are
+    // not copied out only to be thrown away.
+    let driver = disk.driver.clone().filter(|_| disk.driver_saved.load(Relaxed) != OVER_CAP);
     let composed = disk.composed.clone().filter(|(store, _)| store.changed());
     let list = disk.list.clone().filter(|(list, _)| list.changed());
     let at_screen_end = disk.at_screen_end;
@@ -481,12 +522,15 @@ impl Drop for ClearOnDrop {
     }
 }
 
+/// `DiskCache::driver_saved` once the driver cache passed [`MAX_DRIVER_BYTES`] this run.
+const OVER_CAP: u64 = u64::MAX;
+
 /// Write the driver cache's contents unless they are what was written last. Past
 /// [`MAX_DRIVER_BYTES`] the file is removed instead, so the next run starts a new cache
 /// (this one holds everything it was loaded with, so it would never fit again).
 fn save_driver(data: &[u8], file: &Path, saved: &AtomicU64, asked: u32) {
     if data.len() > MAX_DRIVER_BYTES {
-        if saved.swap(u64::MAX, Relaxed) != u64::MAX {
+        if saved.swap(OVER_CAP, Relaxed) != OVER_CAP {
             match std::fs::remove_file(file) {
                 Ok(()) => info!("pipeline cache: {} bytes, more than {MAX_DRIVER_BYTES}: {} removed, the next run starts a new one", data.len(), file.display()),
                 Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
@@ -662,6 +706,23 @@ mod tests {
         damaged[at] ^= 0x20;
         assert!(trailed_body(&damaged).is_err(), "a composition damaged at the same length is not used");
         assert!(trailed_body(&body).is_err(), "an older build's file without the trailer is not used");
+    }
+
+    #[test]
+    fn only_old_temporary_files_of_other_processes_are_removed() {
+        let dir = std::env::temp_dir().join(format!("nvf-pipeline-cache-tmp-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let ours = dir.join("key.bin.1-0.tmp");
+        let other = dir.join("key.bin.2-5.tmp");
+        let foreign = dir.join("notes.tmp");
+        for f in [&ours, &other, &foreign, &dir.join("key.bin")] {
+            std::fs::write(f, b"x").unwrap();
+        }
+        let now = std::time::SystemTime::now();
+        assert!(stale_temp_files(&dir, 1, now).is_empty(), "written just now: a save may be under way");
+        let later = now + std::time::Duration::from_secs(STALE_TEMP_SECS + 60);
+        assert_eq!(stale_temp_files(&dir, 1, later), [other], "not this process's own, nor files not ours");
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 
     #[test]
