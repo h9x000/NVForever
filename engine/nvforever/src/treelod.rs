@@ -182,6 +182,7 @@ pub fn update_distant_trees(
     camera: Query<&GlobalTransform, crate::fly::WorldCamera>,
     mut models: ModelCtx,
     mut materials: ResMut<Assets<BillboardMaterial>>,
+    pace: Res<crate::stream_pace::StreamPace>,
 ) {
     let dist = lod.settings.trees;
     let lod = &mut *lod;
@@ -222,7 +223,9 @@ pub fn update_distant_trees(
             }
         }
     }
-    let missing: Vec<Grid> = trees.want.iter().filter(|g| !trees.drawn.contains_key(g)).take(CELLS_PER_FRAME).copied().collect();
+    // Above 60 fps a frame gets the same share of itself (stream_pace.rs).
+    let missing: Vec<Grid> = trees.want.iter().filter(|g| !trees.drawn.contains_key(g)).take(pace.count(CELLS_PER_FRAME)).copied().collect();
+    let _spending = (!missing.is_empty()).then(|| pace.spending());
     for g in missing {
         let placed = trees.cells.entry(g).or_insert_with(|| Arc::new(cell_trees(&world, g))).clone();
         let mut by_base: HashMap<u32, Vec<Placed>> = HashMap::new();

@@ -428,6 +428,7 @@ pub fn read_ahead(
     radii: Option<Res<crate::limbs::BoneRadii>>,
     mut parts: ResMut<ActorParts>,
     mut models: ModelCtx,
+    pace: Res<crate::stream_pace::StreamPace>,
 ) {
     let unseen = loading.as_deref().is_some_and(|l| l.unseen_frames());
     if ahead.unseen != unseen {
@@ -435,6 +436,9 @@ pub fn read_ahead(
     }
     let Some(aw) = actor_world.as_deref().filter(|_| !ahead.off) else { return };
     let t0 = Instant::now();
+    // Above 60 fps a frame gets the same share of itself (stream_pace.rs).
+    let budget = if unseen { PREPARE_BUDGET } else { pace.time(PREPARE_BUDGET) };
+    let _spending = (!unseen).then(|| pace.spending());
     let ahead = &mut *ahead;
     // Outdoors, once the start's cells are in.
     let centre = streamer.centre.filter(|_| streamer.interior.is_none() && streamer.settled);
@@ -513,7 +517,7 @@ pub fn read_ahead(
     // Through the queue once at most: a part still being read goes to the back.
     let mut ctx = ActorCtx { cache: &mut parts, models: &mut models };
     let mut left = ahead.jobs.len();
-    while left > 0 && t0.elapsed() < PREPARE_BUDGET {
+    while left > 0 && t0.elapsed() < budget {
         left -= 1;
         let Some(job) = ahead.jobs.pop_front() else { break };
         match job {

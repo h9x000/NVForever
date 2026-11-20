@@ -379,6 +379,58 @@ crossing into a run of slower ones.
   changes (origin, coverage, the two atlases, the palette) once for all clones would end
   that; with the slabs fixed it no longer shows among the slow frames' largest spans.
 
+## 3.3 The budgets follow the frame rate (2026-11-20, 36d97f158)
+
+With the slabs fixed (§3.2) and #3073, #3088 and #3093 in, the same tour (§3.2's command,
+machine and INI) had 62 frames of 20 ms or more in 16,896, none over 40 ms, and no span
+over 7.3 ms led more than a handful of them.
+
+- **What they are** [observed 2026-11-20, the tour with `NVF_PLAY_TEST_PROFILE_HITCH_SPANS=150`,
+  66 slow frames, mean 24.2 ms]. `Update` took 16.4 ms in them against 4.7 ms in an ordinary
+  frame, and its systems' spans account for all of it: the ordinary 4.7 ms and about 10 ms
+  of streaming jobs that each kept to its own budget. Mean extra in a slow frame:
+  `world::stream` 2.7 ms, `water::distant_water` 1.8, `mesh_terrain_blend::apply_variants`
+  1.1, `residents::drive` 1.0, `treelod::update_distant_trees` 0.6, `lod::update_lod` 0.6,
+  `readahead::read_ahead` 0.6, and on the render side `prepare_erased_assets` 1.5 and the
+  mesh allocator 0.9.
+- **Why** [design]. The budgets (3 ms of spawning, 2 ms of taking models in, 4 ms of actor
+  read-ahead, 4 ms of LOD rebuilds, 12 water surfaces, 24 tree LOD cells, 64 blend clones,
+  3 residents, 400 despawns) were chosen against a 60 fps frame, and at a crossing several
+  jobs have work in the same frame. The same milliseconds are a larger share of a shorter
+  frame: 10 ms on a 16.7 ms frame is a slower frame, on a 7 ms frame it is a stutter.
+- **Done** (`nvforever/src/stream_pace.rs`): a budget is read as work per second at 60 fps.
+  At 60 fps or less it is what it was; above it a frame gets the same share of itself, down
+  to a quarter (240 fps), and a count never under 1. The frame's length is the median of
+  the last 64 frames, each less the streaming work its jobs reported, so a stretch of
+  crossings does not raise its own budgets; frames behind a loading screen and frames over
+  100 ms are left out, and the budgets are whole until 32 frames are in. A machine at
+  150 fps does the streaming work of one at 60 fps a second, in slices 0.4 times the size.
+  Scaled: `world.rs` `SPAWN_BUDGET`, `TAKE_IN_BUDGET`, `DESPAWN_PER_FRAME`; `readahead.rs`
+  `PREPARE_BUDGET`; `lod.rs` `REBUILD_BUDGET_MS`; `water.rs` `SURFACE_READS_PER_FRAME`;
+  `treelod.rs` `CELLS_PER_FRAME`; `mesh_terrain_blend.rs` `CLONE_WORK_PER_FRAME`;
+  `residents.rs` `SPAWNS_PER_FRAME`. Not scaled: the upload limit (24 MiB a frame; the
+  late-mesh marks count frames), generated terrain's bakes (2 a frame), physics cells (1 a
+  frame). `NVF_STREAM_PACE=0` keeps every budget whole; a run ends with `stream pace
+  summary: …` (frames, how many were scaled, the mean and least share).
+- **Measured** [observed 2026-11-20, the same tour, one `profile` build, the aid off and
+  on, one run each, no other build or game running]:
+
+  | | whole budgets | following the frame rate |
+  |---|---|---|
+  | frames of 20 ms or more | 63 of 16,982 | 39 of 16,961 |
+  | of them 25 ms or more | 22 | 9 |
+  | their time together | 1,500 ms | 930 ms |
+  | mean / 1 % low / worst | 8.35 / 19.8 / 39.3 ms | 8.35 / 18.5 / 38.4 ms |
+  | cells loaded, frames they spread over | 224, 258 | 224, 362 |
+  | cells that waited for their read-ahead, or were drawn before it | 0, 0 | 0, 0 |
+
+  The mean share was 0.49 (least 0.42): the profile build's frames are 8.3 ms, a release
+  build's on that machine 6.6 ms.
+- **Left.** In the 39 the jobs run over their smaller budgets on single pieces that are
+  not split: a cell's start in `world::stream` (terrain, grass; up to 5 ms), one tree LOD
+  step (up to 5 ms), one LOD rebuild (up to 4 ms), a physics cell (2 ms). Next: split
+  those, or let a job that runs late in the frame see what the others already spent.
+
 ## 4. Combat and interiors (2026-10-23, 5022d345)
 
 Measured the same way (xperf CPU sampling; `tools/stress run battle`, standing in five

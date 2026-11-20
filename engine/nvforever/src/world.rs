@@ -316,6 +316,10 @@ pub fn setup_root(mut commands: Commands) {
 }
 
 #[allow(clippy::too_many_arguments)]
+/// [`stream`]'s actor resources and the frame's pace, as one parameter (a system takes at
+/// most 16).
+type StreamActors<'w> = (Option<Res<'w, crate::actors::ActorWorld>>, Option<Res<'w, nvf_play::sim::SimState>>, ResMut<'w, crate::readahead::ReadAhead>, Res<'w, crate::stream_pace::StreamPace>);
+
 pub fn stream(
     mut commands: Commands,
     world: Res<WorldData>,
@@ -329,7 +333,7 @@ pub fn stream(
     mut grass: crate::grass::GrassCtx,
     mut emittance: ResMut<crate::emittance::EmittanceState>,
     time: Res<Time>,
-    (actor_world, sim, mut ahead): (Option<Res<crate::actors::ActorWorld>>, Option<Res<nvf_play::sim::SimState>>, ResMut<crate::readahead::ReadAhead>),
+    (actor_world, sim, mut ahead, pace): StreamActors,
     mut actor_parts: ResMut<ActorParts>,
     loading: Option<Res<nvf_play::loading::Loading>>,
     children: Query<&Children>,
@@ -340,7 +344,9 @@ pub fn stream(
     let frame_start = std::time::Instant::now();
     let behind_screen = loading.is_some_and(|l| l.unseen_frames());
     let mut actors = actor_world.as_deref().map(|w| (w, &mut *actor_parts, sim.as_deref().map(|s| &s.world), &mut *ahead));
-    despawn_dying(&mut commands, &mut streamer.dying, &children);
+    // Before the start square is in, and behind a loading screen, the budgets are whole.
+    let paced = streamer.settled && !behind_screen;
+    despawn_dying(&mut commands, &mut streamer.dying, &children, if paced { pace.count(DESPAWN_PER_FRAME) } else { DESPAWN_PER_FRAME });
     if let Some(id) = streamer.interior {
         if streamer.loaded.is_empty() {
             let t0 = std::time::Instant::now();
@@ -412,7 +418,7 @@ pub fn stream(
     // the frame they load, as before; after it, over frames within a time budget, hidden
     // until all their references are in, then faded in (module docs of `CellSpawn`).
     let budgeted = streamer.settled && !behind_screen;
-    let deadline = frame_start + if budgeted { SPAWN_BUDGET } else { LOADING_SCREEN_FRAME };
+    let deadline = frame_start + if budgeted { pace.time(SPAWN_BUDGET) } else { LOADING_SCREEN_FRAME };
     // Cells under way first, nearest first.
     let mut order: Vec<(i32, i32)> = streamer.spawning.keys().copied().collect();
     order.sort_by_key(|c| steps(c) * 1000 + (c.0 - centre.0).abs() + (c.1 - centre.1).abs());
@@ -481,12 +487,17 @@ pub fn stream(
         streamer.settled = true;
         streamer.arrival = None;
     }
+    if budgeted {
+        pace.spent(frame_start.elapsed());
+    }
     crate::profile::actor_spawns(streamer.stats.actors.equipment_spawns - before.0, streamer.stats.actors.record_spawns - before.1);
 }
 
 /// Main-thread time a frame spends spawning cells once the start square is in
 /// [engineering choice: about a fifth of a 60 fps frame; a town cell's few thousand
 /// references take a few frames, which the cell fade and the read-ahead ring cover].
+/// Above 60 fps a frame gets the same share of itself (stream_pace.rs), as it does of
+/// [`DESPAWN_PER_FRAME`] and [`TAKE_IN_BUDGET`].
 const SPAWN_BUDGET: std::time::Duration = std::time::Duration::from_millis(3);
 
 /// Seconds a cell waits for its read-ahead before it is drawn anyway, preparing what is
@@ -540,8 +551,8 @@ fn retire(commands: &mut Commands, dying: &mut Vec<Entity>, e: Entity) {
 
 /// Despawn up to [`DESPAWN_PER_FRAME`] children of retired cells, and the cells left
 /// empty.
-fn despawn_dying(commands: &mut Commands, dying: &mut Vec<Entity>, children: &Query<&Children>) {
-    let mut left = DESPAWN_PER_FRAME;
+fn despawn_dying(commands: &mut Commands, dying: &mut Vec<Entity>, children: &Query<&Children>, per_frame: usize) {
+    let mut left = per_frame;
     dying.retain(|&cell| {
         if left == 0 {
             return true;
@@ -721,9 +732,14 @@ pub fn take_cell_work(
     streamer: Res<Streamer>,
     loading: Option<Res<nvf_play::loading::Loading>>,
     bytes: Option<ResMut<bevy::render::render_asset::RenderAssetBytesPerFrame>>,
+    pace: Res<crate::stream_pace::StreamPace>,
 ) {
     let free = !streamer.settled || loading.is_some_and(|l| l.unseen_frames());
-    models.take_fetched(time.elapsed_secs_f64(), (!free).then_some(TAKE_IN_BUDGET));
+    let started = std::time::Instant::now();
+    models.take_fetched(time.elapsed_secs_f64(), (!free).then(|| pace.time(TAKE_IN_BUDGET)));
+    if !free {
+        pace.spent(started.elapsed());
+    }
     let limit = (!free).then(upload_bytes_per_frame);
     if let Some(mut b) = bytes.filter(|b| b.max_bytes != limit) {
         b.max_bytes = limit;
