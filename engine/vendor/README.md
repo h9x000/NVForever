@@ -460,7 +460,8 @@ each part marked by a comment starting `NVForever`:
 - `NVForever composed shaders`: `PipelineCache::set_composed_store` hands bevy_shader's store
   (below) to the shader cache.
 - `NVForever compile pool`: pipelines compile on a pool of their own (a quarter of the logical
-  cores, 2 to 8 threads; `NVF_PIPELINE_THREADS=<n>`, 0 for upstream's async compute pool),
+  cores, 2 to 8 threads; `NVF_PIPELINE_THREADS=<n>`, 0 for upstream's async compute pool
+  and no list pool),
   not on the async compute pool (at most 4 threads, shared with the game's loading). On a
   driver cache that has none of the pipelines (each 0.6-0.8 s), a Novac start's screen waited
   6.1 s for them on the async compute pool and 5.3 s on this pool.
@@ -485,8 +486,8 @@ each part marked by a comment starting `NVForever`:
   validation error scope. For the JSON of the recipes the crate depends on `serde` and
   `serde_json` and on `wgpu-types` with `serde` (all already in the build).
 
-Without the setters and with `NVF_PIPELINE_THREADS=0`, upstream's path runs, except that the
-modules are made outside the lock.
+Without the setters and with `NVF_PIPELINE_THREADS=0`, upstream's path runs (no list pool
+either), except that the modules are made outside the lock.
 
 ## bevy_shader 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

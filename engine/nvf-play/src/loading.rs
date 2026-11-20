@@ -263,6 +263,17 @@ impl Loading {
         self.trip.is_some()
     }
 
+    /// Whether the start's or the travel's screen has everything in and only waits out
+    /// [`SETTLE_SECS`] before it comes down (nvforever `pipeline_prewarm` stops drawing the
+    /// cells unculled then, so the first frame seen is culled).
+    pub fn settling(&self) -> bool {
+        match (&self.trip, &self.start) {
+            (Some(trip), _) => trip.sent && trip.ready.is_some(),
+            (None, Some(start)) => start.ready.is_some(),
+            (None, None) => false,
+        }
+    }
+
     /// Whether the world holds off loading until the start's screen has been drawn. The hold
     /// began when model reads shared the pool that compiles the screen's pipelines
     /// (docs/design/loading-screen.md §1a). They have their own pool now; whether the hold

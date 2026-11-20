@@ -290,6 +290,7 @@ expect = [
   { re = 'pipeline prewarm: (?P<n>\d+) meshes drawn unculled under the screen', range = [50, 100000], label = "the start's screen drew the cell's meshes unculled" },
   { re = 'composed shaders: saved (?P<n>\d+) ', range = [20, 100000], label = "the compositions are kept in the home" },
   { re = 'pipeline list: saved (?P<n>\d+) ', range = [20, 100000], label = "the pipelines asked are listed in the home" },
+  { re = 'pipeline cache: saved (?P<n>\d+) bytes', range = [1, 134217728], label = "the driver's pipeline cache is kept in the home" },
 ]
 forbid = ["composed shaders: not saved", "pipeline cache: not saved", "pipeline list: not saved", "Caught rendering error", "Mismatched pop_error_scope"]
 
@@ -306,6 +307,7 @@ expect = [
   { re = 'composed shaders: saved \d+ \(\d+ bytes; (?P<n>\d+) used again', range = [20, 100000], label = "they are used again" },
   { re = 'composed shaders: saved \d+ \(\d+ bytes; \d+ used again and (?P<n>\d+) composed this run\)', range = [0, 10], label = "little is composed again" },
   { re = 'pipeline list: (?P<n>\d+) pipelines from earlier runs', range = [20, 100000], label = "the pipelines the run before asked are read" },
+  { re = 'pipeline cache: read (?P<n>\d+) bytes from', range = [1, 134217728], label = "the driver's pipeline cache of the run before is read, its checksum matching" },
   { re = 'pipeline list: \d+ listed; by the screen.s end \d+ built from it, (?P<n>\d+) of the', range = [1, 100000], label = "the start's screen takes pipelines built from the list" },
 ]
 forbid = ["composed shaders: not saved", "pipeline cache: not saved", "pipeline list: not saved", "Caught rendering error", "Mismatched pop_error_scope"]

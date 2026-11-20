@@ -11,7 +11,9 @@
 //! was ready [observed 2026-11-19, NVF_PLAY_TEST_PIPELINE_LOG, before this module].
 //!
 //! While the screen is up each mesh without `NoFrustumCulling` gets it, with [`Prewarmed`]
-//! to say so, and loses both when the screen comes down. The camera's own settings make
+//! to say so, and loses both once the screen only settles before coming down (everything in,
+//! its pipelines ready: `Loading::settling`), before that frame's culling, so the first
+//! frame seen is culled. The camera's own settings make
 //! the view's key, so the variants asked for are those its later frames use; the sun's
 //! cascades see the meshes too, for the shadow variants. Meshes hidden otherwise (Visibility,
 //! a visibility range: the draw distance, LOD) stay hidden, so what lies beyond them is not
@@ -47,7 +49,14 @@ impl Plugin for PipelinePrewarmPlugin {
             info!("pipeline prewarm: off (NVF_PIPELINE_PREWARM=0)");
             return;
         }
-        app.init_resource::<PrewarmState>().add_systems(Last, screen_up.pipe(prewarm));
+        // Before this frame's culling, so the frame the screen comes down on is culled
+        // already (the marks' removal is applied at the sync point Bevy puts before it).
+        app.init_resource::<PrewarmState>().add_systems(
+            PostUpdate,
+            screen_up
+                .pipe(prewarm)
+                .before(bevy::camera::visibility::VisibilitySystems::CheckVisibility),
+        );
     }
 }
 
@@ -58,9 +67,11 @@ struct PrewarmState {
 }
 
 /// Whether a screen that warms is up: a start's or a travel's, not a cover's (a save
-/// loading in a new run, the main menu).
+/// loading in a new run, the main menu); not once it only settles before coming down
+/// (`Loading::settling`: everything is in and its pipelines are ready), so the frame it
+/// comes down on is culled already.
 fn screen_up(loading: Option<Res<Loading>>) -> bool {
-    loading.is_some_and(|l| l.starting() || l.travelling())
+    loading.is_some_and(|l| (l.starting() || l.travelling()) && !l.settling())
 }
 
 fn prewarm(
