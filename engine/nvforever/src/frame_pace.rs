@@ -28,16 +28,21 @@
 //! vsync as a backstop only: the cap stays under the refresh rate, so vsync never holds a frame
 //! that came on time.
 //!
-//! **The driver's limiter with latency reduction** (2026-11-23): with the latency reduction
-//! switch on and no frame generation, the driver's sleep already waits at the same point as the
-//! limiter here (right after the hand-off, before input), so the cap goes to the driver and the
-//! limiter here does not wait ([`driver_holds`], [`driver_cap`]): Reflex's frame limit through
-//! Streamline (`ReflexOptions::frameLimitUs`, "independent of `ReflexOptions::mode`"
-//! [documented: Streamline `sl_reflex.h`]), `VK_NV_low_latency2`'s minimum interval between
-//! presents (`nv_low_latency.rs`), or Anti-Lag's `maxFPS` (`anti_lag.rs`). The driver knows when
-//! the GPU finishes, so it can start a frame later and closer to its present than a wait on the
-//! CPU's clock [hypothesis: lower latency and steadier frame times; NVIDIA's guide names its
-//! limiter for frame pacing, `ProgrammingGuideDLSS_G.md` §12.1; not measured here]. Frame
+//! **The driver's limiter** (2026-11-23): without frame generation the cap goes to the driver's
+//! limiter wherever there is one, and the limiter here does not wait ([`driver_holds`],
+//! [`driver_cap`]). The driver's sleep waits at the same point as the limiter here (right after
+//! the hand-off, before input). NVIDIA's limiters keep it whatever the latency reduction switch:
+//! Reflex's frame limit through Streamline (`ReflexOptions::frameLimitUs`, "independent of
+//! `ReflexOptions::mode`" [documented: Streamline `sl_reflex.h`]), and `VK_NV_low_latency2`'s
+//! minimum interval between presents (`nv_low_latency.rs`), which `vkLatencySleepNV` "will still
+//! enforce" with low latency mode off [documented: Vulkan `VkLatencySleepModeInfoNV`]. AMD
+//! Anti-Lag's `maxFPS` is "imposed if anti-lag is enabled" [documented: `VkAntiLagDataAMD`], so
+//! there only with the switch on (`anti_lag.rs`). The driver knows when the GPU finishes, so it
+//! can start a frame later and closer to its present than a wait on the CPU's clock, and it does
+//! not spin a CPU core for the last millisecond as the limiter here does [hypothesis: lower
+//! latency and CPU use; NVIDIA's guide names its limiter for frame pacing,
+//! `ProgrammingGuideDLSS_G.md` §12.1; measured 2026-11-23 with the switch on, at a cap of 90 on
+//! an RTX 5090: the same frame rate, slowest frames and latency as the limiter here]. Frame
 //! generation keeps the arrangement above (FSR's presenter presents two frames for each real one;
 //! DLSS-G's limit is Reflex's already). A driver refusing the mode, or none, leaves the cap here.
 //! `NVF_DRIVER_LIMIT=0` keeps the limiter here, for comparisons.
@@ -493,6 +498,13 @@ enum DriverLimiter {
 }
 
 impl DriverLimiter {
+    /// Whether the limit holds only with the latency reduction switch on: Anti-Lag's `maxFPS`
+    /// is "imposed if anti-lag is enabled" [documented: `VkAntiLagDataAMD`]; NVIDIA's limiters
+    /// hold with it off too (the module's doc).
+    fn needs_switch(self) -> bool {
+        self == Self::AntiLag
+    }
+
     fn name(self) -> &'static str {
         match self {
             Self::Reflex => "NVIDIA Reflex's frame limit",
@@ -516,28 +528,29 @@ fn driver_limiter(world: &World) -> Option<DriverLimiter> {
 }
 
 /// Whether the driver's limiter keeps the frame cap `cap` (frames a second, from [`own_cap`])
-/// instead of the limiter here: a cap, the latency reduction switch on (its sleep waits at the
-/// limiter's point every frame then), no frame generation (`LatencyReduction::
+/// instead of the limiter here: a cap, no frame generation (`LatencyReduction::
 /// by_frame_generation`: FSR's presenter presents two frames for each real one; DLSS-G has its
-/// own arrangement), not turned off by `NVF_DRIVER_LIMIT=0` (`allowed`), and a driver limiter.
-pub fn driver_holds(cap: u32, switch: bool, frame_generation: bool, allowed: bool, limiter: bool) -> bool {
-    cap > 0 && switch && !frame_generation && allowed && limiter
+/// own arrangement), not turned off by `NVF_DRIVER_LIMIT=0` (`allowed`), a driver limiter, and
+/// the latency reduction switch on where that limiter needs it (`needs_switch`: Anti-Lag).
+pub fn driver_holds(cap: u32, switch: bool, frame_generation: bool, allowed: bool, limiter: bool, needs_switch: bool) -> bool {
+    cap > 0 && !frame_generation && allowed && limiter && (switch || !needs_switch)
 }
 
 /// Says which limiter holds the cap, when that changes (`None`: not said yet).
-static SAID_HOLDER: Mutex<Option<(u32, Option<DriverLimiter>)>> = Mutex::new(None);
+static SAID_HOLDER: Mutex<Option<(u32, Option<DriverLimiter>, bool)>> = Mutex::new(None);
 
-fn say_holder(cap: u32, holder: Option<DriverLimiter>) {
+fn say_holder(cap: u32, holder: Option<DriverLimiter>, switch: bool) {
     let mut said = SAID_HOLDER.lock().unwrap_or_else(PoisonError::into_inner);
-    if *said == Some((cap, holder)) {
+    let now = (cap, holder, switch && holder.is_some());
+    if *said == Some(now) {
         return;
     }
-    *said = Some((cap, holder));
+    *said = Some(now);
     if cap == 0 {
         return;
     }
     match holder {
-        Some(limiter) => info!("frame pace: the frame cap ({cap} fps) is kept by the driver: {} (latency reduction on)", limiter.name()),
+        Some(limiter) => info!("frame pace: the frame cap ({cap} fps) is kept by the driver: {} (latency reduction {})", limiter.name(), if switch { "on" } else { "off" }),
         None => info!("frame pace: the frame cap ({cap} fps) is kept by frame pacing's own limiter"),
     }
 }
@@ -566,7 +579,7 @@ pub fn reflex_frame_limit_us(cap: u32) -> u32 {
 /// frame (the window not in front). Until 2026-11-23 the cap was divided here as well (#2731's
 /// divisor), which held the real frames at half the intended rate at 2x.
 ///
-/// With latency reduction on and no frame generation the cap is the driver's ([`driver_holds`]):
+/// Without frame generation the cap is the driver's where it has a limiter ([`driver_holds`]):
 /// [`driver_cap`] for Anti-Lag and NVIDIA low latency, Reflex's frame limit through Streamline,
 /// and nothing waits here either.
 fn wait_for_cap(world: &mut World) {
@@ -584,13 +597,14 @@ fn wait_for_cap(world: &mut World) {
     let cap = own_cap(pace, world.get_resource::<Refresh>().unwrap_or(&Refresh::default()), world.get_resource::<crate::frame_gen::FrameGenCap>().map_or(0, |c| c.0));
     let latency = world.get_resource::<crate::anti_lag::LatencyReduction>().copied();
     let limiter = driver_limiter(world);
-    let by_driver = driver_holds(cap, latency.is_some_and(|l| l.on), latency.is_some_and(|l| l.by_frame_generation), *DRIVER_LIMIT_ALLOWED, limiter.is_some());
+    let switch = latency.is_some_and(|l| l.on);
+    let by_driver = driver_holds(cap, switch, latency.is_some_and(|l| l.by_frame_generation), *DRIVER_LIMIT_ALLOWED, limiter.is_some(), limiter.is_some_and(DriverLimiter::needs_switch));
     let holder = limiter.filter(|_| by_driver);
     DRIVER_CAP.store(if by_driver { cap } else { 0 }, Ordering::Relaxed);
     // Reflex's frame limit: the cap while Reflex keeps it, none otherwise (also once DLSS-G
     // ended for the session, when the limit was its).
     crate::dlss::set_reflex_frame_limit(if holder == Some(DriverLimiter::Reflex) { reflex_frame_limit_us(cap) } else { 0 });
-    say_holder(cap, holder);
+    say_holder(cap, holder, switch);
     let lag = Duration::from_nanos(PRESENTER_LAG_NANOS.swap(0, Ordering::Relaxed));
     let Some(mut clock) = world.get_resource_mut::<CapClock>() else { return };
     if cap == 0 || by_driver {
@@ -786,16 +800,19 @@ mod tests {
         assert_eq!(mode(&app), PresentMode::AutoVsync, "DLSS-G no longer asked for: vsync again");
     }
 
-    /// The driver keeps the cap only with a cap, the switch on, no frame generation, not turned
-    /// off for a comparison, and a driver limiter there.
+    /// The driver keeps the cap with a cap, no frame generation, not turned off for a
+    /// comparison, and a driver limiter there: NVIDIA's whatever the switch, Anti-Lag's with it on.
     #[test]
-    fn the_driver_keeps_the_cap_with_latency_reduction_and_no_frame_generation() {
-        assert!(driver_holds(144, true, false, true, true));
-        assert!(!driver_holds(0, true, false, true, true), "no cap: nothing to keep");
-        assert!(!driver_holds(144, false, false, true, true), "the switch off: the limiter here");
-        assert!(!driver_holds(144, true, true, true, true), "frame generation: its own arrangement");
-        assert!(!driver_holds(144, true, false, false, true), "NVF_DRIVER_LIMIT=0");
-        assert!(!driver_holds(144, true, false, true, false), "no driver limiter (or the mode refused)");
+    fn the_driver_keeps_the_cap_without_frame_generation() {
+        assert!(driver_holds(144, true, false, true, true, false));
+        assert!(driver_holds(144, false, false, true, true, false), "NVIDIA's limiters: the switch off too");
+        assert!(driver_holds(144, true, false, true, true, true), "Anti-Lag with the switch on");
+        assert!(!driver_holds(144, false, false, true, true, true), "Anti-Lag with the switch off: the limiter here");
+        assert!(!driver_holds(0, true, false, true, true, false), "no cap: nothing to keep");
+        assert!(!driver_holds(144, true, true, true, true, false), "frame generation: its own arrangement");
+        assert!(!driver_holds(144, true, false, false, true, false), "NVF_DRIVER_LIMIT=0");
+        assert!(!driver_holds(144, false, false, true, false, false), "no driver limiter (or the mode refused)");
+        assert!(DriverLimiter::AntiLag.needs_switch() && !DriverLimiter::Reflex.needs_switch() && !DriverLimiter::NvLowLatency.needs_switch());
         assert_eq!(reflex_frame_limit_us(144), 6944, "the same microseconds for the minimum interval");
     }
 

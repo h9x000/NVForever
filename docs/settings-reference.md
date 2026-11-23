@@ -337,8 +337,9 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   display's refresh with vertical sync; with variable refresh the lower of this and its own
   limit). It counts the frames shown: with frame generation the real frames are this divided
   by the frames shown for each. With vertical sync a limit at or above the display's refresh
-  is left to vsync. With latency reduction on (and no frame generation) the graphics driver
-  keeps the limit. A lower limit keeps the computer cooler and quieter.
+  is left to vsync. Without frame generation the graphics driver keeps the limit (NVIDIA
+  cards always, AMD cards with latency reduction on). A lower limit keeps the computer cooler
+  and quieter.
 - Shown as a list since the menu overhaul; an older slider number in the INI still loads as
   the nearest choice.
 - Registered in `engine/nvforever/src/settings.rs`
@@ -483,8 +484,8 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 - In full: The graphics driver keeps the game from preparing frames ahead of the graphics
   card: AMD Anti-Lag on AMD cards (Windows: Adrenalin 24.9.1 or later; Linux: Mesa 26.3 or
   later), NVIDIA low latency on NVIDIA cards whose Vulkan driver has it. It is meant to make
-  what you do reach the screen sooner; that has not been measured yet. With a frame rate limit
-  (and no frame generation) the driver keeps that limit too. The log says which of the two this
+  what you do reach the screen sooner; that has not been measured yet. On AMD cards it also
+  lets the driver keep a frame rate limit (NVIDIA cards do that either way). The log says which of the two this
   graphics card uses, or why neither. Not in the original.
 - Command-line switches: `--latency-reduction`
 - Registered in `engine/nvforever/src/settings.rs`

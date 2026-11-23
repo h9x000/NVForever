@@ -29418,6 +29418,26 @@ forbid = [
 ]
 
 [[scenario]]
+name = "frame-cap-driver"
+source = "docs/design/latency-reduction.md \"The frame cap\": with latency reduction off and no frame generation, a frame rate limit (the test aid --frame-cap 60) is still kept by NVIDIA's limiter (Reflex's frame limit, or NVIDIA low latency's minimum interval with low latency mode off); AMD Anti-Lag's maxFPS needs the switch, so there frame pacing's own limiter keeps it; the frames still come no faster than the limit"
+note = "On an AMD GPU or one with neither NVIDIA technique the log names frame pacing's own limiter instead, which passes too: the cap's mean is the check. Latency reduction is off by default in an unattended run (no INI read). --log-frame-times runs with vsync off, so only the limit holds the frames; the mean is checked from below only (a slow GPU or a load stall is not a cap failure)."
+areas = ["graphics"]
+paths = ["engine/nvforever/src/anti_lag.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/dlss/mod.rs", "engine/nvforever/src/dlss/frame_token.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--frame-generation", "off", "--log-frame-times", "4", "--frame-cap", "60", "--no-voice", "--no-lodgen"]
+run_seconds = 20
+expect = [
+  { re = 'frame pace: the frame cap \(60 fps\) is kept by (the driver: (NVIDIA low latency.s minimum interval|NVIDIA Reflex.s frame limit) \(latency reduction off\)|frame pacing.s own limiter)', label = "the log names what keeps the cap of 60 with latency reduction off" },
+  { re = 'frame time: (?P<n>\d+\.\d+) ms mean', range = [16.0, 1000.0], all = true, min = 2, label = "no period faster than the limit of 60 with latency reduction off (16.7 ms, 4% slack)" },
+]
+forbid = [
+  { text = "Validation Error", label = "a Vulkan validation error with the driver keeping the cap, latency reduction off" },
+  { text = "Caught rendering error", label = "a rendering error with the driver keeping the cap, latency reduction off" },
+  { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit [^:]+: e(?!Ok)', label = "slReflexSetOptions refused the frame limit, latency reduction off" },
+  { re = 'refused NVIDIA low latency', label = "the driver refused the minimum interval with low latency mode off" },
+]
+
+[[scenario]]
 name = "frame-generation"
 source = "#1778, docs/design/frame-generation.md: --frame-generation with FSR Quality while walking outdoors: generated frames presented between the real ones, the HUD kept, latency reduction turned on with it, no validation errors; the performance overlay (--fps, its readings logged by NVF_FPS_LOG) reads the frames shown and the rendered ones apart"
 areas = ["graphics"]

@@ -49,7 +49,12 @@
 //!     number, which maps both presents to that frame [documented: the notes under
 //!     `VkLatencyMarkerNV` and "Frame Attribution"].
 //! - **Off** makes no call each frame; when the switch goes off, low latency mode is turned off
-//!   on the swapchain once. `NVF_NV_LOW_LATENCY=0` never asks for the extension.
+//!   on the swapchain once. While frame pacing hands the driver the frame cap
+//!   (`frame_pace::driver_cap`, 2026-11-23), the mode is set with low latency mode off and the cap
+//!   as the minimum interval, and the sleep is waited for every frame, which "will still enforce
+//!   `minimumIntervalUs`" with low latency mode off [documented: Vulkan
+//!   `VkLatencySleepModeInfoNV`]; no markers then. `NVF_NV_LOW_LATENCY=0` never asks for the
+//!   extension.
 //! - `NVF_PACE_LOG=1` adds a line every ten seconds with what the driver's sleep waited.
 //! - **Through Streamline** (with DLSS Frame Generation's files, #2317): while Streamline's
 //!   Reflex runs, every call goes through it instead ([`ViaStreamline`]: `slReflexSetOptions`,
@@ -376,15 +381,17 @@ impl NvLowLatency {
     /// low latency mode is set on the swapchain if it is new (or the minimum interval,
     /// `interval_us`, changed), the driver's sleep is waited for, and the frame's simulation and
     /// input are marked. With it off, low latency mode is turned off once on a swapchain it was
-    /// on.
+    /// on, unless there is a minimum interval (frame pacing's cap, `frame_pace::driver_cap`):
+    /// then the mode is set with low latency mode off and the interval, and the sleep is waited
+    /// for every frame, unmarked.
     fn input(&self, on: bool, frame: u64, interval_us: u32) {
         let shared = &*self.0;
         // Through Streamline the sleep and markers run every frame and the mode follows the
-        // switch (`ViaStreamline`); the direct calls run only with the switch on.
+        // switch (`ViaStreamline`); the direct calls run with the switch on, or for the cap.
         let streamline = shared.calls.through_streamline();
         let switch = on;
-        let on = switch || streamline;
-        let interval_us = if switch { interval_us } else { 0 };
+        let marks = switch || streamline;
+        let on = marks || interval_us > 0;
         let (mode_call, sleep_call) = shared.calls.names();
         let mut pacing = shared.pacing.lock().unwrap_or_else(PoisonError::into_inner);
         let mut asked = None;
@@ -393,8 +400,8 @@ impl NvLowLatency {
             // mode or the frame limit (`dlss::reflex_options`).
             if pacing.mode != Some((swapchain, switch, interval_us)) || streamline {
                 // A new swapchain has it off until it is set.
-                let was_on = pacing.mode.is_some_and(|(s, on, _)| s == swapchain && on);
-                if switch || was_on || streamline {
+                let was_on = pacing.mode.is_some_and(|(s, on, interval)| s == swapchain && (on || interval > 0));
+                if on || was_on {
                     if let Err(e) = shared.calls.set_sleep_mode(swapchain, switch, interval_us) {
                         shared.mode_refused.store(true, Ordering::Relaxed);
                         self.refused(mode_call, e);
@@ -444,9 +451,9 @@ impl NvLowLatency {
                 pacing.waits.add(started.elapsed(), signalled);
             }
         }
-        pacing.started = on.then_some(frame);
+        pacing.started = marks.then_some(frame);
         drop(pacing);
-        if on {
+        if marks {
             self.mark(vk::LatencyMarkerNV::SIMULATION_START, frame);
             self.mark(vk::LatencyMarkerNV::INPUT_SAMPLE, frame);
         }
@@ -767,7 +774,9 @@ pub(crate) mod tests {
     }
 
     /// Frame pacing's cap handed to the driver is the mode's minimum interval: a change sets the
-    /// mode again, the switch off sends none, and a refused mode keeps no limit until it works.
+    /// mode again, the switch off keeps it with low latency mode off (the sleep every frame, no
+    /// markers), no cap with the switch off clears it once, and a refused mode keeps no limit
+    /// until it works.
     #[test]
     fn the_frame_cap_handed_over_is_the_minimum_interval() {
         let (driver, recorder) = recorded();
@@ -779,7 +788,13 @@ pub(crate) mod tests {
         driver.input(true, 2, 6_579);
         assert_eq!(taken(&recorder)[0], Asked::Mode(7, true, 6_579), "a new cap: set again");
         driver.input(false, 3, 6_579);
-        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 0)], "off: no interval");
+        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 6_579), Asked::Sleep(7, 4), Asked::Wait(4)], "off: the interval kept, low latency mode off, no markers");
+        driver.input(false, 4, 6_579);
+        assert_eq!(taken(&recorder), [Asked::Sleep(7, 5), Asked::Wait(5)], "the sleep every frame");
+        driver.input(false, 5, 0);
+        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 0)], "no cap: the interval cleared once");
+        driver.input(false, 6, 0);
+        assert!(taken(&recorder).is_empty(), "then nothing");
         recorder.refuse_mode.store(true, Ordering::Relaxed);
         driver.input(true, 4, 6_579);
         assert!(!driver.limits(), "refused: frame pacing's own limiter holds the frames");
