@@ -29986,12 +29986,12 @@ forbid = [
 [[scenario]]
 name = "dlssg-variable-refresh"
 source = "docs/spec-notes/display-sync.md, docs/design/dlss-frame-generation.md: Display sync Variable refresh picked on the settings page while Frame generation is DLSS: DLSS-G, dimmed under the start's Vertical sync, runs; the window presents with vsync off while it is asked for and variable refresh's cap stays (through Reflex)"
-note = "needs NVF_DLSS_DIR with the four DLSS Frame Generation files (docs/dlss.md), an RTX 40 series or newer and Windows' GPU scheduling on; front = true as dlssg-on. The home of its own starts at the default Vertical sync, so DLSS-G is held off until the page's choice."
+note = "needs NVF_DLSS_DIR with the four DLSS Frame Generation files (docs/dlss.md), an RTX 40 series or newer and Windows' GPU scheduling on; front = true as dlssg-on. The home of its own starts at the default Vertical sync, so DLSS-G is held off until the page's choice; the page picks Vertical sync first (as display-sync-write), so a home that kept Variable refresh from an earlier run ends up the same way (a rerun found nothing to change and logged no choice, 2026-11-23)."
 areas = ["graphics", "settings"]
 paths = ["engine/nvforever/src/dlss/**", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/frame_pace.rs"]
 requires = ["NVF_DLSS_DIR"]
 front = true
-env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-variable-refresh-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:page,12:display-sync=Variable refresh" }
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-variable-refresh-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:display-sync=Vertical sync,13:display-sync=Variable refresh" }
 args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--no-voice", "--no-lodgen"]
 run_seconds = 30
 expect = [
