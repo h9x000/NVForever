@@ -31,11 +31,8 @@
 //!     frame's index is extracted with it, and the render world sends it just before Bevy's
 //!     `render_system`, which submits and presents in one step [engineering choice: the latest
 //!     point before the present that Bevy offers].
-//! - **Off** sends mode OFF, so the driver paces nothing. `maxFPS` is the frame cap while frame
-//!   pacing hands it to the driver (`frame_pace::driver_cap`: the switch on, no frame
-//!   generation), 0 otherwise: "the framerate limit, in frames per second ... imposed if
-//!   anti-lag is enabled", 0 "will disable the limit" [documented: `VkAntiLagDataAMD`]. The
-//!   driver's pacing then holds the cap in place of frame pacing's wait beside it.
+//! - **Off** sends mode OFF, so the driver paces nothing. `maxFPS` stays 0: the frame cap is
+//!   `frame_pace`'s [engineering choice].
 //!
 //! With `raw_vulkan_init` on, Bevy creates a Vulkan-only wgpu instance whenever the backends
 //! include Vulkan (the default) and Vulkan starts; other backends remain for when it can't
@@ -165,8 +162,7 @@ pub struct AntiLagDriver {
 impl AntiLagDriver {
     fn send(&self, on: bool, stage: i32, frame: u64) {
         let info = AntiLagPresentationInfo { s_type: ANTI_LAG_PRESENTATION_INFO, p_next: std::ptr::null_mut(), stage, frame_index: frame };
-        let max_fps = if on { crate::frame_pace::driver_cap() } else { 0 };
-        let data = AntiLagData { s_type: ANTI_LAG_DATA, p_next: std::ptr::null(), mode: if on { MODE_ON } else { MODE_OFF }, max_fps, presentation_info: &info };
+        let data = AntiLagData { s_type: ANTI_LAG_DATA, p_next: std::ptr::null(), mode: if on { MODE_ON } else { MODE_OFF }, max_fps: 0, presentation_info: &info };
         // SAFETY: the device was made with the extension and its feature on, and lasts as long as
         // the app; the call has no externally synchronized parameters [documented: vk.xml].
         unsafe { (self.update)(self.device, &data) };

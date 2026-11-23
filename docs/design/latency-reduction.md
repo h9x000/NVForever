@@ -105,34 +105,6 @@ if a driver misbehaves with it; the row is then dimmed).
     when the backends include Vulkan, and `VALIDATION_INDIRECT_CALL` is removed only when they
     don't include DX12, as without the feature.
 
-### The frame cap (2026-11-23)
-
-Without frame generation, the frame cap (the page's, or variable refresh's, as
-`frame_pace::own_cap` has it) goes to the driver's limiter wherever there is one, and frame
-pacing's own wait stands aside (`frame_pace::driver_holds`):
-
-- **NVIDIA, whatever the switch**: Reflex's frame limit through Streamline ("independent of
-  `ReflexOptions::mode`" [documented: Streamline `sl_reflex.h`]), or NVIDIA low latency's
-  minimum interval, which `vkLatencySleepNV` "will still enforce" with `lowLatencyMode` false
-  [documented: Vulkan `VkLatencySleepModeInfoNV`, Description]. With the switch off the direct
-  path sets the mode with low latency mode off and the interval, and waits for the sleep every
-  frame, without markers (the owner, 2026-11-23: "always use the driver limiter").
-- **AMD, with the switch on**: Anti-Lag's `maxFPS` is "imposed if anti-lag is enabled"
-  [documented: `VkAntiLagDataAMD`], so with the switch off frame pacing's limiter keeps the cap.
-
-The driver's sleep waits at the point frame pacing's limiter waits (right after the hand-off,
-before the next frame's input), so two waits there would be two limiters; the driver also knows
-when the GPU finishes, so it can start the frame closer to its present, and it does not spin a
-CPU core for the last millisecond as frame pacing's wait does [hypothesis: lower latency and CPU
-use. Measured 2026-11-23 with the switch on, an RTX 5090 at 4K, a cap of 90, two 45 s runs each:
-90 fps both ways, the same slowest frames (21.2 ms mean per 5 s) and Reflex's latency 10.1 ms
-against 9.8 ms with frame pacing's limiter, within the noise]. The log says which keeps the cap:
-`frame pace: the frame cap (N fps) is kept by the driver: ... (latency reduction on|off)` or
-`... by frame pacing's own limiter`. Frame generation
-keeps its own arrangement (docs/design/frame-generation.md, dlss-frame-generation.md). A driver
-that refused the mode, or none, leaves the cap to frame pacing. `NVF_DRIVER_LIMIT=0` keeps frame
-pacing's limiter, for comparisons.
-
 ## How it works: AMD Anti-Lag
 
 - **The extension.** `VK_AMD_anti_lag` (Vulkan registry extension 477) adds one call,
@@ -148,13 +120,8 @@ pacing's limiter, for comparisons.
     the main world runs frame n + 1. The render world sends it just before Bevy's
     `render_system`, which submits and presents in one step [engineering choice: the latest
     point before the present that Bevy offers].
-- **Off** sends mode OFF every frame, with `maxFPS` 0.
-- **The frame cap.** With the switch on and no frame generation, `maxFPS` is the frame cap
-  (`frame_pace::driver_cap`; "the framerate limit, in frames per second ... imposed if anti-lag
-  is enabled", 0 "will disable the limit" [documented: `VkAntiLagDataAMD`]) and frame pacing's
-  own limiter does not wait: one limiter, the driver's, at the point where its pacing waits
-  anyway [engineering choice, 2026-11-23; not measured on an AMD GPU]. See "The frame cap" under
-  "How it works: both".
+- **Off** sends mode OFF every frame. `maxFPS` is 0: the frame cap stays `frame_pace`'s
+  [engineering choice; the driver's limiter could take it over once Anti-Lag can be measured].
 
 ## How it works: NVIDIA low latency
 
@@ -186,16 +153,12 @@ structures used, the marker values and the three commands].
 - **Which swapchain.** The window has one swapchain, whoever presents on it, and it is the one
   every call names. Each resize or reconfiguration makes a new one, which gets the mode again
   before the next sleep.
-- **The mode.** `vkSetLatencySleepModeNV` with `lowLatencyMode` the switch, `lowLatencyBoost` false and
-  `minimumIntervalUs` the frame cap's microseconds while frame pacing hands the cap to the driver
-  (0 otherwise), once per swapchain and again when the interval changes. Boost "allows an application to hint to the GPU to
+- **The mode.** `vkSetLatencySleepModeNV` with `lowLatencyMode` true, `lowLatencyBoost` false and
+  `minimumIntervalUs` 0, once per swapchain. Boost "allows an application to hint to the GPU to
   increase performance ... at a cost of increased power consumption" [documented]; it is left
   off [engineering choice: the switch promises pacing, not a higher power state; a second
   setting could add it once the mode is measured]. The minimum interval is the driver's frame
-  limiter: "the microseconds between `vkQueuePresentKHR` calls for a given swapchain that
-  `vkLatencySleepNV` will enforce" [documented: `VkLatencySleepModeInfoNV`]. Through Streamline
-  the same cap is Reflex's `frameLimitUs`, which is "independent of `ReflexOptions::mode`"
-  [documented: Streamline `sl_reflex.h`].
+  limiter; the frame cap stays `frame_pace`'s, as with Anti-Lag [engineering choice].
 - **The sleep.** `vkLatencySleepNV` "returns immediately. Applications should use
   `vkWaitSemaphores` with `pSleepInfo->signalSemaphore` to delay host CPU work ... Applications
   should call this function before input sampling, and exactly once between presents"
@@ -246,10 +209,7 @@ structures used, the marker values and the three commands].
   frame's own.
 - **Off** makes no driver call each frame. When the switch goes off, the mode is turned off on
   the swapchain once. (Anti-Lag sends OFF every frame; here a path nobody has run on hardware
-  yet stays out of the way of players who leave the switch off.) The exception is the frame cap
-  (2026-11-23): while frame pacing hands it to the driver, the mode is set with `lowLatencyMode`
-  false and the cap as `minimumIntervalUs`, and `vkLatencySleepNV` is waited for every frame,
-  with no markers; when the cap goes, the interval is cleared once ("The frame cap" above).
+  yet stays out of the way of players who leave the switch off.)
 
 ## Checks
 
