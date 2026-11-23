@@ -1185,8 +1185,6 @@ impl PauseLook {
 pub struct MenuFont {
     /// The vector font; false (the default): the game's own.
     pub sharp: bool,
-    /// The font asset, made once.
-    handle: Option<Handle<bevy::text::Font>>,
 }
 
 impl MenuFont {
@@ -1196,9 +1194,9 @@ impl MenuFont {
         self.sharp || !language_fits_raster()
     }
 
-    /// The vector font's asset, made the first time.
+    /// The vector font's asset, the one every screen draws with (`crate::vector_font::FONT_HANDLE`).
     pub fn handle(&mut self, fonts: &mut Assets<bevy::text::Font>) -> Handle<bevy::text::Font> {
-        self.handle.get_or_insert_with(|| fonts.add(bevy::text::Font::from_bytes(crate::vector_font::FONT_BYTES.to_vec()))).clone()
+        crate::vector_font::ensure_font(fonts)
     }
 
     /// `faces` (the game's raster fonts) as the menus draw them: in the vector font where the
@@ -1652,7 +1650,7 @@ impl Plugin for PausePlugin {
                 key: "menu-font",
                 group: "Interface",
                 label: "Menu font",
-                note: "The menus' letters. Original: the game's own font (Sharp for a language it has no letters for). Sharp: Roboto Condensed, sharp at any resolution, titles bold.",
+                note: "Letters of the menus, HUD and minigames (not the Pip-Boy or terminals). Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed, sharp at any resolution.",
                 switches: "",
                 get: |_| false,
                 set: |_, _| {},
@@ -1664,6 +1662,10 @@ impl Plugin for PausePlugin {
         // The vector letters' glow, set from their laid-out size (`crate::interface::GLOW_RINGS`);
         // the highlight boxes drawn under what they box.
         app.add_systems(PostUpdate, crate::interface::glow_offsets.after(bevy::ui::UiSystems::Layout));
+        // The HUD, the other menus and the minigames follow the row too
+        // (`crate::vector_font::screen_face`); a faded vector line's glow fades with it.
+        app.add_systems(PreUpdate, crate::vector_font::follow_menu_font);
+        app.add_systems(PostUpdate, crate::interface::glow_follows_ink.before(bevy::ui::UiSystems::Layout));
         app.add_observer(draw_boxed);
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()

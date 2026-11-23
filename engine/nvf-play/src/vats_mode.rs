@@ -77,7 +77,7 @@ use crate::bindings::{Control, ControlInput};
 use crate::combat::{ActorFire, Combat, WeaponAnim};
 use crate::control::{ControlLocks, Crosshair, PlayerControl};
 use crate::hitvol::{ActorParts, WEAPON_PART};
-use crate::interface::{bc_supported, face as font_face, plain_font, set_line, Face};
+use crate::interface::{bc_supported, plain_font, set_line, Face};
 use bevy::image::CompressedImageFormatSupport;
 use nvf_assets::GameData;
 use crate::phys::PhysState;
@@ -3227,7 +3227,7 @@ fn draw_labels(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut face_: Local<Option<Face>>,
+    mut face_: Local<crate::interface::Kept<Face>>,
     mut labels: Query<(Entity, &mut MarkLabel, &mut Node, &mut Visibility)>,
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631): the
@@ -3239,6 +3239,8 @@ fn draw_labels(
     let tall = LABEL_HEIGHT / 960.0 * height * scale;
     let camera = cameras.single().ok();
     let spots = vats.drawn();
+    // New letters (`crate::vector_font::screen_face`): every label drawn again.
+    let stale = face_.stale();
     for (e, mut label, mut node, mut vis) in &mut labels {
         let spot = spots.get(label.i);
         let at = spot.zip(camera).and_then(|((p, _), (cam, t))| cam.world_to_viewport(t, space::to_bevy(*p)).ok());
@@ -3250,8 +3252,8 @@ fn draw_labels(
         node.left = Val::Px(at.x + size * 0.75);
         node.top = Val::Px(at.y - tall / 2.0);
         let text = chance_text(*chance);
-        if label.shown != text {
-            let f = face_.get_or_insert_with(|| font_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+        if label.shown != text || stale {
+            let f = face_.get_or_make(|| crate::interface::screen_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             commands.entity(e).despawn_related::<Children>().with_children(|p| {
                 if let Some(line) = f.font.lines(&text, None).into_iter().next() {
                     set_line(p, f, &line, 0.0, LABEL_BASE, LABEL_COLOUR);
@@ -3352,7 +3354,7 @@ fn draw_previews(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut face_: Local<Option<Face>>,
+    mut face_: Local<crate::interface::Kept<Face>>,
     mut text: Local<String>,
     mut placed: Local<Vec<[f32; 4]>>,
     mut labels: Query<(Entity, &mut PreviewLabel, &mut Node, &mut Visibility)>,
@@ -3363,6 +3365,8 @@ fn draw_previews(
     // The parts' labels and bars are the game's menu file's while it draws them
     // (`crate::tiles::vats_menu`, vats-classic.md §11); the header stays this drawing's.
     let from_file = tiles.is_some_and(|t| t.drawn);
+    // New letters (`crate::vector_font::screen_face`): every label drawn again.
+    let stale = face_.stale();
     // Each bar's place and share this frame: left, top, width, share.
     let mut bar_at: [Option<[f32; 4]>; MAX_PREVIEW] = [None; MAX_PREVIEW];
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631): the
@@ -3395,8 +3399,8 @@ fn draw_previews(
             use std::fmt::Write;
             let _ = write!(text, " x{}", p.queued);
         }
-        if label.shown != *text {
-            let f = face_.get_or_insert_with(|| font_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+        if label.shown != *text || stale {
+            let f = face_.get_or_make(|| crate::interface::screen_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let colour = if p.under { PREVIEW_UNDER_COLOUR } else { LABEL_COLOUR };
             let line = f.font.lines(&text, None).into_iter().next();
             label.width = line.as_ref().map_or(0.0, |l| l.width);
@@ -3431,8 +3435,8 @@ fn draw_previews(
             *vis = want;
         }
         let Some(ref name) = head else { continue };
-        if h.shown != *name {
-            let f = face_.get_or_insert_with(|| font_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+        if h.shown != *name || stale {
+            let f = face_.get_or_make(|| crate::interface::screen_face(LABEL_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let line = f.font.lines(name, None).into_iter().next();
             h.width = line.as_ref().map_or(0.0, |l| l.width);
             commands.entity(e).despawn_related::<Children>().with_children(|c| {

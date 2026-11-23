@@ -4,7 +4,7 @@
 //! NVForever's, set out as on the mock-up the owner approved, 2026-10-16].
 
 use super::{PokerInput, PokerScreen, PokerView, Session, BIG_BLIND, PLAYER, SMALL_BLIND};
-use crate::interface::{amber, at, face, plain_font, Face};
+use crate::interface::{amber, at, plain_font, Face};
 use crate::pause::AidTime;
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -180,11 +180,12 @@ pub fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
     roots: Query<Entity, With<PokerRoot>>,
-    (mut kit, mut shown): (Local<Option<Kit>>, Local<Option<String>>),
+    (mut kit, mut shown): (Local<crate::interface::Kept<Kit>>, Local<Option<String>>),
 ) {
     let view_w = view_width(window.single().ok());
     let key = screen.0.as_ref().map(|s| view_key(s, view.as_deref(), view_w));
-    if key == *shown {
+    // New letters (`crate::vector_font::screen_face`): drawn again.
+    if key == *shown && !(key.is_some() && kit.stale()) {
         return;
     }
     for e in &roots {
@@ -193,9 +194,9 @@ pub fn draw(
     *shown = key;
     let Some(s) = screen.0.as_ref() else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| Kit {
-        glow: face(GLOW_FONT, plain_font(31.0, 12.0), data.as_deref(), &mut images, bc),
-        plain: face(PLAIN_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc),
+    let kit = kit.get_or_make(|| Kit {
+        glow: crate::interface::screen_face(GLOW_FONT, plain_font(31.0, 12.0), data.as_deref(), &mut images, bc),
+        plain: crate::interface::screen_face(PLAIN_FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc),
     });
     spawn(&mut commands, &Ctx { kit, glyphs: &glyphs }, s, view.as_deref(), view_w);
 }

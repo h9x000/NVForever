@@ -1142,7 +1142,7 @@ fn draw(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
-    mut kit: Local<Option<look::Kit>>,
+    mut kit: Local<crate::interface::Kept<look::Kit>>,
     (combat, play, mut script): DrawSources,
     mut forms: Local<Option<crate::pipboy::stats::read::Forms>>,
     (tiles, mut was_tiled, tile_menu, barter_tiles, inventory_tiles): DrawTiles,
@@ -1171,7 +1171,7 @@ fn draw(
         return;
     }
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| look::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = kit.get_or_make(|| look::Kit::load(data.as_deref(), &mut images, bc));
     // The lists' scroll positions follow the rows drawn (`MenuModel::pointer_pick`).
     if m.mode != Mode::Inventory && !item_tiled {
         let first = [Side::Container, Side::Player].map(|s| look::drawn_first(m, s, kit));

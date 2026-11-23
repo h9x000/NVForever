@@ -20,7 +20,7 @@
 //! - As the menu leaves, all of it fades out with the lock's picture ([`fade`]).
 
 use super::{LockView, LockpickDebug, LockpickInput, LockpickScreen, Session};
-use crate::interface::{amber, at, face, plain_font, set_line, u, Face, Pictures};
+use crate::interface::{amber, at, plain_font, set_line, u, Face, Pictures};
 use crate::pause::AidTime;
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -129,9 +129,9 @@ pub struct Kit {
 impl Kit {
     pub(crate) fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
         Kit {
-            font: face(FONT, plain_font(36.0, 15.0), data, images, bc),
-            title: face(TITLE_FONT, plain_font(38.0, 16.0), data, images, bc),
-            body: face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
+            font: crate::interface::screen_face(FONT, plain_font(36.0, 15.0), data, images, bc),
+            title: crate::interface::screen_face(TITLE_FONT, plain_font(38.0, 16.0), data, images, bc),
+            body: crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
             pictures: Pictures::load(data),
         }
     }
@@ -196,7 +196,7 @@ pub fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
     roots: Query<Entity, With<LockpickRoot>>,
-    (mut kit, mut shown): (Local<Option<Kit>>, Local<Option<String>>),
+    (mut kit, mut shown): (Local<crate::interface::Kept<Kit>>, Local<Option<String>>),
 ) {
     let view_w = view_width(window.single().ok());
     let key = screen.0.as_ref().map(|s| view_key(s, view.is_some(), view_w));
@@ -209,7 +209,11 @@ pub fn draw(
     *shown = key;
     let Some(s) = screen.0.as_ref() else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+    // New letters (`crate::vector_font::screen_face`): drawn again.
+    if kit.stale() {
+        *shown = None;
+    }
+    let kit = kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
     let mut c = Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     spawn(&mut commands, &mut c, s, view.as_deref(), view_w);
 }
@@ -393,7 +397,7 @@ pub fn draw_debug(
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
     roots: Query<Entity, With<LockpickDebugRoot>>,
-    (mut kit, mut shown): (Local<Option<Kit>>, Local<Option<String>>),
+    (mut kit, mut shown): (Local<crate::interface::Kept<Kit>>, Local<Option<String>>),
 ) {
     let key = screen.0.as_ref().filter(|_| debug.0).map(debug_key);
     if key == *shown {
@@ -405,7 +409,11 @@ pub fn draw_debug(
     *shown = key;
     let Some(s) = screen.0.as_ref().filter(|_| debug.0) else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+    // New letters (`crate::vector_font::screen_face`): drawn again.
+    if kit.stale() {
+        *shown = None;
+    }
+    let kit = kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
     let mut c = Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     let g = &s.game;
     let bright = amber(255.0);

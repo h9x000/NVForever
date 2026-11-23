@@ -33,7 +33,7 @@
 //! (<label>): <outcome>`, `companion wheel: closed (<how>)`; at exit, when it was used,
 //! `companion wheel summary: …`.
 
-use crate::interface::{amber, at, face, plain_font, set_line, Face, Pictures};
+use crate::interface::{amber, at, plain_font, screen_face, set_line, Face, Pictures};
 use crate::pause::AidTime;
 use crate::script::{with_world, ScriptState};
 use crate::script_hud::ScriptHud;
@@ -497,7 +497,8 @@ struct Kit {
 
 #[derive(Resource, Default)]
 struct WheelView {
-    kit: Option<Kit>,
+    /// Made again when the letters change (`crate::vector_font::screen_face`).
+    kit: crate::interface::Kept<Kit>,
 }
 
 /// Text centred on `cx`, its first line's top at `top`, wrapped at `wrap`.
@@ -551,9 +552,9 @@ fn draw(
     let Some(s) = screen.0.as_ref() else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
     let data = data.as_deref();
-    let kit = view.kit.get_or_insert_with(|| Kit {
-        font1: face(FONT_1, plain_font(31.0, 12.0), data, &mut images, bc),
-        font3: face(FONT_3, plain_font(25.0, 10.0), data, &mut images, bc),
+    let kit = view.kit.get_or_make(|| Kit {
+        font1: screen_face(FONT_1, plain_font(31.0, 12.0), data, &mut images, bc),
+        font3: screen_face(FONT_3, plain_font(25.0, 10.0), data, &mut images, bc),
         pictures: Pictures::load(data),
     });
     let left = (width - SIZE) / 2.0;

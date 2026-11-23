@@ -16,7 +16,7 @@
 //!   `MessageMenu` tiles instead (`crate::tiles::menus`) and this module spawns nothing for
 //!   it; the panels of the other script menus it shows stay drawn here.
 
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_text, texture, u, Face, Set};
+use crate::interface::{amber, at, bc_supported, plain_font, set_text, texture, u, Face, Set};
 use crate::script_hud::BoxButton;
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -244,8 +244,8 @@ fn load_faces(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> 
     let mut line = |name: &str| data.and_then(|d| texture(&format!("textures\\interface\\shared\\{name}.dds"), d, images, bc)).map(|t| t.0);
     let (fade_down, fade_up, shade) = (line("line\\fade_to_bottom"), line("line\\fade_to_top"), line("background\\solid_black"));
     Faces {
-        body: face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
-        title: face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
+        body: crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
+        title: crate::interface::screen_face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
         fade_down,
         fade_up,
         shade,
@@ -361,7 +361,7 @@ fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     roots: Query<Entity, With<BoxRoot>>,
     mut frames: Query<(&Frame, &mut Visibility)>,
-    mut faces: Local<Option<Faces>>,
+    mut faces: Local<crate::interface::Kept<Faces>>,
     (mut shown, mut was_tiled, mut font_revision): (Local<Option<PanelView>>, Local<bool>, Local<u32>),
     (menus, script): (Option<Res<crate::tiles::vanilla::TileMenus>>, Option<Res<crate::script::ScriptState>>),
 ) {
@@ -383,7 +383,7 @@ fn draw(
             });
         }
         if let Some(view) = panel.view.as_ref().filter(|_| !tiled) {
-            let faces = faces.get_or_insert_with(|| {
+            let faces = faces.get_or_make(|| {
                 load_faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()))
             });
             let icon = view.icon.as_deref().and_then(|p| data.as_deref().and_then(|d| texture(p, d, &mut images, bc_supported(formats.as_deref())))).map(|t| t.0);

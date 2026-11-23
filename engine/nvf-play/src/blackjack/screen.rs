@@ -112,7 +112,7 @@ pub fn draw(
     glyphs: Res<crate::pad::PadGlyphs>,
     roots: Query<Entity, With<BlackjackRoot>>,
     time: AidTime,
-    (mut kit, mut shown): (Local<Option<Kit>>, Local<Option<String>>),
+    (mut kit, mut shown): (Local<crate::interface::Kept<Kit>>, Local<Option<String>>),
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let view_w = view_width(window.single().ok());
@@ -128,7 +128,11 @@ pub fn draw(
     *shown = key;
     let Some(s) = screen.0.as_ref() else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+    // New letters (`crate::vector_font::screen_face`): drawn again.
+    if kit.stale() {
+        *shown = None;
+    }
+    let kit = kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
     let mut c = Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     spawn(&mut commands, &mut c, s, view.as_deref(), view_w, now, total);
 }

@@ -493,8 +493,9 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 
 ### `menu-font`: Menu font
 
-- On the page: The menus' letters. Original: the game's own font (Sharp for a language it
-  has no letters for). Sharp: Roboto Condensed, sharp at any resolution, titles bold.
+- On the page: Letters of the menus, HUD and minigames (not the Pip-Boy or terminals).
+  Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed, sharp at
+  any resolution.
 - In full: Sharp draws the main menu's entries and the pause menu's text (the column, the
   settings page, the load page) with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's
   own interface font), laid out by Bevy's text at the screen's resolution, without kerning or
@@ -507,8 +508,19 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   The game's font has only its code page's 256 letters: where the chosen language's are not
   among them (Russian on an English install, whose page is Windows-1252) Original draws
   sharp too, else the words would read as `?`; Sharp draws every letter the font has
-  (Latin and Cyrillic), whatever the install's code page (owner 2026-11-16). The other
-  menus keep the game's font.
+  (Latin and Cyrillic), whatever the install's code page (owner 2026-11-16). Since
+  2026-11-23 the rest of what is drawn over the view follows the row too
+  (`vector_font::screen_face`): the HUD (ammo, compass place names, enemy name, sneak word,
+  needs, XP and radiation meters, crosshair prompt, corner and quest messages, subtitles, VATS
+  labels, the weapon and companion wheels), the dialogue, message, container and barter,
+  crafting, repair, wait, character creation, level-up and tutorial menus, the loading
+  screens' tips, the credits and the minigames (lockpick, blackjack, roulette, slots, Caravan,
+  poker). Each game font is drawn at the em that gives its capitals font 7's size relation
+  (31 units for font 7's 30-unit 'H'), Futura Caps (font 8) bold and in capitals; dark words
+  (black on a lit bar) get no glow. Left in the game's font: the Pip-Boy's pages and the
+  terminals (their letters are on a screen in the world), the menus drawn from the game's
+  menu files (`[UI] TileMenus`), and the controller buttons' labels (pictures).
+  [design: owner 2026-11-23, "Only menus/hud/minigames"]
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`
 ### `sneak-gauges`: Light and noise gauges while sneaking

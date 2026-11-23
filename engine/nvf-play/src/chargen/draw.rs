@@ -3,7 +3,7 @@
 //! at the corners, the highlight box, text set left, right or centred). Lengths are in
 //! the interface's units (960 to the view's height), from the parent node's top left.
 
-use crate::interface::{amber, at, face, plain_font, set_line, Face, Picture, Pictures};
+use crate::interface::{amber, at, plain_font, set_line, Face, Picture, Pictures};
 use bevy::prelude::*;
 use fnv_font::{Font, Line};
 use nvf_assets::GameData;
@@ -47,9 +47,9 @@ pub struct Kit {
 impl Kit {
     pub fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
         Kit {
-            glow: face(GLOW_FONT, plain_font(31.0, 12.0), data, images, bc),
-            body: face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
-            title: face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
+            glow: crate::interface::screen_face(GLOW_FONT, plain_font(31.0, 12.0), data, images, bc),
+            body: crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
+            title: crate::interface::screen_face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
             pictures: Pictures::load(data),
         }
     }

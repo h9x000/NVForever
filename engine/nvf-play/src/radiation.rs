@@ -31,7 +31,7 @@
 
 use crate::hud::HudView;
 use crate::tiles::vanilla::DrawnByTiles;
-use crate::interface::{at, bc_supported, face, plain_font, set_text, texture, u, Face, Set};
+use crate::interface::{at, bc_supported, letters_changed, plain_font, screen_face, set_text, texture, u, Face, Set};
 use crate::phys::cells::Space;
 use crate::phys::PhysState;
 use crate::reticle::crime_colour;
@@ -365,9 +365,18 @@ fn draw(
     mut root: Query<&mut Visibility, With<MeterRoot>>,
     texts: Query<Entity, With<Texts>>,
     mut pointer: Query<&mut Node, With<Pointer>>,
+    mut seen: Local<u32>,
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
+    if letters_changed(&mut seen) {
+        // New letters (`crate::vector_font::screen_face`): the faces made again, the words
+        // drawn again.
+        if let Some(k) = kit.as_mut() {
+            [k.value, k.word] = faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+        }
+        *shown = None;
+    }
     // Shown while rads are taken; the number is the level after Rad Resistance, as
     // GetRadiationLevel's (`Exposure::resisted`, untouched by fRadiationAccumulationRate).
     let (rate, resisted) = script.as_deref().and_then(|s| s.rt.as_ref()).map_or((0.0, 0.0), |rt| (rt.game.radiation().rate, rt.game.radiation().resisted));
@@ -378,11 +387,12 @@ fn draw(
         }
         let bc = bc_supported(formats.as_deref());
         let d = data.as_deref();
+        let [value, word] = faces(d, &mut images, bc);
         let loaded = Kit {
             bracket: d.and_then(|d| texture(BRACKET_PATH, d, &mut images, bc)).map(|t| t.0),
             pointer: d.and_then(|d| texture(POINTER_PATH, d, &mut images, bc)).map(|t| t.0),
-            value: face(VALUE_FONT, plain_font(52.0, 22.0), d, &mut images, bc),
-            word: face(WORD_FONT, plain_font(36.0, 15.0), d, &mut images, bc),
+            value,
+            word,
         };
         spawn(&mut commands, &loaded);
         *kit = Some(loaded);
@@ -421,6 +431,11 @@ fn draw(
         }
     });
     *shown = Some(value);
+}
+
+/// The value's and the word's faces.
+fn faces(d: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> [Face; 2] {
+    [screen_face(VALUE_FONT, plain_font(52.0, 22.0), d, images, bc), screen_face(WORD_FONT, plain_font(36.0, 15.0), d, images, bc)]
 }
 
 fn spawn(commands: &mut Commands, kit: &Kit) {

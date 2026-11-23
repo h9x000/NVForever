@@ -487,6 +487,8 @@ pub struct VectorFace {
     pub em: f32,
     pub weight: u16,
     pub base: f32,
+    /// Drawn in capitals (the game's Futura Caps, `crate::vector_font::screen_face`).
+    pub caps: bool,
 }
 
 /// **The vector letters' dark glow** [design: owner 2026-11-15, second test: "the vanilla font
@@ -502,14 +504,57 @@ pub const GLOW_RINGS: [(f32, f32); 2] = [(0.045, 0.13), (0.095, 0.08)];
 pub const DROP: Vec2 = Vec2::new(0.045, 0.065);
 pub const DROP_ALPHA: f32 = 0.5;
 
-/// A dark copy of a vector line under it (its glow); recolouring passes it over.
+/// A dark copy of a vector line under it (its glow), with its ring's darkness at full alpha
+/// ([`GLOW_RINGS`]); recolouring passes it over.
 #[derive(Component)]
-pub struct Halo;
+pub struct Halo(pub f32);
 
 /// A vector line's [`TextShadow`] offset as a part of its em; [`glow_offsets`] turns it into
 /// the logical pixels the shadow takes.
 #[derive(Component, Clone, Copy)]
 pub struct TextGlow(pub Vec2);
+
+/// A vector line's node: the alpha of its words its glow was last made for. A screen that
+/// fades or dims its words sets their `TextColor` alone; [`glow_follows_ink`] makes the glow
+/// and the drop shadow follow, so faded words leave no dark copies behind.
+#[derive(Component, Clone, Copy)]
+pub struct GlowInk(pub f32);
+
+/// Each vector line whose words' alpha changed: its glow's copies and shadows, and the words'
+/// drop shadow, at that alpha (module notes of [`GLOW_RINGS`]); a copy a screen recoloured
+/// with its words (a recolouring of every text under a node) black again. After the screens'
+/// own systems.
+#[allow(clippy::type_complexity)]
+pub fn glow_follows_ink(
+    mut lines: Query<(&mut GlowInk, &Children)>,
+    words: Query<(&TextColor, &ChildOf), (Changed<TextColor>, Without<Halo>)>,
+    mut halos: Query<(&Halo, &mut TextColor, &mut bevy::ui::widget::TextShadow, &ChildOf)>,
+    mut shadows: Query<&mut bevy::ui::widget::TextShadow, Without<Halo>>,
+) {
+    for (color, parent) in &words {
+        let Ok((mut glow, children)) = lines.get_mut(parent.parent()) else { continue };
+        let ink = color.0.alpha();
+        if (ink - glow.0).abs() < 1e-3 {
+            continue;
+        }
+        glow.0 = ink;
+        for child in children.iter() {
+            if let Ok(mut s) = shadows.get_mut(child) {
+                s.color.set_alpha(DROP_ALPHA * ink);
+            }
+        }
+    }
+    for (ring, mut c, mut s, parent) in &mut halos {
+        let Ok((glow, _)) = lines.get(parent.parent()) else { continue };
+        let dark = Color::BLACK.with_alpha(ring.0 * glow.0);
+        if c.0 != dark {
+            c.0 = dark;
+        }
+        if s.color.alpha() != dark.alpha() {
+            s.color.set_alpha(dark.alpha());
+        }
+    }
+}
 
 /// Set each glowing line's shadow offset from its laid-out height (one em, its line height
 /// being the font's size). After the UI's layout.
@@ -666,6 +711,55 @@ pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut As
         warn!("interface: drawn without the game's font {path}");
         Face { font: stand_in, image: None, vector: None }
     })
+}
+
+/// [`face`] for a screen drawn over the view (the HUD, a menu, a minigame): in the sharp font
+/// while the Menu Font row says Sharp (`crate::vector_font::screen_face`). The Pip-Boy's pages
+/// and the terminals, screens in the world, keep [`face`].
+pub fn screen_face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Face {
+    crate::vector_font::screen_face(face(path, stand_in, data, images, bc), path)
+}
+
+/// Whether the screens' letters changed (`crate::vector_font::letters`) since `seen`, which
+/// is now the count: a screen that drew its words keyed by what they say draws them again.
+pub fn letters_changed(seen: &mut u32) -> bool {
+    let now = crate::vector_font::letters();
+    std::mem::replace(seen, now) != now
+}
+
+/// What a screen keeps made from its faces (the faces themselves, mostly): made again when
+/// the letters changed since ([`letters_changed`]).
+pub struct Kept<T> {
+    at: u32,
+    value: Option<T>,
+}
+
+impl<T> Default for Kept<T> {
+    fn default() -> Self {
+        Kept { at: 0, value: None }
+    }
+}
+
+impl<T> Kept<T> {
+    /// The value, made by `make` the first time and again after the letters changed.
+    pub fn get_or_make(&mut self, make: impl FnOnce() -> T) -> &mut T {
+        let now = crate::vector_font::letters();
+        if self.at != now {
+            self.value = None;
+            self.at = now;
+        }
+        self.value.get_or_insert_with(make)
+    }
+
+    /// The value as made, stale or not.
+    pub fn get(&self) -> Option<&T> {
+        self.value.as_ref()
+    }
+
+    /// Whether there is none, or it was made before the letters changed.
+    pub fn stale(&self) -> bool {
+        self.value.is_none() || self.at != crate::vector_font::letters()
+    }
 }
 
 /// The INI's fonts by number, font n at `n - 1` [documented: Fallout_default.ini
@@ -855,6 +949,7 @@ fn set_bevy_line(
     mark: impl Bundle,
 ) {
     if let Some(v) = &face.vector {
+        let text = if v.caps { text.to_uppercase() } else { text };
         // The line's text in the vector font, its baseline on `base`: Bevy lays it out at the
         // screen's resolution, without kerning or ligatures so it is as wide as `face.font`
         // measured it (`crate::vector_font`), in one line.
@@ -862,7 +957,12 @@ fn set_bevy_line(
         let layout = (bevy::text::LineHeight::RelativeToFont(1.0), TextLayout::new(Justify::Left, LineBreak::NoWrap));
         let shadow = |part: Vec2, alpha: f32| (TextGlow(part), bevy::ui::widget::TextShadow { offset: Vec2::ZERO, color: Color::BLACK.with_alpha(alpha) });
         let ink = color.alpha();
-        p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE)).with_children(|n| {
+        p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE, GlowInk(ink))).with_children(|n| {
+            // Dark words (black on a lit bar) have no dark glow round them.
+            if dark_ink(color) {
+                n.spawn((Text::new(text), font, layout, TextColor(color), mark));
+                return;
+            }
             // The glow (module notes of `GLOW_RINGS`): each copy off one way, its shadow the
             // other way; the outer ring first, under the inner.
             for (r, alpha) in GLOW_RINGS.into_iter().rev() {
@@ -876,7 +976,7 @@ fn set_bevy_line(
                         layout,
                         TextColor(dark),
                         shadow(-2.0 * at, alpha * ink),
-                        Halo,
+                        Halo(alpha),
                         Pickable::IGNORE,
                     ));
                 }
@@ -889,6 +989,13 @@ fn set_bevy_line(
             n.spawn((Text::new(text), TextFont { font_size: font_units(size), ..default() }, TextColor(color), mark));
         });
     }
+}
+
+/// Whether words of `color` are dark (black words on a lit bar): no dark glow round them
+/// ([`GLOW_RINGS`]).
+pub fn dark_ink(color: Color) -> bool {
+    let c = color.to_srgba();
+    0.2126 * c.red + 0.7152 * c.green + 0.0722 * c.blue < 0.25
 }
 
 /// Draw one bitmap glyph starting at `x` and standing on `base`. Its offsets and ink

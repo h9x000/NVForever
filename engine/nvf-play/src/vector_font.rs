@@ -29,9 +29,97 @@
 
 use bevy::prelude::*;
 use fnv_font::{Font, Glyph};
+use std::sync::atomic::{AtomicBool, AtomicU32, Ordering};
 
 /// The font file, built into the program.
 pub const FONT_BYTES: &[u8] = include_bytes!("../assets/fonts/RobotoCondensed[wght].ttf");
+
+/// The font's asset, one handle for every screen ([`ensure_font`] puts the font under it).
+pub const FONT_HANDLE: Handle<bevy::text::Font> = bevy::asset::uuid_handle!("6b3c1f0e-5a8d-4e27-9c41-2f7d8e90a6b5");
+
+/// Put the font under [`FONT_HANDLE`] once.
+pub fn ensure_font(fonts: &mut Assets<bevy::text::Font>) -> Handle<bevy::text::Font> {
+    if fonts.get(&FONT_HANDLE).is_none() {
+        let _ = fonts.insert(FONT_HANDLE.id(), bevy::text::Font::from_bytes(FONT_BYTES.to_vec()));
+    }
+    FONT_HANDLE
+}
+
+/// **The HUD, the menus and the minigames in the sharp font too** [design: owner 2026-11-23,
+/// "can it also be implemented for the rest of the game like subtitles/dialog menu
+/// choices/loading screen tips"; "Terminals, Pip-Boy and any in-game place where the font is
+/// used as part of the world should be left out. Only menus/hud/minigames"]: the screens
+/// drawn over the view take their faces through [`screen_face`] (via
+/// `crate::interface::screen_face`), which gives the sharp face of the game's font while the
+/// Menu Font row says Sharp (or the language needs it, `crate::pause::MenuFont::drawn_sharp`).
+/// The Pip-Boy's pages and the terminals keep calling `crate::interface::face`: their letters
+/// are on a screen in the world. [`follow_menu_font`] keeps this flag and [`letters`] up to
+/// date, so a screen that keeps its faces makes them again when the row changes.
+static SHARP: AtomicBool = AtomicBool::new(false);
+static LETTERS: AtomicU32 = AtomicU32::new(0);
+
+/// Whether the screens over the view are drawn in the sharp font (module notes of [`SHARP`]).
+pub fn sharp() -> bool {
+    SHARP.load(Ordering::Relaxed)
+}
+
+/// Counts the changes of [`sharp`]: a screen that keeps its faces (or its drawn lines) makes
+/// them again when this differs from the count it made them at.
+pub fn letters() -> u32 {
+    LETTERS.load(Ordering::Relaxed)
+}
+
+/// Set [`sharp`]; a change counts in [`letters`].
+pub fn set_sharp(on: bool) {
+    if SHARP.swap(on, Ordering::Relaxed) != on {
+        LETTERS.fetch_add(1, Ordering::Relaxed);
+        info!("interface: the HUD, menus and minigames in the {} font", if on { "sharp (Roboto Condensed)" } else { "game's own" });
+    }
+}
+
+/// Follow the Menu Font row (and the language, `crate::pause::MenuFont::drawn_sharp`) each
+/// frame, the font's asset put in place before the first sharp face is drawn.
+pub fn follow_menu_font(menu_font: Option<Res<crate::pause::MenuFont>>, fonts: Option<ResMut<Assets<bevy::text::Font>>>) {
+    let on = menu_font.as_deref().is_some_and(crate::pause::MenuFont::drawn_sharp) && metrics().is_some();
+    if on {
+        let Some(mut fonts) = fonts else { return };
+        ensure_font(&mut fonts);
+    }
+    set_sharp(on);
+}
+
+/// The 'H' of font 7, the font the menus' sizes were set by ([`ENTRY_EM`]), in interface
+/// units, its glow included [observed: the owner's screenshots, module notes].
+const FONT7_CAP: f32 = 30.0;
+
+/// The game's font `raster` (read from `path`) as the screens over the view draw it: as it
+/// is unless [`sharp`]; else the sharp font at the size that matches the game font's
+/// capitals to font 7's ([`ENTRY_EM`] at [`FONT7_CAP`]), its lines as far apart as the game
+/// font's. Futura Caps (font 8, the big titles and numbers) is drawn bold and in capitals,
+/// as its own letters are.
+pub fn screen_face(raster: crate::interface::Face, path: &str) -> crate::interface::Face {
+    sharpened(raster, path, sharp())
+}
+
+/// [`screen_face`] with the switch given: `raster` as it is when `on` is false.
+fn sharpened(raster: crate::interface::Face, path: &str, on: bool) -> crate::interface::Face {
+    if !on {
+        return raster;
+    }
+    let Some(m) = metrics() else { return raster };
+    let (em, weight, caps) = sharp_size(&raster, path);
+    face_with(m, FONT_HANDLE, em, weight, raster.font.size, caps)
+}
+
+/// The sharp size, weight and capitals for game font `raster` read from `path`
+/// ([`screen_face`]): its 'H' when the font was read, else its line's height.
+pub fn sharp_size(raster: &crate::interface::Face, path: &str) -> (f32, u16, bool) {
+    let h = raster.font.glyph(b'H');
+    let cap = if raster.image.is_some() && h.drawn() && h.ascent > 0.0 { h.ascent } else { raster.font.size * FONT7_CAP / 36.0 };
+    let em = (ENTRY_EM * cap / FONT7_CAP * 2.0).round() / 2.0;
+    let caps = path.to_ascii_lowercase().contains("futura_caps");
+    (em.max(8.0), if caps { BOLD } else { REGULAR }, caps)
+}
 
 /// The em of the entries' and rows' letters and of the small print (the note, the version,
 /// "Report a Bug"), in interface units (module notes): cap heights of about 22 and 17.
@@ -399,8 +487,15 @@ pub fn metrics() -> Option<&'static Metrics> {
 /// code page's codes, and a language the install was not made for (Russian on an English
 /// install, whose code page is Windows-1252) would otherwise read as `?`.
 pub fn metric_table(m: &Metrics, em: f32, line: f32, w: u16) -> Font {
+    metric_table_with(m, em, line, w, false)
+}
+
+/// [`metric_table`]; with `caps`, every letter measured as its capital (the text is drawn so,
+/// `crate::interface::VectorFace::caps`).
+pub fn metric_table_with(m: &Metrics, em: f32, line: f32, w: u16, caps: bool) -> Font {
     let page = fnv_util::text::code_page();
     let glyph = |c: char| {
+        let c = if caps { c.to_uppercase().next().unwrap_or(c) } else { c };
         let adv = m.advance_at(c, w) * em;
         let rise = if c.is_lowercase() { m.x_height } else { m.cap_height } / m.units_per_em * em;
         if c.is_whitespace() || c.is_control() {
@@ -417,8 +512,13 @@ pub fn metric_table(m: &Metrics, em: f32, line: f32, w: u16) -> Font {
 /// A face of the font at `em` units and weight `w`, measured by [`metric_table`], its lines
 /// `line` apart.
 pub fn face(m: &Metrics, font: Handle<bevy::text::Font>, em: f32, w: u16, line: f32) -> crate::interface::Face {
-    let vector = crate::interface::VectorFace { font, em, weight: w, base: baseline_below_top(m, em) };
-    crate::interface::Face { font: metric_table(m, em, line, w), image: None, vector: Some(vector) }
+    face_with(m, font, em, w, line, false)
+}
+
+/// [`face`]; with `caps`, drawn and measured in capitals ([`metric_table_with`]).
+pub fn face_with(m: &Metrics, font: Handle<bevy::text::Font>, em: f32, w: u16, line: f32, caps: bool) -> crate::interface::Face {
+    let vector = crate::interface::VectorFace { font, em, weight: w, base: baseline_below_top(m, em), caps };
+    crate::interface::Face { font: metric_table_with(m, em, line, w, caps), image: None, vector: Some(vector) }
 }
 
 /// The OpenType features turned off so the drawn text is as wide as [`metric_table`]
@@ -511,6 +611,80 @@ mod tests {
         let sum: f32 = "Graphics".chars().map(|c| m.advance_at(c, BOLD) * ENTRY_EM).sum();
         assert!((b.width("Graphics") - sum).abs() < 1e-3);
         assert_ne!(b.width("Graphics"), metric_table(&m, ENTRY_EM, 36.0, REGULAR).width("Graphics"));
+    }
+
+    /// A game font as read: its 'H' `cap` units high, its lines `line` apart, a picture.
+    fn raster(cap: f32, line: f32) -> crate::interface::Face {
+        let mut font = crate::interface::plain_font(line, 15.0);
+        font.glyphs[usize::from(b'H')] = Glyph { width: 14.0, height: cap, ascent: cap, after: 1.0, ..default() };
+        crate::interface::Face { font, image: Some((Handle::default(), Vec2::ONE)), vector: None }
+    }
+
+    #[test]
+    fn a_screens_game_font_becomes_the_sharp_font_at_its_size() {
+        let font7 = "textures\\fonts\\baked-in_monofonto_large.fnt";
+        // Off: the game's font as it is (the default, and the Pip-Boy's and terminals' way).
+        let off = sharpened(raster(30.0, 36.0), font7, false);
+        assert!(off.vector.is_none() && off.image.is_some());
+        // Font 7 (an 'H' of 30) at the menus' em, regular, its lines as far apart as before.
+        let on = sharpened(raster(30.0, 36.0), font7, true);
+        let v = on.vector.as_ref().expect("sharp");
+        assert_eq!((v.em, v.weight, v.caps), (ENTRY_EM, REGULAR, false));
+        assert_eq!((on.font.size, on.image.is_none()), (36.0, true));
+        // A bigger font's capitals stay as much bigger; to half units.
+        assert_eq!(sharp_size(&raster(45.0, 52.0), "x.fnt").0, 46.5);
+        // Futura Caps: bold capitals, measured as drawn.
+        let caps = sharpened(raster(40.0, 52.0), "textures\\fonts\\glow_futura_caps_large.fnt", true);
+        let v = caps.vector.as_ref().unwrap();
+        assert_eq!((v.weight, v.caps), (BOLD, true));
+        assert_eq!(caps.font.width("Level up"), caps.font.width("LEVEL UP"));
+        // A stand-in (the font not read): sized by its line, font 7's at the menus' em.
+        let stand_in = crate::interface::Face { font: crate::interface::plain_font(36.0, 17.0), image: None, vector: None };
+        assert_eq!(sharp_size(&stand_in, font7).0, ENTRY_EM);
+    }
+
+    #[test]
+    fn kept_faces_are_made_again_when_the_letters_change() {
+        let mut kept = crate::interface::Kept::<u32>::default();
+        assert!(kept.stale());
+        let mut made = 0;
+        assert_eq!(*kept.get_or_make(|| { made += 1; 7 }), 7);
+        assert_eq!(*kept.get_or_make(|| { made += 1; 8 }), 7, "kept");
+        assert!(!kept.stale() && made == 1);
+        LETTERS.fetch_add(1, Ordering::Relaxed);
+        assert!(kept.stale());
+        assert_eq!(*kept.get_or_make(|| 9), 9, "made again");
+        let mut seen = letters();
+        assert!(!crate::interface::letters_changed(&mut seen));
+        LETTERS.fetch_add(1, Ordering::Relaxed);
+        assert!(crate::interface::letters_changed(&mut seen) && !crate::interface::letters_changed(&mut seen));
+    }
+
+    #[test]
+    fn a_faded_lines_glow_fades_with_it_and_stays_dark() {
+        use crate::interface::{glow_follows_ink, GlowInk, Halo, DROP_ALPHA, GLOW_RINGS};
+        use bevy::ui::widget::TextShadow;
+        let mut app = App::new();
+        app.add_systems(Update, glow_follows_ink);
+        let ring = GLOW_RINGS[0].1;
+        let amber = Color::srgba(1.0, 0.7, 0.2, 1.0);
+        let line = app.world_mut().spawn(GlowInk(1.0)).id();
+        let halo = app.world_mut().spawn((Halo(ring), TextColor(Color::BLACK.with_alpha(ring)), TextShadow { color: Color::BLACK.with_alpha(ring), ..default() }, ChildOf(line))).id();
+        let words = app.world_mut().spawn((TextColor(amber), TextShadow { color: Color::BLACK.with_alpha(DROP_ALPHA), ..default() }, ChildOf(line))).id();
+        app.update();
+        // The words fade to half: the glow and the drop shadow with them.
+        app.world_mut().get_mut::<TextColor>(words).unwrap().0 = amber.with_alpha(0.5);
+        app.update();
+        let alpha = |e: Entity| app.world().get::<TextColor>(e).unwrap().0.alpha();
+        let shadow = |e: Entity| app.world().get::<TextShadow>(e).unwrap().color.alpha();
+        assert!((alpha(halo) - ring * 0.5).abs() < 1e-6 && (shadow(halo) - ring * 0.5).abs() < 1e-6);
+        assert!((shadow(words) - DROP_ALPHA * 0.5).abs() < 1e-6);
+        // A screen recolouring every text under its node (the enemy's red) leaves the glow black.
+        app.world_mut().get_mut::<TextColor>(halo).unwrap().0 = Color::srgba(1.0, 0.0, 0.0, 0.5);
+        app.update();
+        assert_eq!(app.world().get::<TextColor>(halo).unwrap().0, Color::BLACK.with_alpha(ring * 0.5));
+        // Dark words have no glow at all.
+        assert!(crate::interface::dark_ink(Color::BLACK) && !crate::interface::dark_ink(amber));
     }
 
     #[test]

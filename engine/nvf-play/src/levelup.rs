@@ -64,7 +64,7 @@ pub struct LevelUpMenu {
     dirty: bool,
     /// Done was pressed; the runtime closes the menu after this frame's scripts.
     answered: bool,
-    kit: Option<chargen::draw::Kit>,
+    kit: crate::interface::Kept<chargen::draw::Kit>,
 }
 
 impl LevelUpMenu {
@@ -559,7 +559,7 @@ fn draw_menu(
     let Some(view) = st.open.as_ref().and_then(|m| with_game(&mut script, &mut sim, |g| m.view(g))) else { return };
     let bc = crate::interface::bc_supported(formats.as_deref());
     let st = st.into_inner();
-    let kit = st.kit.get_or_insert_with(|| chargen::draw::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = st.kit.get_or_make(|| chargen::draw::Kit::load(data.as_deref(), &mut images, bc));
     let mut c = chargen::draw::Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     let root = Node {
         position_type: PositionType::Absolute,

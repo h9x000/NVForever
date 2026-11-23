@@ -18,7 +18,7 @@
 //!   then [observed: hud.md §14.3]), the area is hidden and its clock stands still
 //!   [design], so a message is not used up behind a menu ([`held`], issue #1239).
 
-use crate::interface::{amber, at, bc_supported, face, file_name, plain_font, set_text, u, Face, Picture, Pictures, Set};
+use crate::interface::{amber, at, bc_supported, file_name, plain_font, set_text, u, Face, Picture, Pictures, Set};
 use crate::message_menu::MessagePanel;
 use crate::script_events::Note;
 use bevy::image::CompressedImageFormatSupport;
@@ -145,7 +145,7 @@ struct Kit {
 
 impl Kit {
     fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
-        Kit { face: face(FONT, plain_font(36.0, 17.0), data, images, bc), pictures: Pictures::load(data) }
+        Kit { face: crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data, images, bc), pictures: Pictures::load(data) }
     }
 
     fn picture(&mut self, path: &str, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Option<Picture> {
@@ -246,7 +246,7 @@ fn draw(
     mut pictures: Query<(&mut ImageNode, &Part)>,
     mut texts: Query<(&mut TextColor, &Part)>,
     mut fills: Query<&mut BackgroundColor, With<Fill>>,
-    mut kit: Local<Option<Kit>>,
+    mut kit: Local<crate::interface::Kept<Kit>>,
     state: Option<Res<State<crate::PlayState>>>,
     driven: Option<Res<crate::player::ViewDriven>>,
     (kill_cam, vats): (Option<Res<crate::kill_cam::KillCam>>, Option<Res<crate::vats_mode::VatsMode>>),
@@ -269,7 +269,7 @@ fn draw(
         }
         if let Some(note) = corner.showing() {
             let bc = bc_supported(formats.as_deref());
-            let kit = kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+            let kit = kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
             info!(
                 "corner message: \"{}\" for {} s, icon {} ({} waiting)",
                 note.text.replace('\n', " / "),

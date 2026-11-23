@@ -5883,6 +5883,22 @@ order = [[
 forbid = [{ re = 'quick loot: drawn .*overlaps: ', label = "something overlaps" }]
 
 [[scenario]]
+name = "sharp-font-screens"
+source = "[design] owner 2026-11-23: with Menu Font Sharp the HUD, the menus and the minigames are drawn in the sharp font too (vector_font::screen_face), the Pip-Boy and the terminals in the game's own; Original draws them in the game's font again"
+note = "GSHouseInterior03 beside the refrigerator (its prompt, the HUD); Menu Font Sharp on the settings page at 10.5 s, a shot of the HUD at 13.5 s (sharp_font_hud.png); Original again at 15.5 s, a shot at 18 s (sharp_font_original.png)"
+areas = ["hud", "menus"]
+paths = ["engine/nvf-play/src/vector_font.rs", "engine/nvf-play/src/interface.rs", "engine/nvf-play/src/hud.rs", "engine/nvf-play/src/reticle.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_NEAR = "00105658", NVF_PLAY_TEST_PAUSE = "10:12,15:16.5", NVF_PLAY_TEST_SETTINGS = "10.5:menu-font=Sharp,15.5:menu-font=Original", NVF_PLAY_TEST_SHOTS = "13.5:sharp_font_hud.png,18:sharp_font_original.png" }
+args = ["--cell", "GSHouseInterior03", "--play", "--no-voice", "--no-messages", "--size", "1280x720"]
+run_seconds = 20
+order = [[
+  "settings: menu-font Sharp",
+  { re = 'interface: the HUD, menus and minigames in the sharp \(Roboto Condensed\) font', label = "the screens follow the row to Sharp" },
+  "settings: menu-font Original",
+  { re = "interface: the HUD, menus and minigames in the game's own font", label = "and back to the game's font" },
+]]
+
+[[scenario]]
 name = "quick-loot-pickpocket"
 source = "[design] #2933, docs/design/quick-loot.md: sneaking, a person's pocket shows in the list with each item's chance to steal it, no Take All; E steals the selected stack, rolling its chance (unseen or caught, as the pickpocket menu)"
 note = "pickpocket-steal's set-up (Chet held, given two Stimpaks, the player sneaking in front of him); Quick Loot on at 5.5 s on the settings page and its scale set to 80% at 6 s, in the game's font; E at 10 s; the rolls seeded (NVF_PLAY_TEST_PICKPOCKET_SEED)"

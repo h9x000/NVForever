@@ -20,7 +20,7 @@
 //!   `xp: level cap <max> (<k> story add-ons)`.
 
 use crate::hud::HudView;
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_text, texture, u, Face, Set};
+use crate::interface::{amber, at, bc_supported, letters_changed, plain_font, screen_face, set_text, texture, u, Face, Set};
 use crate::script::{with_world, ScriptState};
 use crate::sfx::{PlaySound, Sfx};
 use crate::sim::SimState;
@@ -486,6 +486,15 @@ struct Kit {
     amount: Face,
 }
 
+/// The level's, the label's and the amount's faces.
+fn faces(d: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> [Face; 3] {
+    [
+        screen_face(LEVEL_FONT, plain_font(36.0, 15.0), d, images, bc),
+        screen_face(LABEL_FONT, plain_font(36.0, 15.0), d, images, bc),
+        screen_face(AMOUNT_FONT, plain_font(52.0, 22.0), d, images, bc),
+    ]
+}
+
 /// Where the amount, or "LEVEL UP" in its place, ends and the line it stands on.
 fn third_line(level_up: bool) -> (f32, f32) {
     if level_up {
@@ -512,10 +521,19 @@ fn draw(
     mut pictures: Query<&mut ImageNode, With<Faded>>,
     mut words: Query<&mut TextColor, With<Faded>>,
     mut fills: Query<&mut BackgroundColor, With<FadedFill>>,
+    mut seen: Local<u32>,
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
     let on = view.shown && meter.show.is_some();
+    if letters_changed(&mut seen) {
+        // New letters (`crate::vector_font::screen_face`): the faces made again, the words
+        // drawn again.
+        if let Some(k) = kit.as_mut() {
+            [k.level, k.label, k.amount] = faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+        }
+        *shown_texts = None;
+    }
     if kit.is_none() {
         if !on {
             return;
@@ -524,12 +542,13 @@ fn draw(
         let d = data.as_deref();
         let mut read = |path: &str| d.and_then(|d| texture(path, d, &mut images, bc)).map(|t| t.0);
         let (bracket, pointer) = (read(BRACKET_PATH), read(POINTER_PATH));
+        let [level, label, amount] = faces(d, &mut images, bc);
         let loaded = Kit {
             bracket,
             pointer,
-            level: face(LEVEL_FONT, plain_font(36.0, 15.0), d, &mut images, bc),
-            label: face(LABEL_FONT, plain_font(36.0, 15.0), d, &mut images, bc),
-            amount: face(AMOUNT_FONT, plain_font(52.0, 22.0), d, &mut images, bc),
+            level,
+            label,
+            amount,
         };
         spawn(&mut commands, &loaded);
         *kit = Some(loaded);

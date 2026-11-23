@@ -19,9 +19,7 @@
 //! UI interaction state (the panel is rebuilt while a slider is dragged).
 
 use super::model::{Model, RowView, ACTIONS};
-use crate::interface::{
-    amber, at, face, line_anchor, needs_cjk_line, plain_font, set_line, set_scaled_bitmap_line, u, Face, Picture, Pictures,
-};
+use crate::interface::{amber, at, line_anchor, needs_cjk_line, plain_font, set_line, set_scaled_bitmap_line, u, Face, Picture, Pictures};
 use bevy::prelude::*;
 use fnv_font::Line;
 use nvf_assets::GameData;
@@ -175,7 +173,7 @@ pub struct Kit {
 
 impl Kit {
     pub fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
-        let (head, body) = (face(HEAD_FONT, plain_font(34.0, 14.0), data, images, bc), face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc));
+        let (head, body) = (crate::interface::screen_face(HEAD_FONT, plain_font(34.0, 14.0), data, images, bc), crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc));
         let mut pictures = Pictures::load(data);
         let mut piece = |path: &str| pictures.picture(path, data, images, bc);
         let pieces = Pieces {
@@ -219,7 +217,9 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
     // the menus' body text, chargen::draw::BODY_BASE for 31].
     let base = top + face.font.size * 0.75 * scale;
     let Some((image, size)) = &face.image else {
-        if needs_cjk_line(face, &line) {
+        // The sharp font (`crate::vector_font::screen_face`) and CJK letters: the line drawn as
+        // the other screens draw it, scaled about its start on the baseline.
+        if face.vector.is_some() || needs_cjk_line(face, &line) {
             let transform = UiTransform {
                 scale: Vec2::splat(scale),
                 ..default()

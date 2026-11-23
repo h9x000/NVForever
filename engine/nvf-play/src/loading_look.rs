@@ -15,7 +15,7 @@
 //!   the clock behind the screen is stopped, so they run on real time.
 
 use crate::hud_breath::{place_in, quad, shape_texture, spawn_pieces, to_root, MeterModel, Piece};
-use crate::interface::{amber, bc_supported, face, file_name, plain_font, set_line, u, Face, Pictures, FONT_FILES};
+use crate::interface::{amber, bc_supported, file_name, plain_font, set_line, u, Face, Pictures, FONT_FILES};
 use crate::tiles::draw::{line_pitch, text_lines};
 use crate::tiles::layout::Alignment;
 use bevy::image::CompressedImageFormatSupport;
@@ -132,6 +132,8 @@ pub struct Look {
     emblem: Option<Option<Arc<Emblem>>>,
     pictures: Pictures,
     faces: HashMap<u8, Arc<Face>>,
+    /// The letters the faces were made with (`crate::vector_font::letters`).
+    letters: u32,
 }
 
 impl Look {
@@ -174,6 +176,10 @@ pub fn fit_tip(
     let bc = bc_supported(formats.as_deref());
     let data = data.as_deref();
     let look = &mut *look;
+    if look.letters != crate::vector_font::letters() {
+        look.faces.clear();
+        look.letters = crate::vector_font::letters();
+    }
     for (entity, mut tip) in &mut tips {
         if tip.drawn_for == Some(size) {
             continue;
@@ -182,7 +188,7 @@ pub fn fit_tip(
         let number = font_number(&tip.style);
         let font = look.faces.entry(number).or_insert_with(|| {
             // The stand-in's size and advance are about those of the game's font 6.
-            Arc::new(face(FONT_FILES[usize::from(number) - 1], plain_font(34.0, 17.0), data, &mut images, bc))
+            Arc::new(crate::interface::screen_face(FONT_FILES[usize::from(number) - 1], plain_font(34.0, 17.0), data, &mut images, bc))
         });
         let font = font.clone();
         let image = data.and_then(|d| look.pictures.file(BAND_TEXTURE, d, &mut images, bc)).map(|(image, _)| image);

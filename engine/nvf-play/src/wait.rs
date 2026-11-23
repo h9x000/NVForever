@@ -971,7 +971,7 @@ fn shade(part: f32) -> Color {
 
 /// The menu's fonts, read when it is first drawn.
 #[derive(Resource)]
-struct WaitFaces(Vec<(usize, crate::interface::Face)>);
+struct WaitFaces(Vec<(usize, crate::interface::Face)>, u32);
 
 impl WaitFaces {
     fn get(&self, n: usize) -> Option<&crate::interface::Face> {
@@ -1148,7 +1148,14 @@ fn set_glyphs(
     if texts.is_empty() {
         return;
     }
-    let Some(faces) = faces else {
+    // Made again when the letters change (`crate::vector_font::screen_face`), the texts with them.
+    let stale = faces.as_ref().is_some_and(|f| f.1 != crate::vector_font::letters());
+    if stale {
+        for (_, mut g, _) in &mut texts {
+            g.drawn = None;
+        }
+    }
+    let Some(faces) = faces.filter(|_| !stale) else {
         let bc = crate::interface::bc_supported(formats.as_deref());
         let mut loaded: Vec<(usize, crate::interface::Face)> = Vec::new();
         for n in [TITLE_FONT, HOURS_FONT, TIME_FONT, BUTTON_FONT] {
@@ -1156,9 +1163,9 @@ fn set_glyphs(
                 continue;
             }
             let path = crate::pipboy::frame::FONTS[n - 1];
-            loaded.push((n, crate::interface::face(path, crate::interface::plain_font(32.0, 15.0), data.as_deref(), &mut images, bc)));
+            loaded.push((n, crate::interface::screen_face(path, crate::interface::plain_font(32.0, 15.0), data.as_deref(), &mut images, bc)));
         }
-        commands.insert_resource(WaitFaces(loaded));
+        commands.insert_resource(WaitFaces(loaded, crate::vector_font::letters()));
         return;
     };
     for (e, mut g, node) in &mut texts {

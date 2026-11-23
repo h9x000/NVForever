@@ -46,7 +46,7 @@
 //! prompt), `shot` (a screenshot `recipe_menu.png` in the working folder). Open the menu through a script, e.g. the console aid's `player.craft
 //! WorkbenchRecipes`.
 
-use crate::interface::{amber, bc_supported, face, plain_font, set_line, u, Face};
+use crate::interface::{amber, bc_supported, plain_font, set_line, u, Face};
 use crate::menu::look::ROWS_BAR_W;
 use crate::menu::model::keep_in_view;
 use crate::pause::AidTime;
@@ -668,6 +668,8 @@ struct RecipeLook {
     value: Face,
     row: Face,
     arrows: Option<(Handle<Image>, Handle<Image>)>,
+    /// The letters it was made with (`crate::vector_font::letters`).
+    letters: u32,
 }
 
 fn text(p: &mut ChildSpawnerCommands, f: &Face, s: &str, x: f32, top: f32, c: Color) {
@@ -853,17 +855,18 @@ fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
     play: Option<Res<crate::PlayWorld>>,
-    (mut forms, mut kit): (Local<Option<EffectForms>>, Local<Option<crate::menu::look::Kit>>),
+    (mut forms, mut kit): (Local<Option<EffectForms>>, Local<crate::interface::Kept<crate::menu::look::Kit>>),
     // The tile writer's decision, and the prompt the sheet was last spawned with.
     (tiles, mut was_tiled): (Option<Res<crate::tiles::recipe_menu::RecipeTiles>>, Local<WasTiled>),
 ) {
     let Some(open) = menu.0.as_mut() else { return };
-    let Some(look) = look else {
+    // Made again when the letters change (`crate::vector_font::screen_face`).
+    let Some(look) = look.filter(|l| l.letters == crate::vector_font::letters()) else {
         let bc = bc_supported(formats.as_deref());
-        let font = |n: usize, images: &mut Assets<Image>| face(crate::pipboy::frame::FONTS[n - 1], plain_font(30.0, 14.0), data.as_deref(), images, bc);
+        let font = |n: usize, images: &mut Assets<Image>| crate::interface::screen_face(crate::pipboy::frame::FONTS[n - 1], plain_font(30.0, 14.0), data.as_deref(), images, bc);
         let pic = |p: &str, images: &mut Assets<Image>| data.as_deref().and_then(|d| crate::interface::texture(p, d, images, bc)).map(|x| x.0);
         let arrows = pic("textures\\interface\\main\\main_arrow_left.dds", &mut images).zip(pic("textures\\interface\\main\\main_arrow_right.dds", &mut images));
-        commands.insert_resource(RecipeLook { title: font(TITLE_FONT, &mut images), value: font(VALUE_FONT, &mut images), row: font(ROW_FONT, &mut images), arrows });
+        commands.insert_resource(RecipeLook { title: font(TITLE_FONT, &mut images), value: font(VALUE_FONT, &mut images), row: font(ROW_FONT, &mut images), arrows, letters: crate::vector_font::letters() });
         return;
     };
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else { return };
@@ -883,7 +886,7 @@ fn draw(
             commands.entity(e).despawn();
         }
         let bc = bc_supported(formats.as_deref());
-        let kit = kit.get_or_insert_with(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
+        let kit = kit.get_or_make(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
         let words = crate::menu::look::quantity_words(Some(&rt.game));
         let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
         commands.spawn((RecipeRoot, full, GlobalZIndex(crate::interface::TOP_MENU_Z))).with_children(|root| {
@@ -909,7 +912,7 @@ fn draw(
         commands.entity(e).despawn();
     }
     let bc = bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = kit.get_or_make(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
     let words = crate::menu::look::quantity_words(Some(&rt.game));
     spawn(&mut commands, &look, &v, &words, kit, data.as_deref(), &mut images, bc, &glyphs);
     if v.effects.is_some() && open.drawn.as_ref().is_none_or(|d| d.selected != v.selected) {

@@ -36,7 +36,7 @@
 //! stay, [`draw`] spawns only a sheet that keeps the pointer from what is under the menu, and
 //! what the tiles are asked comes in as [`RepairServicesInput`].
 
-use crate::interface::{amber, bc_supported, face, plain_font, set_line, u, Face, Pictures};
+use crate::interface::{amber, bc_supported, plain_font, set_line, u, Face, Pictures};
 use crate::pause::AidTime;
 use crate::script::ScriptState;
 use crate::sim::SimState;
@@ -516,6 +516,8 @@ struct RepairLook {
     gain: Face,
     row: Face,
     pictures: Pictures,
+    /// The letters it was made with (`crate::vector_font::letters`).
+    letters: u32,
 }
 
 /// A line of text whose top is at `top` (as the menu files place texts).
@@ -744,9 +746,10 @@ fn draw(
         return;
     }
     let bc = bc_supported(formats.as_deref());
-    let Some(mut look) = look else {
-        let font = |n: usize, images: &mut Assets<Image>| face(crate::pipboy::frame::FONTS[n - 1], plain_font(30.0, 14.0), data.as_deref(), images, bc);
-        commands.insert_resource(RepairLook { title: font(TITLE_FONT, &mut images), gain: font(GAIN_FONT, &mut images), row: font(ROW_FONT, &mut images), pictures: Pictures::load(data.as_deref()) });
+    // Made again when the letters change (`crate::vector_font::screen_face`).
+    let Some(mut look) = look.filter(|l| l.letters == crate::vector_font::letters()) else {
+        let font = |n: usize, images: &mut Assets<Image>| crate::interface::screen_face(crate::pipboy::frame::FONTS[n - 1], plain_font(30.0, 14.0), data.as_deref(), images, bc);
+        commands.insert_resource(RepairLook { title: font(TITLE_FONT, &mut images), gain: font(GAIN_FONT, &mut images), row: font(ROW_FONT, &mut images), pictures: Pictures::load(data.as_deref()), letters: crate::vector_font::letters() });
         return;
     };
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else { return };

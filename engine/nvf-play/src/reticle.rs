@@ -34,7 +34,7 @@
 use crate::activate::outcome::{self, Action};
 use crate::activate::{Target, Targeted};
 use crate::control::ControlLocks;
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_text, Face, Picture, Pictures, Set};
+use crate::interface::{amber, at, bc_supported, plain_font, set_text, Face, Picture, Pictures, Set};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, PromptTexts as Texts};
 use crate::{PlaySet, PlayState};
@@ -409,7 +409,7 @@ impl Kit {
         let bars: Vec<Picture> = BARS.iter().filter_map(|(path, _)| picture(path)).collect();
         let bars = bars.try_into().ok();
         let glyphs = crate::pad::Glyph::FACES.iter().map(|g| images.add(g.image(GLYPH_PIXELS))).collect();
-        Kit { face: face(FONT, plain_font(36.0, 17.0), data, images, bc), plain, filled, divider, bars, glyphs }
+        Kit { face: crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data, images, bc), plain, filled, divider, bars, glyphs }
     }
 }
 
@@ -557,7 +557,7 @@ fn draw(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     mut kit: Local<Option<Kit>>,
-    (mut shown, mut sweep): (Local<Option<Prompt>>, Option<ResMut<crate::test_aid::activation_sweep::ActivationSweep>>),
+    (mut shown, mut sweep, mut seen): (Local<Option<Prompt>>, Option<ResMut<crate::test_aid::activation_sweep::ActivationSweep>>, Local<u32>),
     mut root: Query<&mut Visibility, With<Root>>,
     (mut crosses, mut bars): (
         Query<(&Cross, &mut Visibility, &mut Node, Option<&mut ImageNode>), Without<Root>>,
@@ -593,6 +593,14 @@ fn draw(
             info!("reticle: no prompt on \"{name}\": an idle holds the camera");
         }
         logged.3 = kept;
+    }
+    if crate::interface::letters_changed(&mut seen) {
+        // New letters (`crate::vector_font::screen_face`): the prompt's face made again and
+        // the prompt drawn again.
+        if let Some(k) = kit.as_mut() {
+            k.face = crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+        }
+        *shown = None;
     }
     let Some(kit) = kit.as_ref() else {
         if playing {

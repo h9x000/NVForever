@@ -20,7 +20,7 @@
 
 use crate::combat::PlayerLimbs;
 use crate::hud::{HudSet, HudView, FONT, HP_PANEL, MARGIN_X, MARGIN_Y};
-use crate::interface::{amber, bc_supported, face, plain_font, set_text, u, Face, Set};
+use crate::interface::{amber, bc_supported, letters_changed, plain_font, screen_face, set_text, u, Face, Set};
 use crate::reticle::crime_colour;
 use crate::script::{with_world, ScriptState};
 use crate::sim::SimState;
@@ -280,15 +280,24 @@ fn draw(
     mut root: Query<&mut Visibility, (With<WordsRoot>, Without<Word>)>,
     mut word_nodes: Query<(&Word, &mut Visibility), Without<WordsRoot>>,
     mut letters: Query<(&Letter, Option<&mut ImageNode>, Option<&mut TextColor>)>,
+    (roots, mut seen): (Query<Entity, With<WordsRoot>>, Local<u32>),
 ) {
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
+    if letters_changed(&mut seen) && *spawned {
+        // New letters (`crate::vector_font::screen_face`): the words set out again.
+        for e in &roots {
+            commands.entity(e).despawn();
+        }
+        *spawned = false;
+        return;
+    }
     if !*spawned {
         // The first frame the HUD is wanted: set the words out.
         if !view.shown {
             return;
         }
-        let face_: Face = face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+        let face_: Face = screen_face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref()));
         let font = &face_.font;
         let texts = texts(&sim);
         let (left, bottom) = piece_place();

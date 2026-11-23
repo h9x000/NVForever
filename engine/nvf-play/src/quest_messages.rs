@@ -13,7 +13,7 @@
 //!   `PlayState::Playing`) the area is hidden and its clock stands still, as the corner
 //!   messages' (`crate::corner_messages::held`).
 
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_text, Face, Pictures, Set};
+use crate::interface::{amber, at, bc_supported, plain_font, set_text, Face, Pictures, Set};
 use crate::message_menu::MessagePanel;
 use crate::script_events::{Objective, QuestNotice};
 use crate::sfx::{PlaySound, Sfx};
@@ -325,8 +325,8 @@ struct Kit {
 impl Kit {
     fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
         Kit {
-            label: face(LABEL_FONT, plain_font(36.0, 14.0), data, images, bc),
-            title: face(TITLE_FONT, plain_font(52.0, 22.0), data, images, bc),
+            label: crate::interface::screen_face(LABEL_FONT, plain_font(36.0, 14.0), data, images, bc),
+            title: crate::interface::screen_face(TITLE_FONT, plain_font(52.0, 22.0), data, images, bc),
             pictures: Pictures::load(data),
         }
     }
@@ -410,7 +410,7 @@ fn draw(
     mut pictures: Query<(&mut ImageNode, &Part)>,
     mut texts: Query<(&mut TextColor, &Part)>,
     mut fills: Query<(&mut BackgroundColor, &Fill)>,
-    mut kit: Local<Option<Kit>>,
+    mut kit: Local<crate::interface::Kept<Kit>>,
     (state, script, driven, kill_cam, vats, real, tweaks, pipboy, terminal): (
         Option<Res<State<crate::PlayState>>>,
         Option<Res<crate::script::ScriptState>>,
@@ -462,7 +462,7 @@ fn draw(
         }
         if let Some(n) = quests.showing() {
             let bc = bc_supported(formats.as_deref());
-            let kit = kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+            let kit = kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
             info!("quest message on screen: {} ({} waiting)", describe(n), quests.waiting());
             spawn_area(&mut commands, n, kit, data.as_deref(), &mut images, bc);
             // Script override (`SetUIUpdateSound`), else the player's tweak for a discovered

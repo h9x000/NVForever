@@ -27,7 +27,7 @@ use crate::reticle::crime_colour;
 use crate::script::{with_world, ScriptState};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, EnemyPiece};
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_line, texture, u, Face, Picture, Pictures};
+use crate::interface::{amber, at, bc_supported, letters_changed, plain_font, screen_face, set_line, texture, u, Face, Kept, Picture, Pictures};
 use std::ops::DerefMut;
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
@@ -663,7 +663,7 @@ impl Plugin for HudPlugin {
         app.init_resource::<HudView>()
             .add_plugins((crate::hud_target::HudTargetPlugin, crate::hud_limbs::HudLimbsPlugin, crate::hud_needs::HudNeedsPlugin, crate::hud_breath::HudBreathPlugin, crate::grenade_indicator::GrenadeIndicatorPlugin, crate::heartbeat::HeartbeatPlugin, crate::marker_added::MarkerAddedPlugin))
             .init_resource::<HudHidden>()
-            .add_systems(Update, (gather, draw, pips, texts, enemy_colours, place_name, armor_row).chain().in_set(HudSet).in_set(PlaySet::Ui))
+            .add_systems(Update, (gather, draw, relabel, pips, texts, enemy_colours, place_name, armor_row).chain().in_set(HudSet).in_set(PlaySet::Ui))
             .add_systems(PostUpdate, hide_parts.before(crate::tiles::vanilla::hide_hand_built).before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }
@@ -705,7 +705,7 @@ fn load_art(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Ar
     let hud = |name: &str| format!("{HUD_TEXTURES}{name}.dds");
     let enemy_bracket = read(&hud("glow_enemy_health_seperator"));
     let arrows = read(CND_ARROWS);
-    Art { font: face(FONT, plain_font(36.0, 15.0), data, images, bc), left_bracket, right_bracket, enemy_bracket, strip, strip_texels, arrows }
+    Art { font: screen_face(FONT, plain_font(36.0, 15.0), data, images, bc), left_bracket, right_bracket, enemy_bracket, strip, strip_texels, arrows }
 }
 
 /// A picture over a node's box: its atlas piece's part of the texture, stretched.
@@ -764,7 +764,7 @@ fn place_name(
     (tweaks, markers, location, player, control): (Option<Res<crate::tweaks::TweakSettings>>, Option<Res<crate::pipboy::data::DataState>>, Option<Res<crate::Location>>, Option<Res<Player>>, Option<Res<crate::control::PlayerControl>>),
     (sim, script): (Res<SimState>, Option<Res<crate::script::ScriptState>>),
     (data, mut images, formats): (Option<Res<GameData>>, ResMut<Assets<Image>>, Option<Res<CompressedImageFormatSupport>>),
-    mut face_: Local<Option<Face>>,
+    mut face_: Local<Kept<Face>>,
     (mut shown, mut region): (Local<(Option<String>, Option<String>)>, Local<(Option<fnv_sim::FormId>, Option<String>)>),
     text: Query<Entity, With<PlaceNameText>>,
     mut font_revision: Local<u32>,
@@ -795,7 +795,7 @@ fn place_name(
     let now = (region_words, words);
     let revision = crate::cjk_font::revision();
     let font_changed = std::mem::replace(&mut *font_revision, revision) != revision;
-    if *shown == now && !font_changed {
+    if *shown == now && !font_changed && !face_.stale() {
         return;
     }
     if now.0 != shown.0 {
@@ -803,7 +803,7 @@ fn place_name(
     }
     *shown = now.clone();
     let (region_words, words) = now;
-    let face_ = face_.get_or_insert_with(|| face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+    let face_ = face_.get_or_make(|| screen_face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
     commands.entity(e).despawn_related::<Children>().with_children(|p| {
         let marker = words.as_deref().and_then(|w| face_.font.lines(w, None).into_iter().next());
         // The region's line over the marker's when both show [design].
@@ -971,6 +971,38 @@ struct ConditionRow;
 #[derive(Component)]
 struct AmmoText;
 
+/// A fixed label of the HUD ("HP", "AP"): where it is drawn, so [`relabel`] can draw it again.
+#[derive(Component)]
+struct HudLabel {
+    text: &'static str,
+    x: f32,
+    base: f32,
+}
+
+/// The HUD's fixed labels drawn again in the new letters when they change
+/// (`crate::vector_font::screen_face`).
+#[allow(clippy::type_complexity)]
+fn relabel(
+    mut commands: Commands,
+    labels: Query<(Entity, &HudLabel)>,
+    (data, mut images, formats): (Option<Res<GameData>>, ResMut<Assets<Image>>, Option<Res<CompressedImageFormatSupport>>),
+    mut face_: Local<Kept<Face>>,
+    mut seen: Local<u32>,
+) {
+    if !letters_changed(&mut seen) || labels.is_empty() {
+        return;
+    }
+    let _hud = crate::interface::hud_units();
+    let face_ = face_.get_or_make(|| screen_face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+    for (e, l) in &labels {
+        commands.entity(e).despawn_related::<Children>().with_children(|p| {
+            if let Some(line) = face_.font.lines(l.text, None).into_iter().next() {
+                set_line(p, face_, &line, l.x, l.base, amber(255.0));
+            }
+        });
+    }
+}
+
 /// The node that holds the enemy name's letters.
 #[derive(Component)]
 struct EnemyName;
@@ -1010,8 +1042,9 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
     let places = Places::new(&art.font.font);
     let color = amber(255.0);
     let font = &art.font.font;
-    let label = |p: &mut ChildSpawnerCommands, text: &str, x: f32, base: f32| {
-        set_line(p, &art.font, &font.lines(text, None).remove(0), x, base, color);
+    let label = |p: &mut ChildSpawnerCommands, text: &'static str, x: f32, base: f32| {
+        // In a holder of its own, drawn again when the letters change ([`relabel`]).
+        p.spawn((HudLabel { text, x, base }, at(0.0, 0.0, 0.0, 0.0))).with_children(|p| set_line(p, &art.font, &font.lines(text, None).remove(0), x, base, color));
     };
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     commands.spawn((HudRoot, screen.clone(), Visibility::Hidden, Pickable::IGNORE)).with_children(|root| {
@@ -1375,7 +1408,7 @@ fn texts(
     data: Option<Res<GameData>>,
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
-    mut face_: Local<Option<Face>>,
+    mut face_: Local<Kept<Face>>,
     mut shown: Local<(Option<String>, Option<String>, Option<(Sneak, Option<String>)>, Option<String>)>,
     ammo: Query<Entity, With<AmmoText>>,
     name: Query<Entity, With<EnemyName>>,
@@ -1388,7 +1421,11 @@ fn texts(
     if (!view.shown && !view.enemy_shown) || ammo.is_empty() {
         return;
     }
-    let face_ = face_.get_or_insert_with(|| face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+    if face_.stale() {
+        // New letters (`crate::vector_font::letters`): every text drawn again.
+        *shown = default();
+    }
+    let face_ = face_.get_or_make(|| screen_face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
     let font = &face_.font;
     let text = ammo_text(view.weapon.ammo);
     let abbrev = view.weapon.abbrev.as_deref().unwrap_or("");

@@ -119,7 +119,7 @@ pub struct ChargenMenus {
     navigated: u32,
     /// [`draw_menus`] last left the menu to its tiles.
     tiles_draw: bool,
-    kit: Option<draw::Kit>,
+    kit: crate::interface::Kept<draw::Kit>,
 }
 
 /// [design] The open trait or tag-skill list, as the tile drawing reads it. The sheet
@@ -746,7 +746,7 @@ fn draw_menus(
     };
     let bc = crate::interface::bc_supported(formats.as_deref());
     let st = st.into_inner();
-    let kit = st.kit.get_or_insert_with(|| draw::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = st.kit.get_or_make(|| draw::Kit::load(data.as_deref(), &mut images, bc));
     let mut c = draw::Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     let root = Node {
         position_type: PositionType::Absolute,

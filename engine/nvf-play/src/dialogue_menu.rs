@@ -23,7 +23,7 @@
 //!   is on (`crate::dialogue` reads the clicks).
 
 use crate::dialogue::{ChoiceButton, ListId};
-use crate::interface::{amber, at, bc_supported, face, plain_font, set_line, Face, Picture, Pictures};
+use crate::interface::{amber, at, bc_supported, plain_font, set_line, Face, Picture, Pictures};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
 use crate::ui_pointer::Button;
@@ -452,8 +452,8 @@ fn load_kit(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Ki
     let arrow_down = picture("interface\\shared\\scrollbar\\arrow_down.dds");
     let marker = picture("interface\\shared\\scrollbar\\vert_marker.dds");
     Kit {
-        body: face(BODY_FONT, plain_font(34.0, 17.0), data, images, bc),
-        name: face(NAME_FONT, plain_font(36.0, 16.0), data, images, bc),
+        body: crate::interface::screen_face(BODY_FONT, plain_font(34.0, 17.0), data, images, bc),
+        name: crate::interface::screen_face(NAME_FONT, plain_font(36.0, 16.0), data, images, bc),
         band,
         fade_down,
         fade_up,
@@ -608,7 +608,7 @@ fn draw(
     formats: Option<Res<CompressedImageFormatSupport>>,
     roots: Query<Entity, With<MenuRoot>>,
     mut frames: Query<(&Frame, &mut Visibility)>,
-    mut kit: Local<Option<Kit>>,
+    mut kit: Local<crate::interface::Kept<Kit>>,
     mut shown: Local<Option<MenuKey>>,
     creator: Option<Res<crate::creator::CreatorMenu>>,
     tiles: Option<Res<crate::tiles::dialog_menu::DialogTiles>>,
@@ -626,7 +626,7 @@ fn draw(
     }
     let width = windows.single().map_or(960.0 * 16.0 / 9.0, |w| 960.0 * w.width() / w.height().max(1.0));
     let selected = menu.selected;
-    let kit = kit.get_or_insert_with(|| load_kit(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+    let kit = kit.get_or_make(|| load_kit(data.as_deref(), &mut images, bc_supported(formats.as_deref())));
     // Where the list starts follows the selection: the menu is rebuilt when it scrolls.
     let first = match &menu.view {
         Some(v) if !v.choices.is_empty() => window(menu.first, selected, &choice_heights(&choice_lines(v, &kit.body.font))).0,

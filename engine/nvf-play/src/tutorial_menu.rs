@@ -268,7 +268,7 @@ pub struct TutorialView {
     pub hover: Option<TmButton>,
     /// How far the shown page can scroll (set when drawn).
     max_scroll: f32,
-    kit: Option<Kit>,
+    kit: crate::interface::Kept<Kit>,
 }
 
 /// What the menu is asked to do, by a key, a click or a tile.
@@ -496,7 +496,7 @@ fn draw(
     }
     let bc = crate::interface::bc_supported(formats.as_deref());
     let view = view.into_inner();
-    let kit = view.kit.get_or_insert_with(|| Kit::load(data.as_deref(), &mut images, bc));
+    let kit = view.kit.get_or_make(|| Kit::load(data.as_deref(), &mut images, bc));
     let mut c = Ctx { kit, data: data.as_deref(), images: &mut images, bc, glyphs: &glyphs };
     let (w, h) = (screen.x * SCALE, screen.y * SCALE);
     let widths = [0, 1, 2].map(|k| c.width(Which::Body, &words.buttons[k]));

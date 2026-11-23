@@ -37,7 +37,7 @@
 //!   each other stay in the log only [owner's playtest list 5, item 74:
 //!   Joe Cobb's line to Trudy over the player's conversation with her].
 
-use crate::interface::{amber, bc_supported, face, plain_font, set_line, u, Face};
+use crate::interface::{amber, bc_supported, plain_font, set_line, u, Face};
 use crate::message_menu::{MessagePanel, PanelView};
 use crate::script::{ScriptState, MENU_MESSAGE};
 use crate::script_events::BoxMessage;
@@ -361,7 +361,7 @@ fn draw(
     mut commands: Commands,
     areas: Query<Entity, With<SubtitleArea>>,
     player: Option<Res<crate::player::Player>>,
-    (data, mut images, formats, mut font): (Option<Res<GameData>>, ResMut<Assets<Image>>, Option<Res<CompressedImageFormatSupport>>, Local<Option<Face>>),
+    (data, mut images, formats, mut font): (Option<Res<GameData>>, ResMut<Assets<Image>>, Option<Res<CompressedImageFormatSupport>>, Local<crate::interface::Kept<Face>>),
     (creator, creator_menu): (Option<Res<crate::creator::CreatorData>>, Option<Res<crate::creator::CreatorMenu>>),
 ) {
     let (p, front, mut subs) = view(&hud, &script, &sim, player.as_deref(), creator.is_some());
@@ -379,14 +379,15 @@ fn draw(
         panel.show(p, showing);
     }
     let revision = crate::cjk_font::revision();
-    let font_changed = std::mem::replace(&mut *font_revision, revision) != revision;
+    // A CJK letter's picture made, or new letters (`crate::vector_font::screen_face`).
+    let font_changed = (std::mem::replace(&mut *font_revision, revision) != revision) | font.stale();
     if subs != *shown || font_changed {
         if let Some(line) = subs.log_change(&shown) {
             info!("{line}");
         }
         if subs.on_screen != shown.on_screen || font_changed {
             let _hud = crate::interface::hud_units();
-            let face = font.get_or_insert_with(|| face(SUBTITLE_FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
+            let face = font.get_or_make(|| crate::interface::screen_face(SUBTITLE_FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let lines = subtitle_layout(&subs.on_screen, &face.font);
             for area in &areas {
                 commands.entity(area).despawn_related::<Children>().with_children(|a| {

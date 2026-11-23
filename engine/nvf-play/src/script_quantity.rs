@@ -131,7 +131,7 @@ fn draw(
     mut images: ResMut<Assets<Image>>,
     formats: Option<Res<CompressedImageFormatSupport>>,
     glyphs: Res<crate::pad::PadGlyphs>,
-    mut kit: Local<Option<crate::menu::look::Kit>>,
+    mut kit: Local<crate::interface::Kept<crate::menu::look::Kit>>,
 ) {
     if st.drawn == st.open && (st.open.is_none() || !roots.is_empty()) {
         return;
@@ -142,7 +142,7 @@ fn draw(
     st.drawn = st.open;
     let Some((amount, most)) = st.open else { return };
     let bc = bc_supported(formats.as_deref());
-    let kit = kit.get_or_insert_with(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = kit.get_or_make(|| crate::menu::look::Kit::load(data.as_deref(), &mut images, bc));
     let words = crate::menu::look::quantity_words(script.as_deref().and_then(|s| s.rt.as_ref()).map(|rt| &rt.game));
     let q = Quantity { cmd: Command::One, side: Side::Player, row: 0, max: most, amount };
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..default() };

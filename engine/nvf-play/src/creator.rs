@@ -121,7 +121,7 @@ pub struct CreatorMenu {
     /// The camera being dragged, and with which button.
     camera_drag: Option<CameraDrag>,
     camera_button: Option<MouseButton>,
-    kit: Option<view::Kit>,
+    kit: crate::interface::Kept<view::Kit>,
     /// The view's width the panel was last drawn for: it stands at the view's right.
     drawn_w: f32,
     /// The look last written into the game.
@@ -824,7 +824,7 @@ fn draw(
         return;
     };
     let bc = crate::interface::bc_supported(formats.as_deref());
-    let kit = st.kit.get_or_insert_with(|| view::Kit::load(data.as_deref(), &mut images, bc));
+    let kit = st.kit.get_or_make(|| view::Kit::load(data.as_deref(), &mut images, bc));
     let root = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     let mut hits = Vec::new();
     // At the UI scale the menu keeps to the view's middle (#1631).

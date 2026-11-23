@@ -13,7 +13,7 @@ use super::barter::{self, Flow};
 use crate::pipboy::items::{tiles_in, Info};
 use super::model::{Category, Command, MenuModel, Mode, Quantity, Row, Side};
 use super::{AmountMeter, CategoryTitle, CmdButton, RowButton};
-use crate::interface::{amber, at, face, plain_font, set_line, texture, Face, Picture, Pictures};
+use crate::interface::{amber, at, plain_font, set_line, texture, Face, Picture, Pictures};
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use bevy::prelude::*;
 use crate::ui_pointer::{Button, PointerState};
@@ -138,8 +138,8 @@ pub struct Kit {
 impl Kit {
     pub fn load(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
         Kit {
-            body: face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
-            title: face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
+            body: crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
+            title: crate::interface::screen_face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
             pictures: Pictures::load(data),
             tick: data.and_then(|d| texture(TICK_TEXTURE, d, images, bc)).map(|t| t.0),
         }
