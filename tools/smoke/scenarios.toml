@@ -29868,6 +29868,7 @@ expect = [
   { re = 'frame pace: vsync off \(variable refresh with DLSS Frame Generation', label = "the window presents with vsync off for DLSS-G" },
   { re = 'frame pace: variable refresh, at most \d+ fps \(the monitor.s \d+ Hz\), vsync off for DLSS Frame Generation', label = "variable refresh's cap kept" },
   { re = 'DLSS-G: options: mode On, 1 generated frame\(s\) per real frame', label = "frame generation on in play" },
+  { re = 'DLSS-G: Reflex options: mode eLowLatency, frame limit \d+ us a frame shown: eOk', label = "variable refresh's cap handed to Reflex whole, on frames shown" },
 ]
 order = [["settings: display-sync Variable refresh", "frame pace: vsync off (variable refresh with DLSS Frame Generation"]]
 forbid = [
@@ -29906,7 +29907,7 @@ forbid = [
 
 [[scenario]]
 name = "dlssg-cap-menu"
-source = "#2731, docs/design/dlss-frame-generation.md \"Frame pacing\": a frame rate limit of 144 (the test aid --frame-cap, as --log-frame-times leaves the page's row out) divided by the two frames DLSS-G presents per real frame in play, handed to Reflex in full while the pause menu has DLSS-G's mode off, and divided again once play goes on"
+source = "#2731, docs/design/dlss-frame-generation.md \"Frame pacing\": a frame rate limit of 144 (the test aid --frame-cap, as --log-frame-times leaves the page's row out) handed to Reflex whole, on frames shown, in play and while the pause menu has DLSS-G's mode off; never divided by the frames DLSS-G presents (Reflex's limit holds the frames shown, generated ones included: dividing it held 2x at half the real frames, 2026-11-23)"
 note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on. Generated frames stays at its default, 2x."
 areas = ["graphics"]
 paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/nv_low_latency.rs"]
@@ -29916,30 +29917,22 @@ env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-cap-menu-home", NVF_PLA
 args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--frame-cap", "144", "--no-voice", "--no-lodgen"]
 run_seconds = 36
 expect = [
-  { re = "DLSS-G: frame cap: real frames at the full limit, was divided by 2 \\(menus: DLSS-G's mode off for 8 frames\\)", label = "the full limit in the pause menu" },
-  { re = 'DLSS-G: Reflex options: mode eLowLatency, frame limit 6944 us a real frame: eOk \(swapchains made: \d+\)', label = "the whole limit of 144 handed to Reflex in the menu" },
-  { re = 'DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk \(swapchains made: \d+\)', label = "144 divided by the two frames presented per real frame in play" },
+  { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a frame shown: eOk \(swapchains made: [1-9]\d*\)', label = "the whole limit of 144 handed to Reflex once a swapchain exists" },
+  { re = 'DLSS-G: options: mode Off \(resources kept\)', label = "the pause menu turned DLSS-G's mode off" },
 ]
-order = [[
-  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk", label = "divided in play before the menu" },
-  { re = "DLSS-G: frame cap: real frames at the full limit, was divided by 2 \\(menus" },
-  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 6944 us a real frame: eOk" },
-  { re = "DLSS-G: frame cap: real frames at the limit divided by 2, was the full limit \\(generation starting: DLSS-G's mode on\\)", label = "divided again once play goes on" },
-  { text = "DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk" },
-]]
 forbid = [
   { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-cap-menu (e.g. a tagged image's format it cannot read)" },
   { text = "Validation Error", label = "a Vulkan validation error" },
   { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit [^:]+: e(?!Ok)', label = "slReflexSetOptions refused" },
+  { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit (?!6944 us)\d+ us', label = "a limit other than 144's whole (divided by the frames DLSS-G presents)" },
   { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk (frame generation ended)" },
-  { re = 'DLSS-G: frame cap: real frames at the full limit, was divided by \d \(presented', label = "generation paused while the window is in front" },
   { text = "tried again each frame", label = "slDLSSGSetOptions or slReflexSetOptions failing" },
   { re = 'present and acquire errors since last: [1-9]', label = "a VkResult error from DLSS-G's error callback (out of date counted apart)" },
 ]
 
 [[scenario]]
 name = "dlssg-cap-start"
-source = "#2732, #2731, docs/design/dlss-frame-generation.md \"Frame pacing\": DLSS Frame Generation and a frame rate limit of 144 (the test aid --frame-cap) both from the start: the limit reaches Reflex once the window's swapchain exists (sent again for the new swapchain, or as a change), and real frames hold 72 a second at 2x in play, where the limit sent before the swapchain alone was lost"
+source = "#2732, #2731, docs/design/dlss-frame-generation.md \"Frame pacing\": DLSS Frame Generation and a frame rate limit of 144 (the test aid --frame-cap) both from the start: the whole limit reaches Reflex once the window's swapchain exists (sent again for the new swapchain, or as a change), and real frames hold 72 a second at 2x in play (Reflex's limit holds the frames shown), where the limit sent before the swapchain alone was lost"
 note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on. The real-frame check takes only whole ten-second lines (10.0-10.5 s) at 1.9-2.1 presented per real frame, so a line that also counts loading or menu time at the full limit is left out; each must hold at most 800 real frames (72 a second over 10.5 s, and a quarter second at 144). A GPU slower than 72 real frames a second at 1280x720 over DLSS Quality passes it without testing the limit."
 areas = ["graphics"]
 paths = ["engine/nvforever/src/dlss/**", "crates/nvf-dlss-files/**", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/vendor/wgpu-hal/src/vulkan/**"]
@@ -29949,23 +29942,17 @@ env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-cap-start-home", NVF_PL
 args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--log-frame-times", "10", "--frame-cap", "144", "--no-voice", "--no-lodgen"]
 run_seconds = 48
 expect = [
-  { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a real frame: eOk \(swapchains made: [1-9]\d*', label = "the whole limit of 144 sent while a swapchain exists, before play (#2732)" },
-  { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 13889 us a real frame: eOk \(swapchains made: [1-9]\d*', label = "144 divided by two in play" },
+  { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a frame shown: eOk \(swapchains made: [1-9]\d*', label = "the whole limit of 144 sent while a swapchain exists, before play (#2732)" },
   { re = 'DLSS-G: 10\.[0-5] s: (?P<n>\d+) real frames, \d+ presented \((1\.9|2\.0|2\.1)\d* per real frame\), status eOk', min = 2, label = "at least two whole ten-second lines of generation at 2x" },
   { re = 'DLSS-G: 10\.[0-5] s: (?P<n>\d+) real frames, \d+ presented \((1\.9|2\.0|2\.1)\d* per real frame\), status eOk', range = [0, 800], all = true, label = "each of them about 72 real frames a second or fewer (no floor: a slow GPU or a load stall is not a cap failure)" },
 ]
-order = [[
-  { re = 'DLSS-G: Reflex options( set again for a new swapchain)?: mode eLowLatency, frame limit 6944 us a real frame: eOk \(swapchains made: [1-9]' },
-  { re = "DLSS-G: frame cap: real frames at the limit divided by 2, was the full limit \\(generation starting: DLSS-G's mode on\\)", label = "divided once play starts" },
-  { re = 'DLSS-G: Reflex options: mode eLowLatency, frame limit 13889 us a real frame: eOk' },
-]]
 forbid = [
   { re = '\]\[streamline\]\[error\]', label = "an error from Streamline in dlssg-cap-start (e.g. a tagged image's format it cannot read)" },
   { text = "Validation Error", label = "a Vulkan validation error in dlssg-cap-start" },
   { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit [^:]+: e(?!Ok)', label = "slReflexSetOptions refused in dlssg-cap-start" },
   { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit none: eOk \(swapchains made: [1-9]', label = "no limit sent once a swapchain exists" },
+  { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit (?!6944 us)\d+ us', label = "a limit other than 144's whole in dlssg-cap-start (divided by the frames DLSS-G presents)" },
   { text = "DLSS-G: status ", label = "a DLSS-G status other than eOk in dlssg-cap-start" },
-  { re = 'DLSS-G: frame cap: real frames at the full limit, was divided by \d \(presented', label = "generation paused in dlssg-cap-start, the window in front" },
   { text = "tried again each frame", label = "slDLSSGSetOptions or slReflexSetOptions failing in dlssg-cap-start" },
 ]
 

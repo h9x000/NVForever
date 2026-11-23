@@ -19,6 +19,16 @@
 //! vsync off and keeps its cap, handed to Reflex ([`FramePace::presents_vsync`], [`wait_for_cap`]):
 //! frames still come in under the refresh rate, so the screen shows each as it is done.
 //!
+//! **One limiter at a time** (2026-11-23): the cap counts frames shown, and exactly one thing
+//! holds the frames to it. While DLSS-G runs that is Reflex's frame limit, the cap whole (Reflex
+//! holds the frames shown, generated ones included), and the limiter here does not wait.
+//! Otherwise it is the limiter here ([`own_cap`]): with FSR frame generation at half the cap
+//! (two frames shown for each real one) or FSR's own cap under half the refresh rate, the lower;
+//! with Vertical sync a cap at or above the refresh rate is vsync's alone. Latency reduction
+//! (Reflex's or Anti-Lag's sleep) sets no limit of its own outside DLSS-G (minimum interval and
+//! `maxFPS` 0). Variable refresh keeps vsync as a backstop only: the cap stays under the refresh
+//! rate, so vsync never holds a frame that came on time.
+//!
 //! The cap waits once a frame until a frame's time (1/cap s) has passed since the last one,
 //! sleeping and then spinning the last millisecond (a sleep alone can wake a millisecond
 //! late). Bevy's renderer runs a frame behind the main world, so it is held to the same rate.
@@ -317,13 +327,35 @@ pub fn effective_cap(cap: u32, vrr: u32) -> u32 {
     }
 }
 
+/// The real frames a second frame pacing's own limiter keeps ([`wait_for_cap`]; 0: none), so
+/// that one limiter holds the frames and no two hold them at the same rate:
+/// - the page's cap and variable refresh's, the lower, both counting frames shown;
+/// - with Vertical sync a page cap at or above the refresh rate is dropped: vsync already holds
+///   the frames there, and a limiter at about the same rate beside it only queues frames
+///   behind vsync (latency) when the two drift apart;
+/// - while FSR frame generation runs (`fsr_fg_cap`, `frame_gen::FrameGenCap`, its cap under
+///   half the refresh rate) each real frame is shown twice, so the frames-shown cap is halved
+///   for real frames, as Reflex's limit does it for DLSS-G, and the lower of that and FSR's
+///   own cap holds.
+pub fn own_cap(pace: &FramePace, refresh: &Refresh, fsr_fg_cap: u32) -> u32 {
+    let refresh_hz = refresh.millihertz.map(|m| (m + 500) / 1000);
+    let page = match (pace.sync, refresh_hz) {
+        (DisplaySync::Vsync, Some(hz)) if pace.cap >= hz => 0,
+        _ => pace.cap,
+    };
+    let shown = effective_cap(page, refresh.vrr_cap);
+    if fsr_fg_cap == 0 {
+        return shown;
+    }
+    effective_cap(shown / 2, fsr_fg_cap)
+}
+
 /// The physics rate's Match FPS ceiling (`nvf_play::phys_rate::display_hz`):
-/// the cap the limiter keeps ([`wait_for_cap`]: the page's, variable refresh's and frame
-/// generation's real-frame cap), with vsync and the window's refresh rate. Frame generation's
-/// cap is the one its switch set last frame.
+/// the cap the limiter keeps ([`own_cap`]), with vsync and the window's refresh rate. Frame
+/// generation's cap is the one its switch set last frame.
 fn tell_physics(pace: Res<FramePace>, refresh: Res<Refresh>, fg: Option<Res<crate::frame_gen::FrameGenCap>>, dlssg: Option<Res<crate::frame_gen::DlssgRequest>>, physics: Option<ResMut<nvf_play::phys_rate::DisplayPace>>) {
     let Some(mut physics) = physics else { return };
-    let cap = effective_cap(effective_cap(pace.cap, refresh.vrr_cap), fg.map_or(0, |c| c.0));
+    let cap = own_cap(&pace, &refresh, fg.map_or(0, |c| c.0));
     let hz = nvf_play::phys_rate::display_hz(cap, pace.presents_vsync(dlssg.is_some_and(|r| r.on)), refresh.millihertz);
     physics.set_if_neq(nvf_play::phys_rate::DisplayPace(hz));
 }
@@ -419,31 +451,34 @@ fn held_back(earliest: Instant, now: Instant, hold: Duration) -> (Instant, Durat
     (start, start.saturating_duration_since(earliest.max(now)))
 }
 
-/// Reflex's frame limit for a cap of `cap` frames shown a second when each real frame is shown
-/// `multiplier` times: microseconds per real frame, 0 for no cap.
-pub fn reflex_frame_limit_us(cap: u32, multiplier: u32) -> u32 {
+/// Reflex's frame limit for a cap of `cap` frames shown a second: microseconds per frame shown,
+/// 0 for no cap. While DLSS-G generates, Reflex's limit holds the frames shown, generated ones
+/// included, not the real frames: 13158 us (76) held a 2x run at 76 shown and 38 real
+/// [observed: the owner's run of 2026-11-23, 355 real frames in 10 s, the overlay at 76 (38)];
+/// so the cap goes to it whole, never divided by the frames DLSS-G presents per real frame.
+pub fn reflex_frame_limit_us(cap: u32) -> u32 {
     if cap == 0 {
         return 0;
     }
-    (1_000_000.0 * f64::from(multiplier.max(1)) / f64::from(cap)).round() as u32
+    (1_000_000.0 / f64::from(cap)).round() as u32
 }
 
 /// Hold the frame until its time at the cap ([`next_frame`]). While DLSS Frame Generation runs
 /// (the spike's `on`, #2317, Stage 3; `dlss::frame_generation_running`) the cap is Reflex's
 /// instead (`ReflexOptions::frameLimitUs`, the limiter NVIDIA documents for frame generation
 /// [documented: `ProgrammingGuideDLSS_G.md` §6.3, §12.1]): the page's or variable refresh's cap
-/// on frames shown, divided by the frames DLSS-G presents per real frame, handed to Reflex
-/// ([`reflex_frame_limit_us`], `dlss::set_reflex_frame_limit`), and nothing waits here, so the
-/// driver and DLSS-G's pacer see one limiter [design: fork-notes `fg-facts.md` §3 item 5]. The
-/// divisor follows what DLSS-G presents (`dlss::frame_generation_divisor`, `dlss/fg_cap.rs`;
-/// #2731): in menus, where DLSS-G's mode is off, and while it presents one frame per real frame
-/// (the window not in front) it is 1 and real frames have the full limit; when generation comes
-/// back it divides again.
+/// on frames shown, handed to Reflex whole ([`reflex_frame_limit_us`],
+/// `dlss::set_reflex_frame_limit`), and nothing waits here, so the driver and DLSS-G's pacer see
+/// one limiter [design: fork-notes `fg-facts.md` §3 item 5]. Reflex holds the frames shown, so
+/// the real frames follow what DLSS-G presents by themselves: the cap divided by it while it
+/// generates, the whole cap in menus (DLSS-G's mode off) and while it presents one frame per real
+/// frame (the window not in front). Until 2026-11-23 the cap was divided here as well (#2731's
+/// divisor), which held the real frames at half the intended rate at 2x.
 fn wait_for_cap(world: &mut World) {
     let Some(pace) = world.get_resource::<FramePace>() else { return };
     if crate::dlss::frame_generation_running() {
         let cap = effective_cap(pace.cap, world.get_resource::<Refresh>().map_or(0, |r| r.vrr_cap));
-        crate::dlss::set_reflex_frame_limit(reflex_frame_limit_us(cap, crate::dlss::frame_generation_divisor()));
+        crate::dlss::set_reflex_frame_limit(reflex_frame_limit_us(cap));
         if let Some(mut clock) = world.get_resource_mut::<CapClock>() {
             clock.0 = None;
         }
@@ -453,11 +488,8 @@ fn wait_for_cap(world: &mut World) {
         // Frame generation ended for the session: the limit is frame pacing's again.
         crate::dlss::set_reflex_frame_limit(0);
     }
-    // Frame generation shows each real frame twice: at most half the refresh rate of them.
-    let cap = effective_cap(
-        effective_cap(pace.cap, world.get_resource::<Refresh>().map_or(0, |r| r.vrr_cap)),
-        world.get_resource::<crate::frame_gen::FrameGenCap>().map_or(0, |c| c.0),
-    );
+    // FSR frame generation shows each real frame twice: at most half the refresh rate of them.
+    let cap = own_cap(pace, world.get_resource::<Refresh>().unwrap_or(&Refresh::default()), world.get_resource::<crate::frame_gen::FrameGenCap>().map_or(0, |c| c.0));
     let lag = Duration::from_nanos(PRESENTER_LAG_NANOS.swap(0, Ordering::Relaxed));
     let Some(mut clock) = world.get_resource_mut::<CapClock>() else { return };
     if cap == 0 {
@@ -663,11 +695,32 @@ mod tests {
     }
 
     #[test]
-    fn reflex_gets_the_cap_per_real_frame() {
-        assert_eq!(reflex_frame_limit_us(0, 2), 0, "no cap");
-        assert_eq!(reflex_frame_limit_us(120, 2), 16_667, "120 shown at 2x: 60 real frames a second");
-        assert_eq!(reflex_frame_limit_us(144, 4), 27_778);
-        assert_eq!(reflex_frame_limit_us(60, 0), 16_667, "a multiplier of at least one");
+    fn one_limiter_holds_the_frames() {
+        let pace = |sync, cap| FramePace { sync, cap };
+        let at = |hz: u32, vrr: u32| Refresh { millihertz: Some(hz), vrr_cap: vrr };
+        // Vertical sync: a cap at or above the refresh rate is vsync's to keep.
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 144), &at(143_998, 0), 0), 0, "144 on a 144 Hz screen: vsync alone");
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 60), &at(59_940, 0), 0), 0, "60 on 59.94 Hz: vsync alone");
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 144), &at(160_000, 0), 0), 144, "under the refresh rate the cap holds");
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 144), &Refresh::default(), 0), 144, "refresh rate not known: the cap holds");
+        // Off and variable refresh keep the cap; variable refresh's own is the lower.
+        assert_eq!(own_cap(&pace(DisplaySync::Off, 144), &at(144_000, 0), 0), 144);
+        assert_eq!(own_cap(&pace(DisplaySync::Variable, 0), &at(160_000, 152), 0), 152);
+        assert_eq!(own_cap(&pace(DisplaySync::Variable, 144), &at(160_000, 152), 0), 144);
+        // FSR frame generation: the cap counts frames shown, two for each real frame, and its
+        // own cap under half the refresh rate holds when lower.
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 0), &at(160_000, 0), 78), 78);
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 120), &at(160_000, 0), 78), 60, "120 shown: 60 real");
+        assert_eq!(own_cap(&pace(DisplaySync::Variable, 0), &at(160_000, 152), 78), 76, "152 shown at most: 76 real");
+        assert_eq!(own_cap(&pace(DisplaySync::Vsync, 144), &at(144_000, 0), 71), 71, "144 on 144 Hz is vsync's: FSR's own cap");
+    }
+
+    #[test]
+    fn reflex_gets_the_whole_cap_on_frames_shown() {
+        assert_eq!(reflex_frame_limit_us(0), 0, "no cap");
+        assert_eq!(reflex_frame_limit_us(152), 6_579, "variable refresh at 160 Hz: 152 shown, whatever DLSS-G generates");
+        assert_eq!(reflex_frame_limit_us(144), 6_944);
+        assert_eq!(reflex_frame_limit_us(60), 16_667);
     }
 
     #[test]

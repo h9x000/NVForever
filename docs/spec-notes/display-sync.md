@@ -24,8 +24,10 @@ choice. Code: `engine/nvforever/src/frame_pace.rs`, the settings row in
 - **Variable refresh with DLSS Frame Generation**: DLSS-G needs vsync off on Vulkan
   [documented: "VSync with Frame Generation is only supported on D3D12",
   `ProgrammingGuideDLSS_G.md` §22.5], so while it is asked for the window presents with
-  vsync off (`AutoNoVsync`) and the same cap, on frames shown, goes to Reflex's frame limit
-  divided by the frames DLSS-G presents per real frame (`frame_pace::wait_for_cap`) [design].
+  vsync off (`AutoNoVsync`) and the same cap, on frames shown, goes whole to Reflex's frame
+  limit (`frame_pace::wait_for_cap`) [design], which holds the frames shown, generated ones
+  included: 152 at 2x is 152 shown and 76 real [observed: 13158 us held 76 shown and 38 real,
+  the owner's run 2026-11-23].
   Frames then reach the screen under its refresh rate, where a VRR screen refreshes on each
   one; vsync is only what would hold a frame that came in faster than the screen's top rate
   [hypothesis: no tearing with the cap's margin; to be seen on the owner's G-SYNC screen].

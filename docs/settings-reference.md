@@ -333,7 +333,9 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   keeps the computer cooler and quieter.
 - In full: At most this many frames a second (Off: as many as the computer draws, or the
   display's refresh with vertical sync; with variable refresh the lower of this and its own
-  limit). A lower limit keeps the computer cooler and quieter.
+  limit). It counts the frames shown: with frame generation the real frames are this divided
+  by the frames shown for each. With vertical sync a limit at or above the display's refresh
+  is left to vsync. A lower limit keeps the computer cooler and quieter.
 - Shown as a list since the menu overhaul; an older slider number in the INI still loads as
   the nearest choice.
 - Registered in `engine/nvforever/src/settings.rs`
