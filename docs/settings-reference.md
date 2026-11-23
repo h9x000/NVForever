@@ -323,7 +323,9 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 - In full: Vertical sync: each frame waits for the display's refresh (no tearing). Variable
   refresh: for a G-Sync or FreeSync screen, vertical sync with the frame rate held a few
   frames under the screen's refresh rate, so frames are shown as soon as they are drawn
-  without tearing; with DLSS frame generation, vertical sync is off and the limit is kept.
+  without tearing; with DLSS frame generation, vertical sync is off and the limit is kept
+  (NVIDIA's frame generation does not take the game's vsync on Vulkan; for no tearing set
+  Vertical sync On for the game in the NVIDIA Control Panel).
   Off: frames are shown as soon as they are drawn (may tear).
 - Registered in `engine/nvforever/src/settings.rs`
 

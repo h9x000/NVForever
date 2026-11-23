@@ -29,8 +29,18 @@ choice. Code: `engine/nvforever/src/frame_pace.rs`, the settings row in
   included: 152 at 2x is 152 shown and 76 real [observed: 13158 us held 76 shown and 38 real,
   the owner's run 2026-11-23].
   Frames then reach the screen under its refresh rate, where a VRR screen refreshes on each
-  one; vsync is only what would hold a frame that came in faster than the screen's top rate
-  [hypothesis: no tearing with the cap's margin; to be seen on the owner's G-SYNC screen].
+  one; vsync is only what would hold a frame that came in faster than the screen's top rate.
+  The cap's margin is not enough: a frame now and then comes in under the refresh interval
+  and the screen tears near the bottom [observed 2026-11-23, 160 Hz G-SYNC, 2x, 152 shown /
+  76 real]. The game cannot hold it back: Streamline presents DLSS-G's frames through a
+  swapchain of its own with sync interval 0 whatever present mode the game asks for (Mailbox
+  was tried and made no difference) [observed: its log, "interpolation state changed from
+  disabled to enabled (... SyncInterval=0)", "platform: Vulkan (VSync with FG: not
+  supported)"]. The driver can: NVIDIA Control Panel's Vertical sync On for the game took
+  the tearing away with DLSS-G still generating [observed 2026-11-23, the owner's run: state
+  eOk, 2 frames presented a frame]; NVIDIA's guide says the Control Panel's setting takes
+  precedence over the application's [documented: `ProgrammingGuideDLSS_G.md` §22.3]. That is
+  the setup the player pages give for a G-SYNC screen.
   Vertical sync still dims DLSS-G ("Needs vsync off").
 - The refresh rate is the window's monitor's, from winit, which documents it as "the
   monitor refresh rate used by the system" and says to use the video mode's rate in

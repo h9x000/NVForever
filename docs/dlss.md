@@ -264,7 +264,11 @@ It needs:
 - **Display sync: Off or Variable refresh**: on Vulkan, NVIDIA's frame generation does not run
   with vertical sync. With Variable refresh the game turns vsync off while it runs and keeps the
   frames a few under the screen's refresh rate (through NVIDIA's Reflex), so a G-Sync screen
-  shows each frame as it comes; that is the choice for a G-Sync screen;
+  shows each frame as it comes; that is the choice for a G-Sync screen. A frame now and then
+  still comes in a little early and tears near the bottom of the screen; to stop that, set
+  **Vertical sync: On** for the game in the NVIDIA Control Panel (Manage 3D settings >
+  Program settings > `nvforever.exe`). The driver's vsync works with frame generation where
+  the game's own cannot;
 - the game's window in front: while another window is in front, no frames are generated.
 
 When it cannot run, the DLSS choice is greyed out with the reason: "The DLSS Frame Generation
