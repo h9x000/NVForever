@@ -144,6 +144,32 @@ and calls after: at most three moves can happen meanwhile).
   exit with DLSS-G set up crashed in `nvngx_dlssg.dll` [observed: the player's logs and dumps,
   2026-11-15]; that the detach is what crashed is a [hypothesis] the change tests.
 
+### Queue parallelism (2026-11-23)
+
+By default DLSS-G blocks "client's presenting queue ... until DLSSG workload execution completes"
+[documented: Streamline `sl_dlss_g.h` `DLSSGQueueParallelismMode`]. wgpu has one queue, which
+presents, so the next frame's GPU work waited for all of DLSS-G's generation. The options now ask
+for `eBlockNoClientQueues` ("only supported on Vulkan presently ... maximum performance benefit
+from queue-level paralleism"): the next frame's work can run while DLSS-G generates on its own
+queues [hypothesis: faster when the GPU is the limit, more so at 3x and 4x; §17 says gains are
+"most apparent in GPU-limited applications"; not measured yet].
+
+The game must then keep its hands off DLSS-G's inputs (depth, motion, the HUD-less copy, the UI
+buffer) until DLSS-G has read them: "client must must wait on
+DLSSGState::inputsProcessingCompletionFence and associated value, before it can modify or destroy
+the tagged resources" [documented: same]. After each present with the mode on, `state` keeps that
+fence and `lastPresentInputsProcessingCompletionFenceValue`; `wait_for_inputs`, first in the next
+frame's `Render` on the render thread, stages a GPU wait on it (all commands) for the queue's next
+submit (wgpu-hal `Queue::add_wait_semaphore`), and wgpu-hal's relay semaphores keep every later
+submit behind that one. The Vulkan type is not in the headers or the guide; NVIDIA's sample waits
+on it as a timeline `VkSemaphore` with that value on its graphics queue, at the start of the frame,
+"before any of the inputs are modified in the subsequent command list submission", when DLSS-G
+was on last frame [documented: NVIDIA-RTX/Streamline_Sample `src/SLWrapper.cpp`
+`QueueGPUWaitOnSyncObjectSet`, `src/StreamlineSample.cpp` `RenderScene`]. A wait no submit took is
+taken back before the next is staged, and when DLSS-G is loaded or unloaded. The log says it once:
+`DLSS-G: queue parallelism eBlockNoClientQueues: each frame's first submit waits on DLSS-G's
+inputs fence (first value N)`. `NVF_DLSSG_QUEUE=block` keeps the default mode, for comparisons.
+
 ### Frame pacing
 
 While DLSS-G runs, the frame cap (the page's, or variable refresh's) goes whole to Reflex's
