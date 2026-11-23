@@ -19,7 +19,11 @@
 //!   (`wgpu::hal::vulkan::with_latency_swapchain`, `engine/vendor/README.md`): they come from
 //!   three threads, and none may run while the swapchain is replaced or destroyed.
 //! - **The sleep.** `vkSetLatencySleepModeNV` turns low latency mode on for a swapchain (boost
-//!   off, no minimum interval: the frame cap stays `frame_pace`'s [engineering choice]). Then,
+//!   off). Its minimum interval is the frame cap when frame pacing hands the cap to the driver
+//!   (`frame_pace::driver_cap`: latency reduction on, no frame generation), 0 otherwise: the
+//!   sleep then keeps "`minimumIntervalUs` between `vkQueuePresentKHR` calls" [documented:
+//!   `VkLatencySleepModeInfoNV`], one limiter instead of frame pacing's wait beside the driver's
+//!   sleep. A change of the interval sets the mode again. Then,
 //!   each frame, `vkLatencySleepNV` "before input sampling, and exactly once between presents":
 //!   it returns at once, and the driver signals a timeline semaphore when the frame's CPU work
 //!   should start [documented]. That is the point Anti-Lag's input call has: right after the
@@ -132,7 +136,7 @@ trait Calls: Send + Sync + 'static {
     /// replaced or destroyed meanwhile; false, and no call, while there is none.
     fn with_swapchain(&self, call: &mut dyn FnMut(u64)) -> bool;
     /// `vkSetLatencySleepModeNV`: low latency mode on or off, boost off, no minimum interval.
-    fn set_sleep_mode(&self, swapchain: u64, on: bool) -> Result<(), vk::Result>;
+    fn set_sleep_mode(&self, swapchain: u64, on: bool, interval_us: u32) -> Result<(), vk::Result>;
     /// `vkLatencySleepNV`: asks the driver to signal the sleep's semaphore with `value` when the
     /// next frame's CPU work should start; `present_id` is that frame's marker number.
     fn sleep(&self, swapchain: u64, value: u64, present_id: u64) -> Result<(), vk::Result>;
@@ -155,6 +159,11 @@ trait Calls: Send + Sync + 'static {
     fn pace_line(&self) -> Option<String> {
         None
     }
+    /// Whether a frame limit can be kept by these calls: [`Self::set_sleep_mode`]'s interval
+    /// (directly) or Reflex's frame limit (through Streamline).
+    fn limits(&self) -> bool {
+        true
+    }
 }
 
 /// The calls through Vulkan.
@@ -172,8 +181,8 @@ impl Calls for Vulkan {
         wgpu::hal::vulkan::with_latency_swapchain(|swapchain| call(swapchain.as_raw())).is_some()
     }
 
-    fn set_sleep_mode(&self, swapchain: u64, on: bool) -> Result<(), vk::Result> {
-        let info = vk::LatencySleepModeInfoNV::default().low_latency_mode(on).low_latency_boost(false).minimum_interval_us(0);
+    fn set_sleep_mode(&self, swapchain: u64, on: bool, interval_us: u32) -> Result<(), vk::Result> {
+        let info = vk::LatencySleepModeInfoNV::default().low_latency_mode(on).low_latency_boost(false).minimum_interval_us(interval_us);
         // SAFETY: the device has the extension, and `with_swapchain` keeps the swapchain alive.
         unsafe { self.functions.set_latency_sleep_mode(vk::SwapchainKHR::from_raw(swapchain), Some(&info)) }
     }
@@ -240,11 +249,13 @@ impl Calls for ViaStreamline {
         }
     }
 
-    fn set_sleep_mode(&self, swapchain: u64, on: bool) -> Result<(), vk::Result> {
+    /// Through Streamline the interval is not passed: Reflex's frame limit is frame pacing's
+    /// (`dlss::set_reflex_frame_limit`), set with the mode in `dlss::reflex_options`.
+    fn set_sleep_mode(&self, swapchain: u64, on: bool, interval_us: u32) -> Result<(), vk::Result> {
         if self.reflex() {
             crate::dlss::reflex_options(on).map_err(|_| vk::Result::ERROR_UNKNOWN)
         } else {
-            self.direct.as_ref().map_or(Err(vk::Result::ERROR_FEATURE_NOT_PRESENT), |d| d.set_sleep_mode(swapchain, on))
+            self.direct.as_ref().map_or(Err(vk::Result::ERROR_FEATURE_NOT_PRESENT), |d| d.set_sleep_mode(swapchain, on, interval_us))
         }
     }
 
@@ -270,6 +281,10 @@ impl Calls for ViaStreamline {
 
     fn through_streamline(&self) -> bool {
         self.reflex()
+    }
+
+    fn limits(&self) -> bool {
+        self.reflex() || self.direct.as_ref().is_some_and(|d| d.limits())
     }
 
     fn names(&self) -> (&'static str, &'static str) {
@@ -300,12 +315,15 @@ struct Shared {
     pacing: Mutex<Pacing>,
     /// The driver refused low latency mode or a sleep (said once).
     said_refused: AtomicBool,
+    /// The last call to set the mode was refused: no frame limit is kept now
+    /// ([`NvLowLatency::limits`]).
+    mode_refused: AtomicBool,
 }
 
 #[derive(Default)]
 struct Pacing {
-    /// The swapchain low latency mode was last set on, and to what.
-    mode: Option<(u64, bool)>,
+    /// The swapchain low latency mode was last set on, to what, and the minimum interval (us).
+    mode: Option<(u64, bool, u32)>,
     /// The semaphore's value asked for by the last sleep.
     value: u64,
     /// The frame whose `SIMULATION_START` was sent: only that frame gets a `SIMULATION_END`.
@@ -334,12 +352,19 @@ fn present_id(frame: u64) -> u64 {
 
 impl NvLowLatency {
     fn new(calls: Box<dyn Calls>) -> Self {
-        Self(Arc::new(Shared { calls, pacing: Mutex::default(), said_refused: AtomicBool::new(false) }))
+        Self(Arc::new(Shared { calls, pacing: Mutex::default(), said_refused: AtomicBool::new(false), mode_refused: AtomicBool::new(false) }))
     }
 
     /// Whether the calls go through Streamline's Reflex: then every frame, whatever the switch.
     pub(crate) fn through_streamline(&self) -> bool {
         self.0.calls.through_streamline()
+    }
+
+    /// Whether the driver can keep frame pacing's cap now (`frame_pace::driver_cap`): the calls
+    /// can, and the last call to set the mode was not refused (frame pacing's own limiter
+    /// holds the frames while it is).
+    pub(crate) fn limits(&self) -> bool {
+        self.0.calls.limits() && !self.0.mode_refused.load(Ordering::Relaxed)
     }
 
     /// A marker for `frame`, on the newest swapchain (nothing while there is none).
@@ -348,30 +373,34 @@ impl NvLowLatency {
     }
 
     /// Where the next frame's input is about to be read (the main thread): with the switch on,
-    /// low latency mode is set on the swapchain if it is new, the driver's sleep is waited for,
-    /// and the frame's simulation and input are marked. With it off, low latency mode is turned
-    /// off once on a swapchain it was on.
-    fn input(&self, on: bool, frame: u64) {
+    /// low latency mode is set on the swapchain if it is new (or the minimum interval,
+    /// `interval_us`, changed), the driver's sleep is waited for, and the frame's simulation and
+    /// input are marked. With it off, low latency mode is turned off once on a swapchain it was
+    /// on.
+    fn input(&self, on: bool, frame: u64, interval_us: u32) {
         let shared = &*self.0;
         // Through Streamline the sleep and markers run every frame and the mode follows the
         // switch (`ViaStreamline`); the direct calls run only with the switch on.
         let streamline = shared.calls.through_streamline();
         let switch = on;
         let on = switch || streamline;
+        let interval_us = if switch { interval_us } else { 0 };
         let (mode_call, sleep_call) = shared.calls.names();
         let mut pacing = shared.pacing.lock().unwrap_or_else(PoisonError::into_inner);
         let mut asked = None;
         shared.calls.with_swapchain(&mut |swapchain| {
             // Through Streamline every frame: it sets Reflex's options only on a change of the
             // mode or the frame limit (`dlss::reflex_options`).
-            if pacing.mode != Some((swapchain, switch)) || streamline {
+            if pacing.mode != Some((swapchain, switch, interval_us)) || streamline {
                 // A new swapchain has it off until it is set.
-                let was_on = pacing.mode == Some((swapchain, true));
+                let was_on = pacing.mode.is_some_and(|(s, on, _)| s == swapchain && on);
                 if switch || was_on || streamline {
-                    if let Err(e) = shared.calls.set_sleep_mode(swapchain, switch) {
+                    if let Err(e) = shared.calls.set_sleep_mode(swapchain, switch, interval_us) {
+                        shared.mode_refused.store(true, Ordering::Relaxed);
                         self.refused(mode_call, e);
                         return;
                     }
+                    shared.mode_refused.store(false, Ordering::Relaxed);
                     if (switch || streamline) && !std::mem::replace(&mut pacing.said_set, true) {
                         if streamline {
                             info!(
@@ -383,7 +412,7 @@ impl NvLowLatency {
                         }
                     }
                 }
-                pacing.mode = Some((swapchain, switch));
+                pacing.mode = Some((swapchain, switch, interval_us));
             }
             if on {
                 let value = pacing.value + 1;
@@ -537,10 +566,11 @@ pub(crate) fn simulation_end(world: &World, frame: u64) {
     }
 }
 
-/// Where `frame`'s input is about to be read (`anti_lag::announce_input`).
+/// Where `frame`'s input is about to be read (`anti_lag::announce_input`), with the frame cap
+/// frame pacing hands to the driver as the minimum interval (`frame_pace::driver_cap`).
 pub(crate) fn input(world: &World, on: bool, frame: u64) {
     if let Some(driver) = world.get_resource::<NvLowLatency>() {
-        driver.input(on, frame);
+        driver.input(on, frame, crate::frame_pace::reflex_frame_limit_us(crate::frame_pace::driver_cap()));
     }
 }
 
@@ -601,7 +631,7 @@ pub(crate) mod tests {
     /// What the test driver was asked, in order.
     #[derive(Clone, Copy, Debug, PartialEq, Eq)]
     pub(crate) enum Asked {
-        Mode(u64, bool),
+        Mode(u64, bool, u32),
         Sleep(u64, u64),
         Wait(u64),
         Mark(u64, vk::LatencyMarkerNV, u64),
@@ -626,8 +656,8 @@ pub(crate) mod tests {
             swapchain != 0
         }
 
-        fn set_sleep_mode(&self, swapchain: u64, on: bool) -> Result<(), vk::Result> {
-            self.asked.lock().unwrap().push(Asked::Mode(swapchain, on));
+        fn set_sleep_mode(&self, swapchain: u64, on: bool, interval_us: u32) -> Result<(), vk::Result> {
+            self.asked.lock().unwrap().push(Asked::Mode(swapchain, on, interval_us));
             if self.refuse_mode.load(Ordering::Relaxed) { Err(vk::Result::ERROR_INITIALIZATION_FAILED) } else { Ok(()) }
         }
 
@@ -666,14 +696,14 @@ pub(crate) mod tests {
     #[test]
     fn a_frame_sets_the_mode_once_then_sleeps_waits_and_marks_its_start() {
         let (driver, recorder) = recorded();
-        driver.input(true, 4);
+        driver.input(true, 4, 0);
         // Frame 4 has presentID 5; the wait comes after the sleep was asked, before the markers.
         assert_eq!(
             taken(&recorder),
-            [Asked::Mode(7, true), Asked::Sleep(7, 1), Asked::Wait(1), Asked::Mark(7, M::SIMULATION_START, 5), Asked::Mark(7, M::INPUT_SAMPLE, 5)]
+            [Asked::Mode(7, true, 0), Asked::Sleep(7, 1), Asked::Wait(1), Asked::Mark(7, M::SIMULATION_START, 5), Asked::Mark(7, M::INPUT_SAMPLE, 5)]
         );
         driver.simulation_end(4);
-        driver.input(true, 5);
+        driver.input(true, 5, 0);
         // The mode is not set again; the semaphore's value goes up by one a sleep.
         assert_eq!(
             taken(&recorder),
@@ -690,21 +720,21 @@ pub(crate) mod tests {
         let (driver, recorder) = recorded();
         recorder.streamline.store(true, Ordering::Relaxed);
         assert!(driver.through_streamline());
-        driver.input(false, 4);
+        driver.input(false, 4, 0);
         assert_eq!(
             taken(&recorder),
-            [Asked::Mode(7, false), Asked::Sleep(7, 1), Asked::Wait(1), Asked::Mark(7, M::SIMULATION_START, 5), Asked::Mark(7, M::INPUT_SAMPLE, 5)]
+            [Asked::Mode(7, false, 0), Asked::Sleep(7, 1), Asked::Wait(1), Asked::Mark(7, M::SIMULATION_START, 5), Asked::Mark(7, M::INPUT_SAMPLE, 5)]
         );
         driver.simulation_end(4);
-        driver.input(false, 5);
+        driver.input(false, 5, 0);
         assert_eq!(
             taken(&recorder),
-            [Asked::Mark(7, M::SIMULATION_END, 5), Asked::Mode(7, false), Asked::Sleep(7, 2), Asked::Wait(2), Asked::Mark(7, M::SIMULATION_START, 6), Asked::Mark(7, M::INPUT_SAMPLE, 6)]
+            [Asked::Mark(7, M::SIMULATION_END, 5), Asked::Mode(7, false, 0), Asked::Sleep(7, 2), Asked::Wait(2), Asked::Mark(7, M::SIMULATION_START, 6), Asked::Mark(7, M::INPUT_SAMPLE, 6)]
         );
         // The switch on: the same calls, the mode on.
         driver.simulation_end(5);
-        driver.input(true, 6);
-        assert_eq!(taken(&recorder)[..3], [Asked::Mark(7, M::SIMULATION_END, 6), Asked::Mode(7, true), Asked::Sleep(7, 3)]);
+        driver.input(true, 6, 0);
+        assert_eq!(taken(&recorder)[..3], [Asked::Mark(7, M::SIMULATION_END, 6), Asked::Mode(7, true, 0), Asked::Sleep(7, 3)]);
         let (direct, _) = recorded();
         assert!(!direct.through_streamline(), "the direct calls follow the switch");
     }
@@ -725,10 +755,10 @@ pub(crate) mod tests {
         recorder.swapchain.store(7, Ordering::Relaxed);
         let driver = NvLowLatency::new(Box::new(ViaStreamline { direct: Some(Box::new(recorder.clone())) }));
         assert!(!driver.through_streamline(), "the tests never install Streamline's calls");
-        driver.input(true, 0);
-        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true), Asked::Sleep(7, 1), Asked::Wait(1)]);
-        driver.input(false, 1);
-        assert_eq!(taken(&recorder), [Asked::Mode(7, false)], "the direct calls follow the switch");
+        driver.input(true, 0, 0);
+        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true, 0), Asked::Sleep(7, 1), Asked::Wait(1)]);
+        driver.input(false, 1, 0);
+        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 0)], "the direct calls follow the switch");
         let none = ViaStreamline { direct: None };
         assert!(!none.with_swapchain(&mut |_| panic!("no swapchain without the extension")));
         assert_eq!(none.sleep(0, 1, 1), Err(vk::Result::ERROR_FEATURE_NOT_PRESENT));
@@ -736,32 +766,56 @@ pub(crate) mod tests {
         assert_eq!(none.pace_line(), None);
     }
 
+    /// Frame pacing's cap handed to the driver is the mode's minimum interval: a change sets the
+    /// mode again, the switch off sends none, and a refused mode keeps no limit until it works.
+    #[test]
+    fn the_frame_cap_handed_over_is_the_minimum_interval() {
+        let (driver, recorder) = recorded();
+        assert!(driver.limits());
+        driver.input(true, 0, 16_667);
+        assert_eq!(taken(&recorder)[0], Asked::Mode(7, true, 16_667));
+        driver.input(true, 1, 16_667);
+        assert!(!taken(&recorder).iter().any(|a| matches!(a, Asked::Mode(..))), "the same interval: not set again");
+        driver.input(true, 2, 6_579);
+        assert_eq!(taken(&recorder)[0], Asked::Mode(7, true, 6_579), "a new cap: set again");
+        driver.input(false, 3, 6_579);
+        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 0)], "off: no interval");
+        recorder.refuse_mode.store(true, Ordering::Relaxed);
+        driver.input(true, 4, 6_579);
+        assert!(!driver.limits(), "refused: frame pacing's own limiter holds the frames");
+        recorder.refuse_mode.store(false, Ordering::Relaxed);
+        driver.input(true, 5, 6_579);
+        assert!(driver.limits());
+        let none = ViaStreamline { direct: None };
+        assert!(!none.limits(), "neither Reflex nor the extension: no limit kept");
+    }
+
     #[test]
     fn a_new_swapchain_gets_the_mode_again() {
         let (driver, recorder) = recorded();
-        driver.input(true, 0);
+        driver.input(true, 0, 0);
         taken(&recorder);
         recorder.swapchain.store(8, Ordering::Relaxed);
-        driver.input(true, 1);
-        assert_eq!(taken(&recorder)[..2], [Asked::Mode(8, true), Asked::Sleep(8, 2)]);
+        driver.input(true, 1, 0);
+        assert_eq!(taken(&recorder)[..2], [Asked::Mode(8, true, 0), Asked::Sleep(8, 2)]);
     }
 
     #[test]
     fn off_makes_no_call_but_turns_the_mode_off_once_where_it_was_on() {
         let (driver, recorder) = recorded();
-        driver.input(false, 0);
+        driver.input(false, 0, 0);
         driver.simulation_end(0);
         assert!(taken(&recorder).is_empty(), "off from the start: nothing is asked of the driver");
-        driver.input(true, 1);
+        driver.input(true, 1, 0);
         taken(&recorder);
-        driver.input(false, 2);
+        driver.input(false, 2, 0);
         // The frame begun with the switch off has no simulation markers.
         driver.simulation_end(2);
-        driver.input(false, 3);
-        assert_eq!(taken(&recorder), [Asked::Mode(7, false)]);
+        driver.input(false, 3, 0);
+        assert_eq!(taken(&recorder), [Asked::Mode(7, false, 0)]);
         // Off, then a new swapchain: it has the mode off already.
         recorder.swapchain.store(8, Ordering::Relaxed);
-        driver.input(false, 4);
+        driver.input(false, 4, 0);
         assert!(taken(&recorder).is_empty());
     }
 
@@ -769,24 +823,24 @@ pub(crate) mod tests {
     fn without_a_swapchain_nothing_is_asked_and_the_next_frame_tries_again() {
         let (driver, recorder) = recorded();
         recorder.swapchain.store(0, Ordering::Relaxed);
-        driver.input(true, 0);
+        driver.input(true, 0, 0);
         driver.mark(M::PRESENT_START, 0);
         assert!(taken(&recorder).is_empty());
         recorder.swapchain.store(7, Ordering::Relaxed);
-        driver.input(true, 1);
-        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true), Asked::Sleep(7, 1), Asked::Wait(1)]);
+        driver.input(true, 1, 0);
+        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true, 0), Asked::Sleep(7, 1), Asked::Wait(1)]);
     }
 
     #[test]
     fn a_refused_mode_is_not_slept_on_and_is_asked_for_again() {
         let (driver, recorder) = recorded();
         recorder.refuse_mode.store(true, Ordering::Relaxed);
-        driver.input(true, 0);
+        driver.input(true, 0, 0);
         // No sleep and no wait; the frame's markers are still sent.
-        assert_eq!(taken(&recorder), [Asked::Mode(7, true), Asked::Mark(7, M::SIMULATION_START, 1), Asked::Mark(7, M::INPUT_SAMPLE, 1)]);
+        assert_eq!(taken(&recorder), [Asked::Mode(7, true, 0), Asked::Mark(7, M::SIMULATION_START, 1), Asked::Mark(7, M::INPUT_SAMPLE, 1)]);
         recorder.refuse_mode.store(false, Ordering::Relaxed);
-        driver.input(true, 1);
-        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true), Asked::Sleep(7, 1), Asked::Wait(1)]);
+        driver.input(true, 1, 0);
+        assert_eq!(taken(&recorder)[..3], [Asked::Mode(7, true, 0), Asked::Sleep(7, 1), Asked::Wait(1)]);
     }
 
     #[test]
@@ -907,7 +961,7 @@ pub(crate) mod tests {
         for pipelined in [true, false] {
             let asked = run_updates_with(pipelined, false, true);
             check_frame_order(&asked);
-            assert!(asked.iter().filter(|a| matches!(a, Asked::Mode(..))).all(|a| *a == Asked::Mode(7, false)), "{asked:?}");
+            assert!(asked.iter().filter(|a| matches!(a, Asked::Mode(..))).all(|a| *a == Asked::Mode(7, false, 0)), "{asked:?}");
             assert!(asked.iter().filter(|a| matches!(a, Asked::Mode(..))).count() >= 3, "every frame's input: {asked:?}");
         }
     }

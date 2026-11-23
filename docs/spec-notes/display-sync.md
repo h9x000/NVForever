@@ -42,6 +42,10 @@ choice. Code: `engine/nvforever/src/frame_pace.rs`, the settings row in
   precedence over the application's [documented: `ProgrammingGuideDLSS_G.md` §22.3]. That is
   the setup the player pages give for a G-SYNC screen.
   Vertical sync still dims DLSS-G ("Needs vsync off").
+- **Latency reduction on, no frame generation**: the cap (Variable refresh's or the page's) is
+  kept by the driver's limiter instead of frame pacing's wait: Reflex's frame limit, NVIDIA low
+  latency's minimum interval or Anti-Lag's `maxFPS` (docs/design/latency-reduction.md, "The
+  frame cap") [design, 2026-11-23].
 - The refresh rate is the window's monitor's, from winit, which documents it as "the
   monitor refresh rate used by the system" and says to use the video mode's rate in
   exclusive full screen [documented: winit 0.30.13 `MonitorHandle::refresh_rate_millihertz`];
