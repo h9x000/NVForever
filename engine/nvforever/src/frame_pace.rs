@@ -15,6 +15,9 @@
 //! variable refresh is the driver's (its control panel's G-SYNC / FreeSync switch and, in
 //! borderless full screen, whether it allows it for windowed games): docs/spec-notes/
 //! display-sync.md. The game cannot see it; the log names the cap it set.
+//! With DLSS Frame Generation (which needs vsync off on Vulkan) variable refresh presents with
+//! vsync off and keeps its cap, handed to Reflex ([`FramePace::presents_vsync`], [`wait_for_cap`]):
+//! frames still come in under the refresh rate, so the screen shows each as it is done.
 //!
 //! The cap waits once a frame until a frame's time (1/cap s) has passed since the last one,
 //! sleeping and then spinning the last millisecond (a sleep alone can wake a millisecond
@@ -116,6 +119,23 @@ pub struct FramePace {
     pub sync: DisplaySync,
     /// Frames per second at most, as chosen on the page; 0: no cap.
     pub cap: u32,
+}
+
+impl FramePace {
+    /// Whether the window presents with vsync, `dlssg` whether DLSS Frame Generation is asked
+    /// for (`frame_gen::DlssgRequest`): as the display sync says, except that Variable refresh
+    /// presents with vsync off while DLSS-G is asked for. DLSS-G needs vsync off on Vulkan
+    /// (`frame_gen::dlss_unavailable_reason`); its frames are held under the refresh rate by
+    /// variable refresh's cap, handed to Reflex ([`wait_for_cap`]), so a G-Sync screen still
+    /// shows each one as it comes, without tearing [design: the vsync-off-and-cap setup VRR
+    /// screens are run with; docs/spec-notes/display-sync.md].
+    pub fn presents_vsync(&self, dlssg: bool) -> bool {
+        match self.sync {
+            DisplaySync::Off => false,
+            DisplaySync::Vsync => true,
+            DisplaySync::Variable => !dlssg,
+        }
+    }
 }
 
 /// The window's monitor's refresh rate in millihertz (`None`: not known yet), and the cap
@@ -301,32 +321,36 @@ pub fn effective_cap(cap: u32, vrr: u32) -> u32 {
 /// the cap the limiter keeps ([`wait_for_cap`]: the page's, variable refresh's and frame
 /// generation's real-frame cap), with vsync and the window's refresh rate. Frame generation's
 /// cap is the one its switch set last frame.
-fn tell_physics(pace: Res<FramePace>, refresh: Res<Refresh>, fg: Option<Res<crate::frame_gen::FrameGenCap>>, physics: Option<ResMut<nvf_play::phys_rate::DisplayPace>>) {
+fn tell_physics(pace: Res<FramePace>, refresh: Res<Refresh>, fg: Option<Res<crate::frame_gen::FrameGenCap>>, dlssg: Option<Res<crate::frame_gen::DlssgRequest>>, physics: Option<ResMut<nvf_play::phys_rate::DisplayPace>>) {
     let Some(mut physics) = physics else { return };
     let cap = effective_cap(effective_cap(pace.cap, refresh.vrr_cap), fg.map_or(0, |c| c.0));
-    let hz = nvf_play::phys_rate::display_hz(cap, pace.sync.vsync(), refresh.millihertz);
+    let hz = nvf_play::phys_rate::display_hz(cap, pace.presents_vsync(dlssg.is_some_and(|r| r.on)), refresh.millihertz);
     physics.set_if_neq(nvf_play::phys_rate::DisplayPace(hz));
 }
 
-/// The window's present mode as `sync` asks, when that changes. (DLSS Frame Generation needs
-/// vsync off on Vulkan: its row's DLSS choice asks for Display sync Off rather than this
-/// overriding it, `frame_gen::dlss_unavailable_reason`.)
-fn apply_vsync(pace: Res<FramePace>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
-    if !pace.is_changed() {
-        return;
-    }
-    let mode = if pace.sync.vsync() { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
+/// The window's present mode as the display sync asks ([`FramePace::presents_vsync`]), when
+/// that changes. DLSS Frame Generation needs vsync off on Vulkan: with Vertical sync its row's
+/// DLSS choice is dimmed (`frame_gen::dlss_unavailable_reason`); with Variable refresh the
+/// window presents with vsync off while DLSS-G is asked for. The request is made before this
+/// (`frame_gen::request_dlssg`), so the swapchain DLSS-G's load makes in the same frame's
+/// extraction already has the mode it needs, and the one made when DLSS-G is unloaded has
+/// vsync again.
+fn apply_vsync(pace: Res<FramePace>, dlssg: Option<Res<crate::frame_gen::DlssgRequest>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
+    let dlssg = dlssg.is_some_and(|r| r.on);
+    let vsync = pace.presents_vsync(dlssg);
+    let mode = if vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
     for mut w in &mut windows {
         if w.present_mode != mode {
             w.present_mode = mode;
-            info!("frame pace: vsync {}", if pace.sync.vsync() { "on" } else { "off" });
+            let why = if pace.sync == DisplaySync::Variable && dlssg { " (variable refresh with DLSS Frame Generation: its frames held under the refresh rate by the cap)" } else { "" };
+            info!("frame pace: vsync {}{why}", if vsync { "on" } else { "off" });
         }
     }
 }
 
 /// Note the window's monitor's refresh rate and, with variable refresh, the cap it gives;
 /// one line each time that cap changes.
-fn watch_refresh(pace: Res<FramePace>, windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>, monitors: Query<(&Monitor, Has<PrimaryMonitor>)>, mut refresh: ResMut<Refresh>, mut said: Local<Option<(DisplaySync, Option<u32>)>>) {
+fn watch_refresh(pace: Res<FramePace>, dlssg: Option<Res<crate::frame_gen::DlssgRequest>>, windows: Query<(&Window, Option<&OnMonitor>), With<PrimaryWindow>>, monitors: Query<(&Monitor, Has<PrimaryMonitor>)>, mut refresh: ResMut<Refresh>, mut said: Local<Option<(DisplaySync, Option<u32>, bool)>>) {
     let Ok((w, on)) = windows.single() else { return };
     let monitor = on.and_then(|o| monitors.get(o.0).ok()).or_else(|| monitors.iter().find(|m| m.1)).or_else(|| monitors.iter().next()).map(|m| m.0);
     let millihertz = match w.mode {
@@ -339,7 +363,8 @@ fn watch_refresh(pace: Res<FramePace>, windows: Query<(&Window, Option<&OnMonito
     if *refresh != now {
         *refresh = now;
     }
-    let key = (pace.sync, millihertz);
+    let vsync = pace.presents_vsync(dlssg.is_some_and(|r| r.on));
+    let key = (pace.sync, millihertz, vsync);
     if *said == Some(key) || (pace.sync == DisplaySync::Variable && millihertz.is_none() && monitors.is_empty()) {
         return;
     }
@@ -349,9 +374,9 @@ fn watch_refresh(pace: Res<FramePace>, windows: Query<(&Window, Option<&OnMonito
     }
     let hz = |m: u32| format!("{:.0}", f64::from(m) / 1000.0);
     match (millihertz, vrr) {
-        (Some(m), c) if c > 0 => info!("frame pace: variable refresh, at most {c} fps (the monitor's {} Hz), vsync on", hz(m)),
-        (Some(m), _) => warn!("frame pace: variable refresh, the monitor's {} Hz is too slow to cap under; vsync only", hz(m)),
-        (None, _) => warn!("frame pace: variable refresh, the monitor's refresh rate is not known; vsync only, no cap"),
+        (Some(m), c) if c > 0 => info!("frame pace: variable refresh, at most {c} fps (the monitor's {} Hz), vsync {}", hz(m), if vsync { "on" } else { "off for DLSS Frame Generation, the cap through Reflex" }),
+        (Some(m), _) => warn!("frame pace: variable refresh, the monitor's {} Hz is too slow to cap under; {}", hz(m), if vsync { "vsync only" } else { "vsync off for DLSS Frame Generation, no cap" }),
+        (None, _) => warn!("frame pace: variable refresh, the monitor's refresh rate is not known; {}, no cap", if vsync { "vsync only" } else { "vsync off for DLSS Frame Generation" }),
     }
 }
 
@@ -589,6 +614,43 @@ mod tests {
             let c = vrr_cap(hz * 1000).unwrap();
             assert!(c + 3 <= hz && c >= 30, "{hz} Hz: {c}");
         }
+    }
+
+    #[test]
+    fn variable_refresh_presents_with_vsync_off_only_for_dlss_frame_generation() {
+        let pace = |sync| FramePace { sync, cap: 0 };
+        for dlssg in [false, true] {
+            assert!(!pace(DisplaySync::Off).presents_vsync(dlssg));
+            assert!(pace(DisplaySync::Vsync).presents_vsync(dlssg), "Vertical sync dims DLSS-G rather than giving way");
+        }
+        assert!(pace(DisplaySync::Variable).presents_vsync(false));
+        assert!(!pace(DisplaySync::Variable).presents_vsync(true));
+    }
+
+    /// The window's present mode follows DLSS-G's request with Variable refresh, both ways, and
+    /// the display sync alone otherwise.
+    #[test]
+    fn the_window_follows_the_dlssg_request_with_variable_refresh() {
+        let mut app = App::new();
+        app.insert_resource(FramePace { sync: DisplaySync::Variable, cap: 0 })
+            .insert_resource(crate::frame_gen::DlssgRequest { on: false, frames: 1 })
+            .add_systems(Update, apply_vsync);
+        let window = app.world_mut().spawn((Window::default(), PrimaryWindow)).id();
+        let mode = |app: &App| app.world().get::<Window>(window).unwrap().present_mode;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoVsync);
+        app.world_mut().resource_mut::<crate::frame_gen::DlssgRequest>().on = true;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoNoVsync, "DLSS-G asked for: vsync off");
+        app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Vsync;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoVsync, "Vertical sync keeps vsync");
+        app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Variable;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoNoVsync);
+        app.world_mut().resource_mut::<crate::frame_gen::DlssgRequest>().on = false;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoVsync, "DLSS-G no longer asked for: vsync again");
     }
 
     #[test]

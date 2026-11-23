@@ -21,6 +21,15 @@ choice. Code: `engine/nvforever/src/frame_pace.rs`, the settings row in
   138 at 144 Hz); no vendor document found here states a figure [hypothesis: the margin
   is enough for our sleep-then-spin limiter, whose error is under 1 ms]. A page frame-rate
   limit below it wins.
+- **Variable refresh with DLSS Frame Generation**: DLSS-G needs vsync off on Vulkan
+  [documented: "VSync with Frame Generation is only supported on D3D12",
+  `ProgrammingGuideDLSS_G.md` §22.5], so while it is asked for the window presents with
+  vsync off (`AutoNoVsync`) and the same cap, on frames shown, goes to Reflex's frame limit
+  divided by the frames DLSS-G presents per real frame (`frame_pace::wait_for_cap`) [design].
+  Frames then reach the screen under its refresh rate, where a VRR screen refreshes on each
+  one; vsync is only what would hold a frame that came in faster than the screen's top rate
+  [hypothesis: no tearing with the cap's margin; to be seen on the owner's G-SYNC screen].
+  Vertical sync still dims DLSS-G ("Needs vsync off").
 - The refresh rate is the window's monitor's, from winit, which documents it as "the
   monitor refresh rate used by the system" and says to use the video mode's rate in
   exclusive full screen [documented: winit 0.30.13 `MonitorHandle::refresh_rate_millihertz`];

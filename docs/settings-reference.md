@@ -323,7 +323,8 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 - In full: Vertical sync: each frame waits for the display's refresh (no tearing). Variable
   refresh: for a G-Sync or FreeSync screen, vertical sync with the frame rate held a few
   frames under the screen's refresh rate, so frames are shown as soon as they are drawn
-  without tearing. Off: frames are shown as soon as they are drawn (may tear).
+  without tearing; with DLSS frame generation, vertical sync is off and the limit is kept.
+  Off: frames are shown as soon as they are drawn (may tear).
 - Registered in `engine/nvforever/src/settings.rs`
 
 ### `frame-cap`: Frame rate limit
@@ -446,9 +447,9 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   upscaling (any mode; not with DLSS) and vertical sync or variable refresh, and real frames
   are held to just under half the refresh rate. DLSS: NVIDIA DLSS Frame Generation, one to
   three frames for each real frame (Generated frames, below); needs an upscaler (FSR 3.1 or
-  DLSS), Display sync Off, an NVIDIA RTX 40 series or newer graphics card, Windows'
-  hardware-accelerated GPU scheduling and NVIDIA's frame generation files in the dlss folder
-  beside nvforever.exe; frames are generated only while the game's window is in front.
+  DLSS), Display sync Off or Variable refresh, an NVIDIA RTX 40 series or newer graphics
+  card, Windows' hardware-accelerated GPU scheduling and NVIDIA's frame generation files in
+  the dlss folder beside nvforever.exe; frames are generated only while the game's window is in front.
   Latency reduction turns on with either. The HUD and menus are not generated; menus and
   loading screens show real frames only. Best from 60 real frames a second. Not in the
   original.

@@ -261,8 +261,10 @@ It needs:
   Display > Graphics > Change default graphics settings), then a restart of Windows;
 - an upscaler: FSR 3.1 or DLSS, any mode (frame generation reads the upscaler's depth and
   motion);
-- **Display sync: Off**: on Vulkan, NVIDIA's frame generation does not run with vertical sync.
-  A G-Sync screen still shows the frames as they come;
+- **Display sync: Off or Variable refresh**: on Vulkan, NVIDIA's frame generation does not run
+  with vertical sync. With Variable refresh the game turns vsync off while it runs and keeps the
+  frames a few under the screen's refresh rate (through NVIDIA's Reflex), so a G-Sync screen
+  shows each frame as it comes; that is the choice for a G-Sync screen;
 - the game's window in front: while another window is in front, no frames are generated.
 
 When it cannot run, the DLSS choice is greyed out with the reason: "The DLSS Frame Generation

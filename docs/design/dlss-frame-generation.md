@@ -26,7 +26,7 @@ when it cannot run, checked in this order:
 | Needs a newer NVIDIA driver | It answered `eErrorDriverOutOfDate`. |
 | Not on this GPU | Any other refusal (slInit or the device check with DLSS-G, a function not handed out), or not Windows. |
 | Needs an upscaler | No upscaler draws: DLSS-G takes the upscaler's depth and motion (FSR 3.1 or DLSS, any mode). |
-| Needs vsync off | Display sync is Vertical sync or Variable refresh: DLSS-G requires vsync off on Vulkan [observed: its requirements' "vsync off required yes"; documented: "VSync with Frame Generation is only supported on D3D12", `ProgrammingGuideDLSS_G.md` §22.5]. |
+| Needs vsync off | Display sync is Vertical sync: DLSS-G requires vsync off on Vulkan [observed: its requirements' "vsync off required yes"; documented: "VSync with Frame Generation is only supported on D3D12", `ProgrammingGuideDLSS_G.md` §22.5]. Variable refresh is no bar: while DLSS-G is asked for the window presents with vsync off (`frame_pace::FramePace::presents_vsync`) and variable refresh's cap goes to Reflex as the page's does (below). |
 
 Frames are generated only while the game's window is in front [observed: with other windows in
 front the ratio fell to 1.00 with the mode on and status `eOk`; the smoke runner's
@@ -209,7 +209,8 @@ play, the live switch and exit as designed.
 
 ## Limits
 
-- Windows, Vulkan, NVIDIA RTX 40 series or newer; vsync off on Vulkan.
+- Windows, Vulkan, NVIDIA RTX 40 series or newer; vsync off on Vulkan (Display sync Off, or
+  Variable refresh, which presents with vsync off while DLSS-G is asked for).
 - Only while the game's window is in front.
 - The UI alpha treats translucent HUD pixels as opaque.
 - The picture has been judged by eye only in passing (the HUD smear without the UI buffer before

@@ -29853,6 +29853,31 @@ forbid = [
 ]
 
 [[scenario]]
+name = "dlssg-variable-refresh"
+source = "docs/spec-notes/display-sync.md, docs/design/dlss-frame-generation.md: Display sync Variable refresh picked on the settings page while Frame generation is DLSS: DLSS-G, dimmed under the start's Vertical sync, runs; the window presents with vsync off while it is asked for and variable refresh's cap stays (through Reflex)"
+note = "needs NVF_DLSS_DIR with the four DLSS Frame Generation files (docs/dlss.md), an RTX 40 series or newer and Windows' GPU scheduling on; front = true as dlssg-on. The home of its own starts at the default Vertical sync, so DLSS-G is held off until the page's choice."
+areas = ["graphics", "settings"]
+paths = ["engine/nvforever/src/dlss/**", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/frame_pace.rs"]
+requires = ["NVF_DLSS_DIR"]
+front = true
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-variable-refresh-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:page,12:display-sync=Variable refresh" }
+args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--no-voice", "--no-lodgen"]
+run_seconds = 30
+expect = [
+  { text = "settings: display-sync Variable refresh", label = "Variable refresh is chosen" },
+  { re = 'frame pace: vsync off \(variable refresh with DLSS Frame Generation', label = "the window presents with vsync off for DLSS-G" },
+  { re = 'frame pace: variable refresh, at most \d+ fps \(the monitor.s \d+ Hz\), vsync off for DLSS Frame Generation', label = "variable refresh's cap kept" },
+  { re = 'DLSS-G: options: mode On, 1 generated frame\(s\) per real frame', label = "frame generation on in play" },
+]
+order = [["settings: display-sync Variable refresh", "frame pace: vsync off (variable refresh with DLSS Frame Generation"]]
+forbid = [
+  { text = "Couldn't get swap chain texture", label = "an acquire timeout or failure after the present mode changed" },
+  { text = "Validation Error", label = "a Vulkan validation error" },
+  { text = "Caught rendering error", label = "a rendering error while DLSS-G switched on" },
+  { re = 'present and acquire errors since last: [1-9]', label = "a VkResult error from DLSS-G over the vsync-off swapchain" },
+]
+
+[[scenario]]
 name = "dlssg-4x"
 source = "#2317, docs/design/dlss-frame-generation.md: Generated frames 4x picked on the settings page during play: three generated frames per real frame where the GPU offers them (DLSSGState::numFramesToGenerateMax), else as many as it offers"
 note = "needs NVF_DLSS_DIR with the frame generation files; front = true as dlssg-on. Tolerant of the GPU by the state line's limit: with 'frames to generate at most 1' (RTX 40 series) 4x is held back and 2x runs; from 3 up (RTX 50 series) 4x runs. The home of its own keeps the choice between runs, so the settings line is not expected."
