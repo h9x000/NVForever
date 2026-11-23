@@ -440,7 +440,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
     let files = Files::new();
     files.write("ySI.json", &certain("Owned/base.dds"));
     let f = fixture();
-    for n in 0..31 {
+    for n in 0..127 {
         files.write(&format!("owned-{n}.json"), "{}");
     }
     let mut at_bound = game(&f);
@@ -451,7 +451,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
         ),
         XVal::Str("Owned/base.dds".into())
     );
-    files.write("owned-31.json", "{}");
+    files.write("owned-127.json", "{}");
     let mut g = game(&f);
     assert_eq!(
         query(
@@ -460,7 +460,7 @@ fn mapped_file_bound_and_malformed_configuration_refuse_explicitly() {
         ),
         Err("ySI filename configuration exceeds the mapped file bound".into())
     );
-    for n in 0..32 {
+    for n in 0..128 {
         std::fs::remove_file(
             files
                 .root
@@ -1064,4 +1064,133 @@ fn empty_auxiliary_json_stubs_are_ignored_while_main_file_and_bad_comments_still
         query(&mut empty_main, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"),
         Err("invalid ySI commented configuration".into())
     );
+}
+
+#[test]
+fn weapon_armor_and_aid_record_predicates_match_and_disqualify_cleanly() {
+    const GUN: FormId = FormId(0x850);
+    const HELMET: FormId = FormId(0x851);
+    const POWER_SUIT: FormId = FormId(0x852);
+    const FOOD: FormId = FormId(0x853);
+    const MED: FormId = FormId(0x854);
+    const WITHDRAWAL: FormId = FormId(0x855);
+
+    let mut dnam = vec![0u8; 204];
+    // WeaponDNAM (204 B): animation_type at 0..4 = 6 (Rifle - Automatic), flags1 at 12 = 0x07 (ignores DT/DR | auto | scope), skill at 104..108 = 41 (Guns).
+    dnam[0..4].copy_from_slice(&6u32.to_le_bytes());
+    dnam[12] = 0x07;
+    dnam[104..108].copy_from_slice(&41u32.to_le_bytes());
+    let weap_data = [100i32.to_le_bytes().as_slice(), &100i32.to_le_bytes(), &2.0f32.to_le_bytes(), &10i16.to_le_bytes(), &[12u8]].concat();
+    let gun = record(b"WEAP", 0, GUN.0, &[sub(b"EDID", z("OwnYsiGun")), sub(b"DATA", weap_data), sub(b"DNAM", dnam)]);
+
+    let make_armo = |id: FormId, edid: &str, slots: u32, general: u8| {
+        let bmdt = [slots.to_le_bytes().as_slice(), &[general, 0, 0, 0]].concat();
+        let data = [100i32.to_le_bytes().as_slice(), &100i32.to_le_bytes(), &5.0f32.to_le_bytes()].concat();
+        let dnam = [0i16.to_le_bytes().as_slice(), &[0, 0], &10.0f32.to_le_bytes(), &[0, 0, 0, 0]].concat();
+        record(b"ARMO", 0, id.0, &[sub(b"EDID", z(edid)), sub(b"BMDT", bmdt), sub(b"DATA", data), sub(b"DNAM", dnam)])
+    };
+    let helmet = make_armo(HELMET, "OwnYsiHelmet", 1 << 0, 0x08);
+    let power_suit = make_armo(POWER_SUIT, "OwnYsiPowerSuit", 1 << 2, 0xA0);
+
+    let make_alch = |id: FormId, edid: &str, flags: u8, withdrawal: u32| {
+        let enit = [1u32.to_le_bytes().as_slice(), &[flags, 0, 0, 0], &withdrawal.to_le_bytes(), &0.5f32.to_le_bytes(), &0u32.to_le_bytes()].concat();
+        record(b"ALCH", 0, id.0, &[sub(b"EDID", z(edid)), sub(b"ETYP", 10i32.to_le_bytes().to_vec()), sub(b"DATA", 0.5f32.to_le_bytes().to_vec()), sub(b"ENIT", enit)])
+    };
+    let food = make_alch(FOOD, "OwnYsiFood", 0x02, 0);
+    let med = make_alch(MED, "OwnYsiMed", 0x04, WITHDRAWAL.0);
+    let spel = record(b"SPEL", 0, WITHDRAWAL.0, &[sub(b"EDID", z("OwnYsiWithdrawal"))]);
+    let misc = record(b"MISC", 0, ITEM.0, &[sub(b"EDID", z("OwnYsiItem")), sub(b"DATA", [1i32.to_le_bytes(), 1f32.to_le_bytes()].concat())]);
+    let room = record(b"CELL", 0, 0x200, &[sub(b"EDID", z("OwnYsiRoom"))]);
+    let bytes = [
+        tes4(),
+        top(b"MISC", &misc),
+        top(b"WEAP", &gun),
+        top(b"ARMO", &[helmet, power_suit].concat()),
+        top(b"ALCH", &[food, med].concat()),
+        top(b"SPEL", &spel),
+        top(b"NPC_", &record(b"NPC_", 0, 7, &[sub(b"EDID", z("Player"))])),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &room))),
+    ]
+    .concat();
+    let plugins = vec![Plugin::parse(&bytes, "OwnedYsi.esm".into()).unwrap()];
+    let order = LoadOrder::new(&plugins).unwrap();
+    let schema = Schema::load_dir(concat!(env!("CARGO_MANIFEST_DIR"), "/../../schemas/fnv")).unwrap();
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../schemas/script/functions.json");
+    let catalogue = serde_json::from_slice(&std::fs::read(&path).unwrap()).unwrap();
+    let forms = FormStore::build(&order, &schema);
+    let refs = RefTable::build(&order, &schema);
+    let data = GameData::build(&order, &schema, FunctionTable::load(&path).unwrap(), &catalogue, &refs);
+    let f = Fixture { data, forms, refs };
+
+    let files = Files::new();
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "formType": 31, "tag": "MiscBase"},
+                {"priority": 20, "weaponSkill": 41, "weaponType": [5, 6], "weaponIsAutomatic": 1, "weaponHasScope": 1, "weaponIgnoresDTDR": 1, "tag": "AutoScopedGun"},
+                {"priority": 20, "armorClass": 2, "armorHead": 1, "armorHat": -1, "armorMask": -1, "armorPower": 0, "tag": "MedHelmet"},
+                {"priority": 20, "armorClass": 3, "armorUpperBody": 1, "armorPower": 1, "tag": "PowerArmor"},
+                {"priority": 20, "aidIsFood": 1, "aidIsMedicine": 0, "aidIsAddictive": 0, "tag": "FoodItem"},
+                {"priority": 20, "aidIsMedicine": 1, "aidIsAddictive": 1, "tag": "AddictiveMed"},
+                // High-priority rule with unknown predicate is decisively disqualified on non-WEAP forms via weaponSkill.
+                {"priority": 50, "weaponSkill": 34, "unknownPredicate": 1, "tag": "EnergyUnknown"}
+            ]),
+            serde_json::json!([
+                {"priority": 10, "tag": "MiscBase", "filename": "Owned/misc.dds"},
+                {"priority": 10, "tag": "AutoScopedGun", "filename": "Owned/auto-gun.dds"},
+                {"priority": 10, "tag": "MedHelmet", "filename": "Owned/helmet.dds"},
+                {"priority": 10, "tag": "PowerArmor", "filename": "Owned/power.dds"},
+                {"priority": 10, "tag": "FoodItem", "filename": "Owned/food.dds"},
+                {"priority": 10, "tag": "AddictiveMed", "filename": "Owned/med.dds"}
+            ]),
+        ),
+    );
+    let mut g = game(&f);
+
+    // Non-WEAP forms disqualify the priority-50 EnergyUnknown rule instead of refusing on unknownPredicate.
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiItem)"), XVal::Str("Owned/misc.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiGun)"), XVal::Str("Owned/auto-gun.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiHelmet)"), XVal::Str("Owned/helmet.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiPowerSuit)"), XVal::Str("Owned/power.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiFood)"), XVal::Str("Owned/food.dds".into()));
+    assert_eq!(success(&mut g, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiMed)"), XVal::Str("Owned/med.dds".into()));
+
+    // Malformed boolean flag values remain conservative Match::Unknown and refuse.
+    files.write(
+        "ySI.json",
+        &config(
+            serde_json::json!([
+                {"priority": 10, "armorClass": 2, "tag": "MedHelmet"},
+                {"priority": 30, "armorHead": 2, "tag": "BadFlag"}
+            ]),
+            serde_json::json!([{"priority": 10, "tag": "MedHelmet", "filename": "Owned/helmet.dds"}]),
+        ),
+    );
+    let mut bad = game(&f);
+    assert_eq!(
+        query(&mut bad, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiHelmet)"),
+        Err("an unsupported ySI predicate could change the highest-priority tag".into())
+    );
+
+    // Non-existent shorthand key names (`weaponAutomatic` / `weaponScope`) stay Match::Unknown
+    // rather than aliasing `weaponIsAutomatic` / `weaponHasScope`.
+    for unknown_key in ["weaponAutomatic", "weaponScope"] {
+        files.write(
+            "ySI.json",
+            &config(
+                serde_json::json!([
+                    {"priority": 10, "weaponSkill": 41, "tag": "GunsBase"},
+                    {"priority": 30, unknown_key: 1, "tag": "UnknownShorthand"}
+                ]),
+                serde_json::json!([{"priority": 10, "tag": "GunsBase", "filename": "Owned/auto-gun.dds"}]),
+            ),
+        );
+        let mut g_unknown = game(&f);
+        assert_eq!(
+            query(&mut g_unknown, "SetFunctionValue (ySIGetTrait \"filename\" OwnYsiGun)"),
+            Err("an unsupported ySI predicate could change the highest-priority tag".into()),
+            "{unknown_key} must stay Match::Unknown"
+        );
+    }
 }

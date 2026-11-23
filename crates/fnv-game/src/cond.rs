@@ -131,6 +131,28 @@ impl ParamTypes {
     }
 }
 
+/// IsGreetingPlayer's condition index, without parameters [documented: xEdit
+/// wbCTDAFunctions (Core/wbDefinitionsFNV.pas), "Index: 123; Name: 'IsGreetingPlayer'"].
+/// No page in the script catalogue and no script opcode; its one use in the masters is
+/// IDLE `GreetIdles` (0x00003BE0), `== 1` [observed: a scan of every CTDA, #3614].
+pub const IS_GREETING_PLAYER: u16 = 123;
+
+/// GetUsedItemLevel's condition index, without parameters [documented: xEdit
+/// wbCTDAFunctions, "Index: 258; Name: 'GetUsedItemLevel'"]. Its uses in the masters are
+/// the ground pick-up idles `SBGroundGrab` (0x000612AC) and `LoosePickUpGroundObject`
+/// (0x0006123C), `== 0` [observed: #3614].
+pub const GET_USED_ITEM_LEVEL: u16 = 258;
+
+/// Whether condition index `function` is answered without a registered script function
+/// (`Game::condition_value`): IsLastIdlePlayed, the VATS area functions, the three
+/// extender aliases below, IsGreetingPlayer and GetUsedItemLevel. `fnvtool script stubs`
+/// counts every other index a CTDA uses that the registry does not know.
+pub fn answered_without_opcode(function: u16) -> bool {
+    function == crate::idles::IS_LAST_IDLE_PLAYED
+        || crate::vats::is_area_function(function)
+        || matches!(function, IS_GREETING_PLAYER | GET_USED_ITEM_LEVEL | IS_PLAYER_SWIMMING | GET_PERK_RANK | GET_PC_USING_IRON_SIGHTS)
+}
+
 /// Condition indices are the existing observed command opcodes minus 0x1000.
 pub(crate) const IS_PLAYER_SWIMMING: u16 = 0x05A0;
 pub(crate) const GET_PERK_RANK: u16 = 0x05C3;
@@ -298,5 +320,24 @@ mod tests {
         assert_eq!(c.cmp, Cmp::Lt);
         assert_eq!(c.rhs, Operand::Global(Some(0x33)));
         assert_eq!(c.run_on, RunOn::Reference(Some(0x14)));
+    }
+}
+
+#[cfg(test)]
+mod condition_only_tests {
+    use super::*;
+
+    /// #3614: indices 123 and 258 are answered without a script function, as 451 and the
+    /// VATS area functions are; a registered function's index is not in that list.
+    #[test]
+    fn greeting_and_used_item_level_are_answered_without_an_opcode() {
+        assert!(answered_without_opcode(IS_GREETING_PLAYER));
+        assert!(answered_without_opcode(GET_USED_ITEM_LEVEL));
+        assert!(answered_without_opcode(crate::idles::IS_LAST_IDLE_PLAYED));
+        assert_eq!(0x1000 + IS_GREETING_PLAYER, 0x107B);
+        assert_eq!(0x1000 + GET_USED_ITEM_LEVEL, 0x1102);
+        assert!(crate::functions::lookup(0x1000 + IS_GREETING_PLAYER).is_none());
+        // GetDisposition (0x104C) is a registered function, not one of these.
+        assert!(!answered_without_opcode(0x4C));
     }
 }

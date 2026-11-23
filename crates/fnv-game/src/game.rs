@@ -370,6 +370,11 @@ pub struct RefExtra {
     /// Who killed the actor (KillActor's killer), for IsKiller.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub killer: Option<FormId>,
+    /// GameDaysPassed when the actor died, for GetTimeDead; cleared by a Disable ("If the
+    /// actor gets disabled after dying, it loses its info about when it has died"
+    /// [documented: GECK wiki GetTimeDead]). `None` for a corpse laid out at the start.
+    #[serde(skip_serializing_if = "Option::is_none", default)]
+    pub died_day: Option<f64>,
     /// KillActor's cause of death, which GetCauseofDeath reads before the killing hit.
     #[serde(skip_serializing_if = "Option::is_none", default)]
     pub death_cause: Option<i32>,
@@ -1106,6 +1111,9 @@ pub mod menus {
     /// GetSelectedItemRef, "Pipboy DATA Menu (1023) - Quest/Note/Challenge";
     /// GetMenuTargetRef, "1023 The Map Marker on which the mouse is over"].
     pub const MAP: u16 = 1023;
+    /// The book/scroll reading menu [documented: GECK wiki Hardcoded UI Shortcuts,
+    /// revision 39903, `BookMenu` class ID 1026; `fnv_ui::value::MENU_CLASSES`].
+    pub const BOOK: u16 = 1026;
     /// The sleep/wait menu (`nvf-play` wait.rs opens it as 1012) [documented: GECK wiki
     /// MenuMode].
     pub const SLEEP_WAIT: u16 = 1012;
@@ -1728,6 +1736,7 @@ pub struct Game<'a> {
     /// Forms added to form lists at run time.
     pub form_lists: BTreeMap<FormId, Vec<FormId>>,
     pub loaded_cells: BTreeSet<FormId>,
+    pub(crate) placed_effect_actors: Option<crate::abilities::PlacedEffectActors<'a>>,
     /// Scripted references a script moved (they may have left their authored cell).
     pub moved: BTreeSet<FormId>,
     /// References other than the player that a script put somewhere (MoveTo or a door) since the
@@ -2496,8 +2505,13 @@ const NO_FUNCTION_BLOCK: &str = " has no Function block";
 
 /// Internal callable regions. Loaded records can also occupy these numbers: allocation
 /// skips them and dispatch uses actual ownership (callable-identity.md).
-/// Ids of foreach's temporary inventory references (B5), below the lambdas'.
+/// Ids of foreach's temporary inventory references (B5), in
+/// `[TEMP_REF_BASE, CAMERA_OVERLAY_BASE)`.
 pub const TEMP_REF_BASE: u32 = 0xFE40_0000;
+/// Fixed engine-owned runtime references (such as JohnnyGuitar's camera overlay
+/// references), carved out in `[CAMERA_OVERLAY_BASE, LAMBDA_BASE)` above temporary
+/// inventory references and below lambdas [design].
+pub const CAMERA_OVERLAY_BASE: u32 = 0xFE7F_0000;
 /// Ids of the scripts CompileScript made from text files, below the temporary
 /// references' [decision, as the lambdas'].
 pub const COMPILED_BASE: u32 = 0xFE20_0000;
@@ -2622,7 +2636,7 @@ impl<'a> Game<'a> {
             save_files: Default::default(),
             traits: Default::default(),
             anim_paths: Default::default(),
-            anim_folders: Default::default(),
+            anim_folders: crate::nvse_anim_folders::AnimFolders::with_seed(cfg.seed),
             knvse: Default::default(),
             jippp: Default::default(),
             vheyes: Default::default(),
@@ -2710,6 +2724,7 @@ impl<'a> Game<'a> {
             coop: Vec::new(),
             form_lists: BTreeMap::new(),
             loaded_cells: BTreeSet::new(),
+            placed_effect_actors: None,
             moved: BTreeSet::new(),
             teleported: BTreeSet::new(),
             rotations: BTreeMap::new(),
@@ -3109,6 +3124,12 @@ impl<'a> Game<'a> {
             // "If the quest itself is already complete, no message will be displayed"].
             let silent = !d1 || self.quest(q).completed;
             self.emit(EventKind::ObjectiveCompleted { quest: q, index, on: c1, silent });
+        }
+        if displayed.is_some() && !d0 && d1 {
+            self.showoff_on_display_objective(q, index);
+        }
+        if !c0 && c1 {
+            self.showoff_on_complete_objective(q, index);
         }
         true
     }
@@ -3845,17 +3866,21 @@ impl<'a> Game<'a> {
     }
 
     /// A temporary inventory reference for one kind of item in a container (B5).
+    /// Bounded strictly below [`CAMERA_OVERLAY_BASE`] so temporary inventory references
+    /// can never collide with reserved camera overlay references.
     pub(crate) fn temp_ref(&mut self, container: FormId, item: FormId) -> FormId {
         if let Some(i) = self.temp_refs.iter().position(|&(c, x)| c == container && x == item) {
             return FormId(TEMP_REF_BASE + i as u32);
         }
+        let max = (CAMERA_OVERLAY_BASE - TEMP_REF_BASE) as usize;
+        assert!(self.temp_refs.len() < max, "temporary inventory references exhausted");
         self.temp_refs.push((container, item));
         FormId(TEMP_REF_BASE + self.temp_refs.len() as u32 - 1)
     }
 
     /// The container and item of a live temporary inventory reference.
     pub fn temp_item(&self, r: FormId) -> Option<(FormId, FormId)> {
-        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < LAMBDA_BASE)?;
+        let i = r.0.checked_sub(TEMP_REF_BASE).filter(|_| r.0 < CAMERA_OVERLAY_BASE)?;
         self.temp_refs.get(i as usize).copied()
     }
 
@@ -6530,20 +6555,30 @@ impl<'a> Game<'a> {
 
     /// ApplyImageSpaceModifier: the modifier starts playing. One that is already on the
     /// screen starts again from its beginning [hypothesis: one instance per modifier;
-    /// image-modifiers.md §3].
+    /// image-modifiers.md §3]. Dispatches xNVSE `OnApplyIMOD` with `(modifier)` when
+    /// handled [documented: GECK wiki NVSE Event Handling; hypothesis: 1-arg layout and
+    /// re-apply dispatch].
     pub fn apply_image_modifier(&mut self, modifier: FormId) {
         self.image_modifiers.retain(|m| m.modifier != modifier);
         self.image_modifiers.push(ActiveImageModifier { modifier, elapsed: 0.0 });
         self.emit(EventKind::ImageModifierApplied { modifier });
+        if self.handled("onapplyimod") {
+            self.dispatch_event("OnApplyIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+        }
     }
 
-    /// RemoveImageSpaceModifier: whether the modifier was on the screen.
+    /// RemoveImageSpaceModifier: whether the modifier was on the screen. Dispatches
+    /// xNVSE `OnRemoveIMOD` with `(modifier)` when an active modifier is removed and
+    /// handled [documented: GECK wiki NVSE Event Handling; hypothesis: 1-arg layout].
     pub fn remove_image_modifier(&mut self, modifier: FormId) -> bool {
         let before = self.image_modifiers.len();
         self.image_modifiers.retain(|m| m.modifier != modifier);
         let was = self.image_modifiers.len() != before;
         if was {
             self.emit(EventKind::ImageModifierRemoved { modifier, ended: false });
+            if self.handled("onremoveimod") {
+                self.dispatch_event("OnRemoveIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+            }
         }
         was
     }
@@ -6556,6 +6591,8 @@ impl<'a> Game<'a> {
     /// Age the modifiers; an animatable one whose duration has passed ends [hypothesis
     /// from the shipped scripts: 29 lines wait for IsImageSpaceActive to read 0 on
     /// FadeToBlackISFX (4 s), which no script removes; image-modifiers.md §3].
+    /// Dispatches xNVSE `OnRemoveIMOD` when an active modifier expires and is handled
+    /// [hypothesis: natural duration expiry fires `OnRemoveIMOD`].
     fn update_image_modifiers(&mut self, dt: f64) {
         let data = self.data;
         let mut ended = Vec::new();
@@ -6569,6 +6606,9 @@ impl<'a> Game<'a> {
         });
         for modifier in ended {
             self.emit(EventKind::ImageModifierRemoved { modifier, ended: true });
+            if self.handled("onremoveimod") {
+                self.dispatch_event("OnRemoveIMOD", vec![fnv_script::vm::XVal::Ref(modifier.0)], None);
+            }
         }
     }
 
@@ -6658,6 +6698,16 @@ impl<'a> Game<'a> {
         // IsLastIdlePlayed has a condition index but no script opcode (`crate::idles`).
         if c.function == crate::idles::IS_LAST_IDLE_PLAYED {
             return crate::idles::is_last_idle_played(self, on, &c.params);
+        }
+        // IsGreetingPlayer and GetUsedItemLevel have condition indices only (`cond`, #3614).
+        if c.function == cond::IS_GREETING_PLAYER {
+            return if on.is_some_and(|a| self.is_greeting_player(a)) { 1.0 } else { 0.0 };
+        }
+        // What "the used item's level" counts is not documented; 0 keeps the only
+        // conditions on it (the ground pick-up idles, `== 0`) passing, as they did before
+        // the index was named [hypothesis: a level of 0 is the ground, the idles' case].
+        if c.function == cond::GET_USED_ITEM_LEVEL {
+            return 0.0;
         }
         // The VATS area functions have condition indices only, too (`crate::vats`).
         if crate::vats::is_area_function(c.function) {
@@ -7570,6 +7620,11 @@ impl Host for Exec<'_, '_> {
         // The player reference is no record of a plugin [documented: PlayerREF, 00000014].
         if let Some(s) = self.game.data.sig(f).or_else(|| (f == FormId::PLAYER_REF).then_some(*b"ACHR")) {
             return Some(s);
+        }
+        // Built-in JohnnyGuitar camera overlay references fall back to REFR only when no
+        // loaded plugin record occupies the same FormID [design].
+        if crate::nvse_jg_nif::is_camera_overlay_ref(f) {
+            return Some(*b"REFR");
         }
         // A reference made at run time (a dropped item, PlaceAtMe) is a reference too, an
         // actor's by its base [observed: rgb-ui, OnDrop's dropped stimpak is a reference

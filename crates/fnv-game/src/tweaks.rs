@@ -697,6 +697,9 @@ pub struct Tweaks {
     /// `bMenuSearch`: Stewie menu search-bar tile publication (`ui_search_bar`) on
     /// supported menus.
     pub menu_search: bool,
+    /// `bArmorConditionLabel`: the body armour's condition row under the weapon's on the
+    /// HUD (queried live by mods via `StewVal`/`StewieGetValue`).
+    pub armor_condition: bool,
 }
 
 /// The factor on a vendor's repair price under the Barter Affects Repair Costs tweak:
@@ -1097,6 +1100,7 @@ impl Default for Tweaks {
             marker_removed_on_it: false,
             empty_reload_swaps_ammo: false,
             menu_search: false,
+            armor_condition: false,
         }
     }
 }

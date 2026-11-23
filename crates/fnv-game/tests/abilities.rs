@@ -46,6 +46,9 @@ const ROBOT_COPY: u32 = 0x40F;
 const GHOUL: u32 = 0x402;
 const ROBOT_REF: u32 = 0x500;
 const GHOUL_REF: u32 = 0x501;
+/// A second cell, with a ghoul of its own.
+const OTHER_CELL: u32 = 0x201;
+const OTHER_GHOUL_REF: u32 = 0x502;
 
 const P: FormId = FormId::PLAYER_REF;
 const PERCEPTION: u16 = 6;
@@ -209,6 +212,8 @@ fn plugin_bytes() -> Vec<u8> {
     let cell = record(b"CELL", 0, CELL, &[sub(b"EDID", z("TestCell"))]);
     let refs = [placed(ROBOT_REF, ROBOT), placed(GHOUL_REF, GHOUL)].concat();
     let children = group(CELL.to_le_bytes(), 6, &group(CELL.to_le_bytes(), 9, &refs));
+    let other = record(b"CELL", 0, OTHER_CELL, &[sub(b"EDID", z("OtherCell"))]);
+    let other_children = group(OTHER_CELL.to_le_bytes(), 6, &group(OTHER_CELL.to_le_bytes(), 9, &placed(OTHER_GHOUL_REF, GHOUL)));
     [
         tes4(),
         top(b"MGEF", &mgefs),
@@ -218,7 +223,7 @@ fn plugin_bytes() -> Vec<u8> {
         top(b"PERK", &perks),
         top(b"ENCH", &enchs),
         top(b"ARMO", &armos),
-        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children].concat()))),
+        top(b"CELL", &group(0i32.to_le_bytes(), 2, &group(0i32.to_le_bytes(), 3, &[cell, children, other, other_children].concat()))),
     ]
     .concat()
 }
@@ -331,6 +336,41 @@ fn loaded_actors_get_abilities_in_the_frame() {
     g.tick();
     assert!(g.effects.iter().any(|e| e.target == FormId(ROBOT_REF) && e.source == FormId(DT_ABILITY)));
     assert!(g.effects.iter().any(|e| e.target == FormId(GHOUL_REF) && e.source == FormId(GHOUL_RAD)));
+}
+
+#[test]
+fn the_frame_rechecks_actor_presence_with_the_same_loaded_cells() {
+    let f = fixture();
+    let mut g = game(&f);
+    let robot = FormId(ROBOT_REF);
+    let has_effect = |g: &Game| g.effects.iter().any(|e| e.target == robot && e.source == FormId(DT_ABILITY));
+    // Warm the placement list while the robot is disabled and has no effects.
+    g.world.set_enabled(robot, false).unwrap();
+    g.tick();
+    assert!(!has_effect(&g));
+    g.world.set_enabled(robot, true).unwrap();
+    g.tick();
+    assert!(has_effect(&g));
+    g.loaded_cells.clear();
+    g.tick();
+    assert!(!has_effect(&g));
+    g.loaded_cells.insert(FormId(CELL));
+    g.tick();
+    assert!(has_effect(&g));
+}
+
+/// Another loaded cell, as many as before: its own actor gets its abilities in the frame,
+/// and the first cell's lose theirs.
+#[test]
+fn the_frame_follows_the_loaded_cells_to_another_actor() {
+    let f = fixture();
+    let mut g = game(&f);
+    let rad = |g: &Game, r: u32| g.effects.iter().any(|e| e.target == FormId(r) && e.source == FormId(GHOUL_RAD));
+    g.tick();
+    assert!(rad(&g, GHOUL_REF) && !rad(&g, OTHER_GHOUL_REF));
+    g.loaded_cells = [FormId(OTHER_CELL)].into();
+    g.tick();
+    assert!(!rad(&g, GHOUL_REF) && rad(&g, OTHER_GHOUL_REF));
 }
 
 /// Abilities are on an actor only while it is loaded (capture abilities-1: Victor, Rex

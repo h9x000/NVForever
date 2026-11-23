@@ -395,6 +395,20 @@ between them in the original [observed: owner playtest, #2739].
   - A thrown frag grenade (`GrenadeFragProjectile`, Lobber, speed 1,200, gravity 1.0;
     the attack held 30 loops, aimed level; one run, o26_gl frag0): its figures are under
     "A thrown grenade rolls" and "Throw speed" below.
+  - **A Lobber whose gravity is 0 falls under the full gravity** (#3441) [hypothesis;
+    observer check 289]. The load order's Lobbers with gravity 0 [observed: PROJ DATA
+    of the ten masters, 2026-11-23] are:
+    - `NVDLC05GrenadeNukaProjectile`, `NVDLC05MFCGrenadeProjectile` and
+      `NVDLC05MFCMineClusterProjectile2` (GunRunnersArsenal.esm);
+    - `MineBottleCapProjectile`, `MinePlasmaProjectile` and `MinePulseProjectile`
+      (FalloutNV.esm).
+
+    The other 33 have 1.0, except 1.5 for `NVDLC0525mmGrenadeProjectileTimed`; the frag
+    mine has 1.0. With the field taken only as a multiplier, a thrown Nuka-grenade flew
+    dead straight and had unlimited reach (player report, #3441). So a Lobber of 0 now
+    takes a multiplier of 1.0 (`ProjectileStats::fall`, the same rule as Bouncy Mult's
+    0). Its flight, its reach in VATS, an NPC's throw choice and the aim of the low arc
+    all use it. A Missile of 0 still flies straight.
 - **Explosions.**
   - Without Alt. Trigger, the explosion goes off on impact.
   - With it, a lobber bounces (× its bouncy multiplier, else `default_bounce`) and
