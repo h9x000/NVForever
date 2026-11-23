@@ -264,9 +264,22 @@ pub fn activation_from_json(v: &serde_json::Value) -> Option<Activation> {
 /// which `activate.rs` turns into effects as before scripts existed): they are traced
 /// but not applied twice.
 pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) -> Vec<ScriptEffect> {
+    effects_with_corner_clear(events, skip, 0, ctx)
+}
+
+/// Like [`effects`], dropping corner-message [`ScriptEffect::Notify`] items from events
+/// at indices below `clear_before` (emitted before a same-frame `ClearMessageQueue` call)
+/// while preserving all other effects and notifications emitted at or after `clear_before`
+/// [design].
+pub fn effects_with_corner_clear(events: &[Event], skip: &BTreeSet<usize>, clear_before: usize, ctx: &dyn EffectCtx) -> Vec<ScriptEffect> {
     let mut out = Vec::new();
     let mut added: Vec<(FormId, i32)> = Vec::new();
     let player = FormId::PLAYER_REF;
+    let push_notify = |out: &mut Vec<ScriptEffect>, idx: usize, note: Note| {
+        if idx >= clear_before {
+            out.push(ScriptEffect::Notify(note));
+        }
+    };
     // Objectives this batch shows, by quest: the game's state already has them, so
     // whether a quest was listed before is asked without them.
     let shown = |q: FormId| -> Vec<i32> {
@@ -334,7 +347,7 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                     Destination::Interior(c) => (None, Some(c)),
                     Destination::Exterior { world } => (Some(world), None),
                     Destination::Unknown => {
-                        out.push(ScriptEffect::Notify("A script moved the player to an unknown cell".into()));
+                        push_notify(&mut out, i, "A script moved the player to an unknown cell".into());
                         continue;
                     }
                 };
@@ -364,7 +377,7 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                         // A pickup's "added" line comes from its ItemAdded event
                         // (`Game::default_activation` emits both), not twice.
                         Effect::Message(_) if matches!(a.outcome, Outcome::PickedUp { .. }) => {}
-                        Effect::Message(m) if *by == player => out.push(ScriptEffect::Notify(m.into())),
+                        Effect::Message(m) if *by == player => push_notify(&mut out, i, m.into()),
                         _ => {}
                     }
                 }
@@ -374,17 +387,17 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
             // §4); a fatigue knockout shows nothing [owner request 2026-10-17].
             // The player's tweak keeps this line off [design: docs/design/tweaks.md].
             EventKind::KnockedOut { cause: "essential", .. } | EventKind::TalkedToUnconscious { .. } if ctx.tweaks().is_some_and(|t| t.no_unconscious_message) => {}
-            EventKind::KnockedOut { actor, cause: "essential" } | EventKind::TalkedToUnconscious { actor } => out.push(ScriptEffect::Notify(unconscious_line(ctx, *actor).into())),
+            EventKind::KnockedOut { actor, cause: "essential" } | EventKind::TalkedToUnconscious { actor } => push_notify(&mut out, i, unconscious_line(ctx, *actor).into()),
             EventKind::MessageShown { message, text, buttons, hidden } => {
                 let text = text.clone().unwrap_or_default();
                 if !buttons.is_empty() || ctx.is_message_box(*message) {
                     out.push(ScriptEffect::MessageBox(BoxMessage { message: message.0, text, buttons: buttons.clone(), hidden: hidden.clone() }));
                 } else if !text.trim().is_empty() {
                     let (icon, seconds) = ctx.message_look(*message);
-                    out.push(ScriptEffect::Notify(Note { text, icon, seconds }));
+                    push_notify(&mut out, i, Note { text, icon, seconds });
                 }
             }
-            EventKind::NoteShown { text, icon, seconds } if !text.trim().is_empty() => out.push(ScriptEffect::Notify(Note { text: text.clone(), icon: icon.clone(), seconds: Some(*seconds) })),
+            EventKind::NoteShown { text, icon, seconds } if !text.trim().is_empty() => push_notify(&mut out, i, Note { text: text.clone(), icon: icon.clone(), seconds: Some(*seconds) }),
             // The first objective of a quest to be shown adds the quest [documented: GECK
             // wiki SetObjectiveDisplayed]; an objective without text or a quest without a
             // name is not shown [hypothesis] (quest-messages.md §5).
@@ -415,9 +428,11 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
                 // Caps a script gave: their pick-up sound, as caps taken by hand
                 // [hypothesis: the original plays it; player report R-BR8PUBD2, #3095].
                 caps_sound |= *item == CAPS && !picked_up.contains(&CAPS);
-                match added.iter_mut().find(|(i, _)| i == item) {
-                    Some((_, n)) => *n += count,
-                    None => added.push((*item, *count)),
+                if i >= clear_before {
+                    match added.iter_mut().find(|(i, _)| i == item) {
+                        Some((_, n)) => *n += count,
+                        None => added.push((*item, *count)),
+                    }
                 }
             }
             // A skill book read: "<Skill> increased to <value>" with the default corner
@@ -429,11 +444,11 @@ pub fn effects(events: &[Event], skip: &BTreeSet<usize>, ctx: &dyn EffectCtx) ->
             EventKind::BookRead { actor, points, .. } if *actor == player && *points == 0.0 && ctx.tweaks().is_some_and(|t| t.no_book_message_without_gain) => {}
             EventKind::BookRead { actor, value, skill, .. } if *actor == player => {
                 let name = ctx.skill_name(*skill);
-                out.push(ScriptEffect::Notify(Note { text: format!("{name} increased to {}", value.round()), icon: None, seconds: None }));
+                push_notify(&mut out, i, Note { text: format!("{name} increased to {}", value.round()), icon: None, seconds: None });
             }
             EventKind::ItemRemoved { from, item, count, silent: false } if *from == player => {
                 let n = ctx.name(*item);
-                out.push(ScriptEffect::Notify(if *count > 1 { format!("{n} ({count}) removed") } else { format!("{n} removed") }.into()));
+                push_notify(&mut out, i, if *count > 1 { format!("{n} ({count}) removed") } else { format!("{n} removed") }.into());
             }
             _ => {}
         }
@@ -1136,6 +1151,31 @@ mod tests {
         ];
         let lines = effects(&events, &BTreeSet::new(), &Fake).into_iter().filter(|e| matches!(e, ScriptEffect::Notify(_))).count();
         assert_eq!(lines, 1);
+    }
+
+    #[test]
+    fn corner_clear_drops_earlier_notifications_and_keeps_other_effects_and_later_notices() {
+        let events = vec![
+            ev(EventKind::MessageShown { message: FormId(0), text: Some("before clear".into()), buttons: vec![], hidden: vec![] }),
+            ev(EventKind::NoteShown { text: "alt before clear".into(), icon: None, seconds: 2.0 }),
+            ev(EventKind::ItemAdded { to: FormId::PLAYER_REF, item: CAPS, count: 5, silent: false }),
+            ev(EventKind::MessageShown { message: FormId(0xBB), text: Some("Box survives".into()), buttons: vec![], hidden: vec![] }),
+            ev(EventKind::QuestCompleted { quest: QUEST }),
+            // ClearMessageQueue ran here (index 5).
+            ev(EventKind::MessageShown { message: FormId(0), text: Some("after clear".into()), buttons: vec![], hidden: vec![] }),
+            ev(EventKind::ItemAdded { to: FormId::PLAYER_REF, item: FormId(0x15169), count: 1, silent: false }),
+        ];
+        let got = effects_with_corner_clear(&events, &BTreeSet::new(), 5, &Fake);
+        assert_eq!(
+            got,
+            vec![
+                ScriptEffect::MessageBox(BoxMessage { message: 0xBB, text: "Box survives".into(), buttons: vec![], hidden: vec![] }),
+                ScriptEffect::Quest(QuestNotice::Completed("Back in the Saddle".into())),
+                ScriptEffect::Notify("after clear".into()),
+                ScriptEffect::ItemAddedSound(CAPS),
+                ScriptEffect::Notify("form 15169 added".into()),
+            ]
+        );
     }
 
     /// #3095: caps a script gives the player sound once per batch; caps picked up by an

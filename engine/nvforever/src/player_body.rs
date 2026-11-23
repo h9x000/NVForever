@@ -753,6 +753,12 @@ struct Rig {
     /// The skeleton node the weapon node should hang from, and the one it was last
     /// attached to.
     weapon_parent: Option<usize>,
+    /// Where the holster clip holds the `Weapon` node under the holster bone, from the
+    /// last pose with the weapon holstered: the place it keeps on furniture
+    /// ([`pose_furniture`]).
+    holstered_weapon: Option<Transform>,
+    /// The furniture clip [`pose_furniture`] last logged the weapon's place for.
+    furniture_logged: Option<u32>,
     attached: Option<usize>,
     weapon_model: Option<Entity>,
     /// The weapon model's particle systems, when it has any: the holder carrying their
@@ -1398,7 +1404,7 @@ impl PlayerBody {
                 animator: Animator::new(actor.skel, actor.nodes, None),
                 clips: HashMap::new(), variants: HashMap::new(), overrides: Arc::default(), head: None,
                 eye_local: Vec3::ZERO, looking: None, camera: None, script_turn: None, posed_root: None, script_used: None, translate: None,
-                weapon_node: None, weapon_parent: None, attached: None,
+                weapon_node: None, weapon_parent: None, holstered_weapon: None, furniture_logged: None, attached: None,
                 weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(),
                 idle_logged: false, sights_turned: None, muzzle: None, muzzle_entity: None,
                 casing: None, casing_entity: None, sighting: None, scope_eye: None, sight_relief: None,
@@ -2276,6 +2282,8 @@ fn build_rig(commands: &mut Commands, parent: Entity, world: &ActorWorld, ctx: &
         translate,
         weapon_node,
         weapon_parent,
+        holstered_weapon: None,
+        furniture_logged: None,
         attached: weapon_parent,
         weapon_model: None,
         weapon_emitter: None,
@@ -2500,6 +2508,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
     // first-person view).
     if f.hands.in_hand {
         rig.weapon_parent = draw.as_ref().and_then(|c| c.keys.prn.as_ref()).and_then(|(_, b)| bone(b)).or_else(|| bone("Bip01 R Hand"));
+        rig.holstered_weapon = None;
     } else {
         // The holster clip's `prn:` names the holster bone [observed: `Bip01 Pelvis` for
         // pistols, `Bip01 Spine2` for rifles, `Bip01 Translate` in first person]; the
@@ -2508,6 +2517,7 @@ fn pose_rig(rig: &mut Rig, f: &Frame, events: &[HandEvent], posed: Posed, ctx: &
         if let Some(b) = from_keys.and_then(|(_, b)| bone(b)) {
             rig.weapon_parent = Some(b);
         }
+        rig.holstered_weapon = rig.weapon_node.and_then(|n| holster.as_ref()?.weapon_end(skel.locals[n]));
     }
 
     // The frame's clips.
@@ -3084,6 +3094,21 @@ fn pose_furniture(rig: &mut Rig, o: &crate::furniture::BodyClip, special: &IdleS
         a.layers.retain(|l| l.tag >= TAG_SPECIAL);
         a.restart(&o.clip, TAG_FURNITURE, 1.0, mode, 0.0);
         rig.furniture = Some(o.serial);
+    }
+    // The holstered weapon keeps its place on the holster bone: the seat clips have no
+    // `Weapon` track (`dynamicidle_chairsit.kf`), and the holster clip, which does, also
+    // keys `Bip01 Spine2` and `Bip01 NonAccum`, so only its `Weapon` place is kept. At the
+    // node's bind transform (its place under the right hand) a rifle on the back stood up
+    // through the seated body's head [observed in NVForever: player report R-DNBYBM6D,
+    // #3612; NPCs keep the stance's `Weapon` track on furniture, `weapons.rs`].
+    if let Some(n) = rig.weapon_node {
+        a.set_rest(n, rig.holstered_weapon);
+        if rig.furniture_logged != Some(o.serial) {
+            rig.furniture_logged = Some(o.serial);
+            let on = rig.weapon_parent.and_then(|b| a.skel.names.get(b).cloned().flatten()).unwrap_or_default();
+            let place = if rig.holstered_weapon.is_some() { "at the holster clip's place" } else { "at its bind transform" };
+            info!("player body: on furniture, the weapon hangs from {on} {place}");
+        }
     }
     a.begin();
     a.want(&o.clip, TAG_FURNITURE, 1.0, mode, 0.0);
@@ -4451,7 +4476,7 @@ mod tests {
             animator: Animator::new(skel, vec![third_root, bone], None),
             clips: HashMap::new(), variants: HashMap::new(), overrides: Arc::default(), head: None,
             eye_local: Vec3::ZERO, looking: None, camera: None, script_turn: None, posed_root: None,
-            script_used: None, translate: None, weapon_node: None, weapon_parent: None, attached: None,
+            script_used: None, translate: None, weapon_node: None, weapon_parent: None, holstered_weapon: None, furniture_logged: None, attached: None,
             weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(), idle_logged: false,
             sights_turned: None, muzzle: None, muzzle_entity: None, casing: None, casing_entity: None,
             sighting: None, scope_eye: None, use_lens: false, sight_relief: None, drawn: Vec::new(),
@@ -4465,7 +4490,7 @@ mod tests {
             clips: [(ClipKey::PipBoy(false), Some(pip_clip))].into_iter().collect(),
             variants: HashMap::new(), overrides: Arc::default(), head: None,
             eye_local: Vec3::ZERO, looking: None, camera: None, script_turn: None, posed_root: None,
-            script_used: None, translate: None, weapon_node: None, weapon_parent: None, attached: None,
+            script_used: None, translate: None, weapon_node: None, weapon_parent: None, holstered_weapon: None, furniture_logged: None, attached: None,
             weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(), idle_logged: false,
             sights_turned: None, muzzle: None, muzzle_entity: None, casing: None, casing_entity: None,
             sighting: None, scope_eye: None, use_lens: false, sight_relief: None, drawn: Vec::new(),
@@ -4536,7 +4561,7 @@ mod tests {
             animator: Animator::new(skel.clone(), vec![root], None),
             clips: HashMap::new(), variants: HashMap::new(), overrides: Arc::default(), head: None,
             eye_local: Vec3::ZERO, looking: None, camera: None, script_turn: None, posed_root: None,
-            script_used: None, translate: None, weapon_node: None, weapon_parent: None, attached: None,
+            script_used: None, translate: None, weapon_node: None, weapon_parent: None, holstered_weapon: None, furniture_logged: None, attached: None,
             weapon_model: None, weapon_emitter: None, weapon_parts: Vec::new(), idle_logged: false,
             sights_turned: None, muzzle: None, muzzle_entity: None, casing: None, casing_entity: None,
             sighting: None, scope_eye: None, use_lens: false, sight_relief: None, drawn: Vec::new(),

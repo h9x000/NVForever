@@ -80,6 +80,8 @@ run does not have:
 A first run's `Floor (time × 10)` the frame after SetAnimCurrentTime 1.5 read 16 (the
 game's frames were slow); the row keeps whole seconds.
 
-Follow-ups (engine side, slice 2 of knvse-anim.md): the engine's animation player does
-not yet read the weights, offsets, global time, additive poses or text keys kept here,
-take AllowAttack, or tell the sequence headers (`Game::set_sequence_info`).
+Follow-ups (engine side, slice 2 of knvse-anim.md):
+- **Wired [design]:** `AllowAttack` player attack-cycle cooldown, swing, and flinch
+  release (`nvf-play` `combat.rs::fire` consumes `Game::take_allow_attack`).
+- **Remaining:** weights, offsets, global time, additive poses, text keys, and sequence
+  headers (`Game::set_sequence_info`).

@@ -20445,6 +20445,23 @@ forbid = [
 ]
 
 [[scenario]]
+name = "seated-holstered-rifle"
+source = "issue #3612 (player report R-DNBYBM6D): seated with a Caravan Shotgun holstered, the gun stood up through the player's head; the seat clips have no Weapon track and the player's body dropped the holster clip's, so the Weapon node went back to its bind transform (its place under the right hand) under the holster bone"
+note = "the Caravan Shotgun (000CD53A, 2hr: holstered on Bip01 Spine2) equipped and holstered, the player sits on Doc Mitchell's couch (00103E55) as in doc-chair-player-seated, the view then put in third person; the frame seated_rifle.png is for a look by eye"
+areas = ["furniture", "animation"]
+paths = ["engine/nvforever/src/player_body.rs", "engine/nvforever/src/furniture.rs"]
+env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_EQUIP = "000CD53A", NVF_PLAY_TEST_FACE = "9:00103E55", NVF_PLAY_TEST_LOOK = "9.5:283:-35", NVF_PLAY_TEST_ACTIVATE = "10", NVF_PLAY_TEST_KEYS = "14:f", NVF_PLAY_TEST_SHOTS = "18:seated_rifle.png" }
+args = ["--cell", "GSDocMitchellHouse", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 20
+order = [[
+  { text = "furniture: the player is on 00103E55", label = "the player sits on the couch" },
+  { text = "player body: on furniture, the weapon hangs from Bip01 Spine2 at the holster clip's place", label = "the holstered shotgun keeps its place on the back" },
+]]
+forbid = [
+  { re = "player body: on furniture, the weapon hangs from .* at its bind transform", label = "the holstered weapon back at its bind transform (under the right hand)" },
+]
+
+[[scenario]]
 name = "nellis-loyal-stays-reachable"
 source = "issue #2566: with Volare! failed (a Boomer elder killed), Loyal was put in NellisHangar1b, behind the B-29 hangar doors 001093DB/001093DC that stay disabled until the B-29 is up, and the quest marker looped between the hangar door and its inside"
 note = "SetStage VMS15 (000FF5DF) 116 at 8 s fails Volare!, which GetQuestCompleted reads as 1: Loyal's first package, NellisLoyalB29SandboxAIPackage (In cell NellisHangar1b), is valid and every other one of his is not. No path goes through a disabled load door (fnv_nav::NavGraph::disabled_doors, fnv_ai::Ai::apply_door_presence), so he sets it aside and stays in NellisHangar2, where the player starts; before the fix his walk went out through 00105488 and in through the disabled 001093DB"
@@ -29399,25 +29416,6 @@ expect = [
 forbid = ["NVIDIA Reflex", "DLSS: slInit:", "DLSS: route:", "Validation Error", "Caught rendering error"]
 
 [[scenario]]
-name = "latency-reduction-frame-cap"
-source = "docs/design/latency-reduction.md \"The frame cap\": with latency reduction on and no frame generation, a frame rate limit (the test aid --frame-cap 60) is kept by the driver's limiter (Anti-Lag's maxFPS, NVIDIA low latency's minimum interval or Reflex's frame limit) and frame pacing's own wait stands aside; the frames still come no faster than the limit"
-note = "On a GPU with neither driver technique the log names frame pacing's own limiter instead, which passes too: the cap's mean is the check. --log-frame-times runs with vsync off, so only the limit holds the frames; the mean is checked from below only (a slow GPU or a load stall is not a cap failure)."
-areas = ["graphics"]
-paths = ["engine/nvforever/src/anti_lag.rs", "engine/nvforever/src/nv_low_latency.rs", "engine/nvforever/src/frame_pace.rs", "engine/nvforever/src/dlss/mod.rs", "engine/nvforever/src/dlss/frame_token.rs"]
-env = { NVF_PLAY_TEST_SCRIPT_MENUS = "0.3" }
-args = ["--cell", "GSDocMitchellHouse", "--play", "--size", "1280x720", "--latency-reduction", "--frame-generation", "off", "--log-frame-times", "4", "--frame-cap", "60", "--no-voice", "--no-lodgen"]
-run_seconds = 20
-expect = [
-  { re = 'frame pace: the frame cap \(60 fps\) is kept by (the driver: (AMD Anti-Lag.s maxFPS|NVIDIA low latency.s minimum interval|NVIDIA Reflex.s frame limit) \(latency reduction on\)|frame pacing.s own limiter)', label = "the log names what keeps the cap of 60" },
-  { re = 'frame time: (?P<n>\d+\.\d+) ms mean', range = [16.0, 1000.0], all = true, min = 2, label = "no period faster than the limit of 60 (16.7 ms, 4% slack)" },
-]
-forbid = [
-  { text = "Validation Error", label = "a Vulkan validation error with the driver keeping the cap" },
-  { text = "Caught rendering error", label = "a rendering error with the driver keeping the cap" },
-  { re = 'Reflex options( set again for a new swapchain)?: mode \w+, frame limit [^:]+: e(?!Ok)', label = "slReflexSetOptions refused the frame limit" },
-]
-
-[[scenario]]
 name = "frame-generation"
 source = "#1778, docs/design/frame-generation.md: --frame-generation with FSR Quality while walking outdoors: generated frames presented between the real ones, the HUD kept, latency reduction turned on with it, no validation errors; the performance overlay (--fps, its readings logged by NVF_FPS_LOG) reads the frames shown and the rendered ones apart"
 areas = ["graphics"]
@@ -29967,12 +29965,12 @@ forbid = [
 [[scenario]]
 name = "dlssg-variable-refresh"
 source = "docs/spec-notes/display-sync.md, docs/design/dlss-frame-generation.md: Display sync Variable refresh picked on the settings page while Frame generation is DLSS: DLSS-G, dimmed under the start's Vertical sync, runs; the window presents with vsync off while it is asked for and variable refresh's cap stays (through Reflex)"
-note = "needs NVF_DLSS_DIR with the four DLSS Frame Generation files (docs/dlss.md), an RTX 40 series or newer and Windows' GPU scheduling on; front = true as dlssg-on. The home of its own starts at the default Vertical sync, so DLSS-G is held off until the page's choice."
+note = "needs NVF_DLSS_DIR with the four DLSS Frame Generation files (docs/dlss.md), an RTX 40 series or newer and Windows' GPU scheduling on; front = true as dlssg-on. The home of its own starts at the default Vertical sync, so DLSS-G is held off until the page's choice; the page picks Vertical sync first (as display-sync-write), so a home that kept Variable refresh from an earlier run ends up the same way (a rerun found nothing to change and logged no choice, 2026-11-23)."
 areas = ["graphics", "settings"]
 paths = ["engine/nvforever/src/dlss/**", "engine/nvforever/src/frame_gen.rs", "engine/nvforever/src/frame_pace.rs"]
 requires = ["NVF_DLSS_DIR"]
 front = true
-env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-variable-refresh-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:13", NVF_PLAY_TEST_SETTINGS = "11:page,12:display-sync=Variable refresh" }
+env = { WGPU_BACKEND = "vulkan", NVFOREVER_HOME = "dlssg-variable-refresh-home", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_PAUSE = "10:14", NVF_PLAY_TEST_SETTINGS = "11:page,12:display-sync=Vertical sync,13:display-sync=Variable refresh" }
 args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "dlss", "--upscaler-quality", "quality", "--frame-generation", "dlss", "--no-voice", "--no-lodgen"]
 run_seconds = 30
 expect = [

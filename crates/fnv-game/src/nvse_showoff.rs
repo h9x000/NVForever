@@ -17,6 +17,12 @@ pub const ON_PRE_SCRIPTED_ACTIVATE: &str = "showoff:onprescriptedactivate";
 pub const ON_PRE_ACTIVATE_INVENTORY_ITEM: &str = "showoff:onpreactivateinventoryitem";
 pub const ON_PRE_ACTIVATE_INVENTORY_ITEM_ALT: &str = "showoff:onpreactivateinventoryitemalt";
 pub const ON_POV_CHANGE: &str = "showoff:onpovchange";
+pub const ON_COMPLETE_OBJECTIVE: &str = "showoff:oncompleteobjective";
+pub const ON_DISPLAY_OBJECTIVE: &str = "showoff:ondisplayobjective";
+pub const ON_WEAPON_UNHOLSTER: &str = "showoff:onweaponunholster";
+
+/// The Fists weapon base form [observed: FalloutNV.esm WEAP 000001F4, EDID Fists].
+const FISTS: FormId = FormId(0x1F4);
 
 #[derive(Debug, Default)]
 pub struct ShowOffState {
@@ -252,6 +258,58 @@ impl Game<'_> {
             vec![XVal::Num(if first_person { 1.0 } else { 0.0 })],
             None,
         );
+    }
+
+    /// `ShowOff:OnDisplayObjective`, fired when a quest objective transitions from
+    /// hidden to displayed [documented: GECK wiki ShowOff:OnDisplayObjective].
+    /// Arguments are `(quest, objective_index)`; calling reference is `None`
+    /// [hypothesis: transition-only dispatch, no calling reference, and post-update
+    /// getter visibility]. Free when no handler is registered.
+    pub(crate) fn showoff_on_display_objective(&mut self, quest: FormId, index: i32) {
+        if !self.handled(ON_DISPLAY_OBJECTIVE) {
+            return;
+        }
+        self.dispatch_event(
+            "ShowOff:OnDisplayObjective",
+            vec![XVal::Ref(quest.0), XVal::Num(f64::from(index))],
+            None,
+        );
+    }
+
+    /// `ShowOff:OnCompleteObjective`, fired when a quest objective transitions from
+    /// incomplete to completed [documented: GECK wiki ShowOff:OnCompleteObjective].
+    /// Arguments are `(quest, objective_index)`; calling reference is `None`
+    /// [hypothesis: transition-only dispatch including `CompleteAllObjectives`, no
+    /// calling reference, and post-update getter visibility]. Free when no handler is
+    /// registered.
+    pub(crate) fn showoff_on_complete_objective(&mut self, quest: FormId, index: i32) {
+        if !self.handled(ON_COMPLETE_OBJECTIVE) {
+            return;
+        }
+        self.dispatch_event(
+            "ShowOff:OnCompleteObjective",
+            vec![XVal::Ref(quest.0), XVal::Num(f64::from(index))],
+            None,
+        );
+    }
+
+    /// `ShowOff:OnWeaponUnholster`, fired when an actor's weapon state transitions from
+    /// holstered (`weapon_out == false`) to drawn (`weapon_out == true`) [documented:
+    /// GECK wiki ShowOff:OnWeaponUnholster]. Calling reference (`GetSelf` / `GetSelfAlt`
+    /// / `0::`) is `actor`; single argument (`"first"` / `1::`) is the actor's equipped
+    /// or engine-held weapon base form, falling back to `Fists` (`0x000001F4`) when
+    /// defined as a `WEAP` in game data else null form `0` [hypothesis: firing at
+    /// weapon-out transition, unarmed fallback form, and `IsWeaponOut` already reading
+    /// `1` during callback]. Free when no handler is registered.
+    pub(crate) fn showoff_on_weapon_unholster(&mut self, actor: FormId) {
+        if !self.handled(ON_WEAPON_UNHOLSTER) {
+            return;
+        }
+        let weapon = crate::functions::items::equipped_weapon(self, actor)
+            .or_else(|| self.extra.get(&actor).and_then(|e| e.held_weapon))
+            .or_else(|| (self.data.sig(FISTS) == Some(*b"WEAP")).then_some(FISTS))
+            .unwrap_or(FormId(0));
+        self.dispatch_event("ShowOff:OnWeaponUnholster", vec![XVal::Ref(weapon.0)], Some(actor));
     }
 
     /// The stop handlers of an aux timer that ran out or was stopped with its event: each

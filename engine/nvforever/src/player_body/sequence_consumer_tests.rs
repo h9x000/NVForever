@@ -176,6 +176,8 @@ fn authored_rig(world: &mut World, view: View, root_x: f32) -> OwnedRig {
         translate: None,
         weapon_node: None,
         weapon_parent: None,
+        holstered_weapon: None,
+        furniture_logged: None,
         attached: None,
         weapon_model: None,
         weapon_emitter: None,

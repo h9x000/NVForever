@@ -1373,6 +1373,24 @@ fn flame_fence_range() {
 }
 
 #[test]
+fn a_lobber_of_gravity_zero_falls_and_a_missile_of_zero_does_not() {
+    // #3441: the Nuka-grenade's PROJ is a Lobber with gravity 0; it is thrown on an arc
+    // like the frag grenade (gravity 1), not dead straight.
+    let t = CombatTuning::default();
+    let nuka = proj("Lobber", &["Explosion"], 1200.0, 0.0);
+    assert_eq!(nuka.fall(), 1.0);
+    let thrown = Projectile::spawn(&nuka, Some(BOOM), [0.0, 0.0, 100.0], [1.0, 0.0, 0.0], Some(1), G, &t);
+    assert_eq!(thrown.gravity, G);
+    assert!(fnv_combat::vats::throw_reach(nuka.speed, nuka.fall() * G).is_finite());
+    // The field is still a multiplier where it is set.
+    assert_eq!(proj("Lobber", &[], 1200.0, 1.5).fall(), 1.5);
+    // A missile of 0 keeps flying straight.
+    let missile = proj("Missile", &[], 3000.0, 0.0);
+    assert_eq!(missile.fall(), 0.0);
+    assert_eq!(Projectile::spawn(&missile, None, [0.0; 3], [1.0, 0.0, 0.0], Some(1), G, &t).gravity, 0.0);
+}
+
+#[test]
 fn lobbers_timer_proximity_detonation() {
     let t = CombatTuning::default();
     let empty = Toy { actors: vec![], fence: false, wall: None };

@@ -70,6 +70,8 @@ mod combat_style_session_tests;
 mod common;
 #[cfg(test)]
 mod faction_modifier_tests;
+#[cfg(test)]
+mod base_functions_tests;
 pub mod companion_wheel;
 pub mod coop;
 pub mod cond;
@@ -248,6 +250,7 @@ pub mod ui_hud;
 pub mod ui_more;
 pub mod ui_projection;
 pub mod ui_search_bar;
+pub mod ui_text_input;
 pub mod ui_ysi;
 pub mod ui_input;
 pub mod unconscious;
