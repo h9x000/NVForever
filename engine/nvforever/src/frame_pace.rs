@@ -57,7 +57,8 @@
 //! `NVF_FG_LAG_FEEDBACK=0` turns it off, for comparisons.
 //!
 //! The present modes the window's surface supports are logged once, with the one vsync
-//! takes there ([`log_present_modes`]).
+//! takes there ([`log_present_modes`]). Variable refresh with DLSS-G presents as Mailbox,
+//! not Immediate, so a frame that comes early does not tear ([`FramePace::present_mode`]).
 
 use bevy::prelude::*;
 use bevy::render::renderer::{RenderAdapter, RenderInstance};
@@ -144,6 +145,30 @@ impl FramePace {
             DisplaySync::Off => false,
             DisplaySync::Vsync => true,
             DisplaySync::Variable => !dlssg,
+        }
+    }
+
+    /// The window's present mode: vsync as [`Self::presents_vsync`] says; without it, Mailbox
+    /// for Variable refresh with DLSS-G, Immediate (Bevy's `AutoNoVsync`) otherwise. Immediate
+    /// flips a frame that comes before the screen has finished showing the last one at once,
+    /// and the screen tears there: with variable refresh that happens when a frame comes a
+    /// little under the refresh interval, the cap's average notwithstanding [observed
+    /// 2026-11-23, 160 Hz G-Sync, DLSS-G 2x, Reflex limit 152 shown: 152/76 fps, a tear at
+    /// the bottom of the screen]. Mailbox never tears: an early frame waits for the screen
+    /// (and replaces one still waiting), and below the refresh rate each one is shown as it
+    /// comes, so the screen still follows the frames. Vsync proper (FIFO) is not open to
+    /// DLSS-G on Vulkan [documented: Streamline `ProgrammingGuideDLSS_G.md` 22.5]; Mailbox
+    /// does not block the present, which is what "vsync off" asks [hypothesis: Streamline
+    /// accepts it; the owner's run checks DLSS-G's state stays eOk with frames presented].
+    /// Bevy falls back to Immediate, then FIFO, where the surface has no Mailbox
+    /// (bevy_render `view::window::present_mode`).
+    pub fn present_mode(&self, dlssg: bool) -> PresentMode {
+        if self.presents_vsync(dlssg) {
+            PresentMode::AutoVsync
+        } else if self.sync == DisplaySync::Variable {
+            PresentMode::Mailbox
+        } else {
+            PresentMode::AutoNoVsync
         }
     }
 }
@@ -363,18 +388,18 @@ fn tell_physics(pace: Res<FramePace>, refresh: Res<Refresh>, fg: Option<Res<crat
 /// The window's present mode as the display sync asks ([`FramePace::presents_vsync`]), when
 /// that changes. DLSS Frame Generation needs vsync off on Vulkan: with Vertical sync its row's
 /// DLSS choice is dimmed (`frame_gen::dlss_unavailable_reason`); with Variable refresh the
-/// window presents with vsync off while DLSS-G is asked for. The request is made before this
+/// window presents with vsync off (Mailbox) while DLSS-G is asked for. The request is made before this
 /// (`frame_gen::request_dlssg`), so the swapchain DLSS-G's load makes in the same frame's
 /// extraction already has the mode it needs, and the one made when DLSS-G is unloaded has
 /// vsync again.
 fn apply_vsync(pace: Res<FramePace>, dlssg: Option<Res<crate::frame_gen::DlssgRequest>>, mut windows: Query<&mut Window, With<PrimaryWindow>>) {
     let dlssg = dlssg.is_some_and(|r| r.on);
     let vsync = pace.presents_vsync(dlssg);
-    let mode = if vsync { PresentMode::AutoVsync } else { PresentMode::AutoNoVsync };
+    let mode = pace.present_mode(dlssg);
     for mut w in &mut windows {
         if w.present_mode != mode {
             w.present_mode = mode;
-            let why = if pace.sync == DisplaySync::Variable && dlssg { " (variable refresh with DLSS Frame Generation: its frames held under the refresh rate by the cap)" } else { "" };
+            let why = if mode == PresentMode::Mailbox { " (variable refresh with DLSS Frame Generation: its frames held under the refresh rate by the cap, presented as Mailbox so an early one waits for the screen instead of tearing)" } else { "" };
             info!("frame pace: vsync {}{why}", if vsync { "on" } else { "off" });
         }
     }
@@ -673,13 +698,18 @@ mod tests {
         assert_eq!(mode(&app), PresentMode::AutoVsync);
         app.world_mut().resource_mut::<crate::frame_gen::DlssgRequest>().on = true;
         app.update();
-        assert_eq!(mode(&app), PresentMode::AutoNoVsync, "DLSS-G asked for: vsync off");
+        assert_eq!(mode(&app), PresentMode::Mailbox, "DLSS-G asked for: vsync off, Mailbox");
         app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Vsync;
         app.update();
         assert_eq!(mode(&app), PresentMode::AutoVsync, "Vertical sync keeps vsync");
         app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Variable;
         app.update();
-        assert_eq!(mode(&app), PresentMode::AutoNoVsync);
+        assert_eq!(mode(&app), PresentMode::Mailbox);
+        app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Off;
+        app.update();
+        assert_eq!(mode(&app), PresentMode::AutoNoVsync, "Off: Immediate, as chosen");
+        app.world_mut().resource_mut::<FramePace>().sync = DisplaySync::Variable;
+        app.update();
         app.world_mut().resource_mut::<crate::frame_gen::DlssgRequest>().on = false;
         app.update();
         assert_eq!(mode(&app), PresentMode::AutoVsync, "DLSS-G no longer asked for: vsync again");

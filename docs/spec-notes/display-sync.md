@@ -24,13 +24,17 @@ choice. Code: `engine/nvforever/src/frame_pace.rs`, the settings row in
 - **Variable refresh with DLSS Frame Generation**: DLSS-G needs vsync off on Vulkan
   [documented: "VSync with Frame Generation is only supported on D3D12",
   `ProgrammingGuideDLSS_G.md` §22.5], so while it is asked for the window presents with
-  vsync off (`AutoNoVsync`) and the same cap, on frames shown, goes whole to Reflex's frame
+  vsync off, as Mailbox (`frame_pace::FramePace::present_mode`), and the same cap, on frames shown, goes whole to Reflex's frame
   limit (`frame_pace::wait_for_cap`) [design], which holds the frames shown, generated ones
   included: 152 at 2x is 152 shown and 76 real [observed: 13158 us held 76 shown and 38 real,
   the owner's run 2026-11-23].
   Frames then reach the screen under its refresh rate, where a VRR screen refreshes on each
   one; vsync is only what would hold a frame that came in faster than the screen's top rate
-  [hypothesis: no tearing with the cap's margin; to be seen on the owner's G-SYNC screen].
+  [observed 2026-11-23, 160 Hz G-SYNC, 2x: with Immediate the screen tore at the bottom, a frame
+  now and then coming in under the refresh interval though the average was 152]. Mailbox never
+  tears (an early frame waits for the screen) and does not block the present [hypothesis: the
+  screen keeps refreshing on each frame below its top rate, and Streamline accepts Mailbox as
+  vsync off; the owner's run checks both: the monitor's refresh counter, DLSS-G's state eOk].
   Vertical sync still dims DLSS-G ("Needs vsync off").
 - The refresh rate is the window's monitor's, from winit, which documents it as "the
   monitor refresh rate used by the system" and says to use the video mode's rate in

@@ -166,7 +166,7 @@ pub struct DlssgRequest {
 /// (DLSS-G requires vsync off on Vulkan [observed: its requirements' "vsync off required yes",
 /// fork-notes `fg-spike-results.md`; documented: "VSync with Frame Generation is only supported
 /// on D3D12", `ProgrammingGuideDLSS_G.md` §22.5]). Variable refresh is no bar: while DLSS-G is
-/// asked for it presents with vsync off and keeps its cap, through Reflex
+/// asked for it presents with vsync off (Mailbox) and keeps its cap, through Reflex
 /// (`frame_pace::FramePace::presents_vsync`).
 pub fn dlss_unavailable_reason(world: &World) -> Option<&'static str> {
     if let Some(why) = crate::dlss::frame_generation_unavailable(|| crate::settings::dlss_download_offered(world)) {

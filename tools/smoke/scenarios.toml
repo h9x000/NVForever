@@ -29865,7 +29865,7 @@ args = ["--cell", "Goodsprings", "--play", "--size", "1280x720", "--upscaler", "
 run_seconds = 30
 expect = [
   { text = "settings: display-sync Variable refresh", label = "Variable refresh is chosen" },
-  { re = 'frame pace: vsync off \(variable refresh with DLSS Frame Generation', label = "the window presents with vsync off for DLSS-G" },
+  { re = 'frame pace: vsync off \(variable refresh with DLSS Frame Generation: .*presented as Mailbox', label = "the window presents with vsync off for DLSS-G, as Mailbox" },
   { re = 'frame pace: variable refresh, at most \d+ fps \(the monitor.s \d+ Hz\), vsync off for DLSS Frame Generation', label = "variable refresh's cap kept" },
   { re = 'DLSS-G: options: mode On, 1 generated frame\(s\) per real frame', label = "frame generation on in play" },
   { re = 'DLSS-G: Reflex options: mode eLowLatency, frame limit \d+ us a frame shown: eOk', label = "variable refresh's cap handed to Reflex whole, on frames shown" },
