@@ -294,3 +294,66 @@ fn bitmap_glyph_line_keeps_fractional_quads_on_one_sample_phase_after_resize() {
     near(bases[0], y_of(world, anchor));
     near(x_of(world, glyphs[1]) - x_of(world, glyphs[0]), 14.625);
 }
+
+/// The layout app with Bevy's text measure and layout systems, the sharp font loaded.
+fn text_app(height: u32) -> (App, Entity) {
+    use bevy::text::{FontAtlasSet, LayoutCx, TextIterScratch};
+    let (mut app, camera) = app(height);
+    app.add_plugins(bevy::asset::AssetPlugin::default());
+    app.init_asset::<bevy::text::Font>();
+    app.init_asset::<Image>();
+    app.init_resource::<FontAtlasSet>();
+    app.init_resource::<LayoutCx>();
+    app.init_resource::<TextIterScratch>();
+    crate::vector_font::ensure_font(&mut app.world_mut().resource_mut::<Assets<bevy::text::Font>>());
+    app.add_systems(
+        PostUpdate,
+        (bevy::text::load_font_assets_into_font_collection, bevy::ui::widget::measure_text_system)
+            .chain()
+            .after(propagate_ui_target_cameras)
+            .before(ui_layout_system),
+    );
+    app.add_systems(PostUpdate, bevy::ui::widget::text_system.after(ui_layout_system));
+    (app, camera)
+}
+
+#[test]
+fn a_sharp_line_stands_on_its_base_from_its_start() {
+    // At 960 pixels high a unit is a pixel. Bevy's own text layout places the letters: the
+    // 'H' (Roboto Condensed starts it 157 font units into its 2048) from the line's start
+    // and `shift` (`VectorFace::shift`), its foot on the line's base, within a pixel of
+    // rounding (the owner's test of 2026-11-24: "double check every alignment").
+    let (mut app, camera) = text_app(960);
+    let m = crate::vector_font::metrics().unwrap();
+    for (em, shift) in [(28.0, 0.0), (31.0, 4.7), (48.5, -0.5)] {
+        let mut face = crate::vector_font::face(m, crate::vector_font::FONT_HANDLE, em, crate::vector_font::REGULAR, 36.0);
+        face.vector.as_mut().unwrap().shift = shift;
+        let line = face.font.lines("HIxH", None).remove(0);
+        let root = {
+            let mut commands = app.world_mut().commands();
+            commands
+                .spawn((Node { position_type: PositionType::Absolute, left: u(0.0), top: u(0.0), width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, UiTargetCamera(camera)))
+                .with_children(|p| set_marked(p, &face, &line, 100.0, 400.0, Color::WHITE, Ink))
+                .id()
+        };
+        app.world_mut().flush();
+        for _ in 0..4 {
+            app.update();
+        }
+        let world = app.world_mut();
+        let mut q = world.query_filtered::<(&ComputedNode, &UiGlobalTransform, &bevy::text::TextLayoutInfo), With<Ink>>();
+        let (node, t, info) = q.single(world).expect("one coloured line");
+        let top_left = t.to_scale_angle_translation().2 - node.size() / 2.0;
+        let boxes: Vec<Rect> = info.glyphs.iter().map(|g| Rect::from_center_size(top_left + g.position, g.atlas_info.rect.size())).collect();
+        assert_eq!(boxes.len(), 4, "em {em}");
+        let h = boxes[0];
+        let start = 100.0 + shift + m.lead('H') * em;
+        assert!((h.min.x - start).abs() <= 1.0, "em {em}: the H starts at {} for {start}", h.min.x);
+        assert!((h.max.y - 400.0).abs() <= 1.5, "em {em}: the H stands on {} for 400", h.max.y);
+        // The last H as far on as the line was measured.
+        let last = 100.0 + shift + line.glyphs[3].x + m.lead('H') * em;
+        assert!((boxes[3].min.x - last).abs() <= 1.0, "em {em}: the last H at {} for {last}", boxes[3].min.x);
+        assert!((boxes[3].max.y - h.max.y).abs() < 0.01, "one baseline");
+        app.world_mut().entity_mut(root).despawn();
+    }
+}

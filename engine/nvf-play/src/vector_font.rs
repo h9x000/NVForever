@@ -96,19 +96,83 @@ const FONT7_CAP: f32 = 30.0;
 /// is unless [`sharp`]; else the sharp font at the size that matches the game font's
 /// capitals to font 7's ([`ENTRY_EM`] at [`FONT7_CAP`]), its lines as far apart as the game
 /// font's. Futura Caps (font 8, the big titles and numbers) is drawn bold and in capitals,
-/// as its own letters are.
-pub fn screen_face(raster: crate::interface::Face, path: &str) -> crate::interface::Face {
-    sharpened(raster, path, sharp())
+/// as its own letters are. Each line starts where the game font's letters started
+/// ([`ink_leads`]); `images` holds the game font's picture.
+pub fn screen_face(raster: crate::interface::Face, path: &str, images: &Assets<Image>) -> crate::interface::Face {
+    let on = sharp();
+    let leads = if on { raster_leads(&raster, images) } else { Vec::new() };
+    sharpened(raster, path, on, &leads)
 }
 
-/// [`screen_face`] with the switch given: `raster` as it is when `on` is false.
-fn sharpened(raster: crate::interface::Face, path: &str, on: bool) -> crate::interface::Face {
+/// [`screen_face`] with the switch and the game font's [`ink_leads`] given: `raster` as it
+/// is when `on` is false.
+fn sharpened(raster: crate::interface::Face, path: &str, on: bool, leads: &[(char, f32)]) -> crate::interface::Face {
     if !on {
         return raster;
     }
     let Some(m) = metrics() else { return raster };
     let (em, weight, caps) = sharp_size(&raster, path);
-    face_with(m, FONT_HANDLE, em, weight, raster.font.size, caps)
+    let mut face = face_with(m, FONT_HANDLE, em, weight, raster.font.size, caps);
+    if let Some(v) = face.vector.as_mut() {
+        v.shift = lead_shift(m, em, caps, leads);
+    }
+    face
+}
+
+/// The characters whose start is measured ([`ink_leads`]).
+const LEAD_SAMPLE: &str = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+
+/// How far the letters in the game font's picture start after their place in a line, for
+/// each of [`LEAD_SAMPLE`] it draws: its room before the picture and the picture's first
+/// column holding the letter (not its glow: half bright and half opaque at least), in the
+/// font's units. The game's pictures hold a margin for the glow, so its letters start
+/// later than the sharp font's: 6.3 units on average in font 7 (Baked-in Monofonto
+/// Large), 7.8 in font 8 (Futura Caps), 3.1 in font 6, 1 to 2.3 in the others, where
+/// Roboto Condensed's letters start 0.05 of the em after theirs [observed: the nine fonts
+/// of `Fallout - Textures2.bsa` read with `fnvtool bsa extract`, 2026-11-24; the owner's
+/// test of 2026-11-24: the sharp lines started too far left].
+pub fn ink_leads(font: &fnv_font::Font, rgba: &[u8], tex_w: u32, tex_h: u32) -> Vec<(char, f32)> {
+    let (w, h) = (tex_w as usize, tex_h as usize);
+    let core = |x: usize, y: usize| {
+        let at = 4 * (y * w + x);
+        rgba.get(at..at + 4).is_some_and(|p| (u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])) * u32::from(p[3]) >= 128 * 3 * 255)
+    };
+    LEAD_SAMPLE
+        .chars()
+        .filter_map(|c| {
+            let g = font.glyph(c as u8);
+            if !g.drawn() {
+                return None;
+            }
+            let (x0, y0) = ((g.uv[0] * tex_w as f32).round() as usize, (g.uv[1] * tex_h as f32).round() as usize);
+            let (x1, y1) = (((g.uv[2] * tex_w as f32).round() as usize).min(w), ((g.uv[3] * tex_h as f32).round() as usize).min(h));
+            let per_unit = (x1.saturating_sub(x0)) as f32 / g.width;
+            let first = (x0..x1).find(|&x| (y0..y1).any(|y| core(x, y)))?;
+            Some((c, g.before + (first - x0) as f32 / per_unit))
+        })
+        .collect()
+}
+
+/// [`ink_leads`] of a game font read with its picture as plain texels (a `.tex`); none for a
+/// stand-in or a block-compressed picture.
+fn raster_leads(raster: &crate::interface::Face, images: &Assets<Image>) -> Vec<(char, f32)> {
+    use bevy::render::render_resource::TextureFormat;
+    let Some(image) = raster.image.as_ref().and_then(|(h, _)| images.get(h)) else { return Vec::new() };
+    if !matches!(image.texture_descriptor.format, TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb) {
+        return Vec::new();
+    }
+    image.data.as_deref().map_or_else(Vec::new, |data| ink_leads(&raster.font, data, image.width(), image.height()))
+}
+
+/// How far right a sharp line is drawn so its letters start where the game font's did, on
+/// average over `leads` ([`ink_leads`]; 0 without them): the line's ink starts where it did,
+/// whether it was set from its start, its middle or its end, within a few units.
+fn lead_shift(m: &Metrics, em: f32, caps: bool, leads: &[(char, f32)]) -> f32 {
+    if leads.is_empty() {
+        return 0.0;
+    }
+    let sharp = |c: char| m.lead(if caps { c.to_ascii_uppercase() } else { c }) * em;
+    leads.iter().map(|&(c, lead)| lead - sharp(c)).sum::<f32>() / leads.len() as f32
 }
 
 /// The sharp size, weight and capitals for game font `raster` read from `path`
@@ -142,6 +206,8 @@ pub struct Metrics {
     pub cap_height: f32,
     pub x_height: f32,
     advances: Vec<u16>,
+    /// Each glyph's room before its outline (`hmtx`'s left side bearings), in font units.
+    lsbs: Vec<i16>,
     /// Character ranges and how each maps to glyphs (cmap format 4 or 12).
     map: Vec<Range>,
     /// How the advances vary with the weight; `None` for a font without a weight axis or
@@ -359,6 +425,7 @@ pub fn read(b: &[u8]) -> Result<Metrics, String> {
     }
     let n_metrics = u16_at(hhea, 34).unwrap_or(0) as usize;
     let advances: Vec<u16> = (0..n_metrics).filter_map(|i| u16_at(hmtx, 4 * i)).collect();
+    let lsbs: Vec<i16> = (0..n_metrics).filter_map(|i| i16_at(hmtx, 4 * i + 2)).collect();
     let (mut ascent, mut descent) = (f32::from(i16_at(hhea, 4).unwrap_or(0)), -f32::from(i16_at(hhea, 6).unwrap_or(0)));
     let (mut cap_height, mut x_height) = (0.7 * units_per_em, 0.5 * units_per_em);
     if let Some(os2) = os2 {
@@ -372,7 +439,7 @@ pub fn read(b: &[u8]) -> Result<Metrics, String> {
             cap_height = f32::from(i16_at(os2, 88).unwrap_or(0)).max(1.0);
         }
     }
-    Ok(Metrics { units_per_em, ascent, descent, cap_height, x_height, advances, map: read_cmap(cmap)?, var: read_variation(b) })
+    Ok(Metrics { units_per_em, ascent, descent, cap_height, x_height, advances, lsbs, map: read_cmap(cmap)?, var: read_variation(b) })
 }
 
 /// The Unicode subtable's ranges: format 12 (3,10 or 0,4…) before format 4 (3,1 or 0,3).
@@ -438,6 +505,12 @@ impl Metrics {
         let g = self.glyph(c) as usize;
         let a = self.advances.get(g).or(self.advances.last()).copied().unwrap_or(0);
         f32::from(a) / self.units_per_em
+    }
+
+    /// The room before character `c`'s outline as a part of the em, at the default weight
+    /// (0 for a glyph past `hmtx`'s long metrics).
+    pub fn lead(&self, c: char) -> f32 {
+        f32::from(self.lsbs.get(usize::from(self.glyph(c))).copied().unwrap_or(0)) / self.units_per_em
     }
 
     /// Character `c`'s advance as a part of the em at weight `w` (the default's where the
@@ -517,7 +590,7 @@ pub fn face(m: &Metrics, font: Handle<bevy::text::Font>, em: f32, w: u16, line: 
 
 /// [`face`]; with `caps`, drawn and measured in capitals ([`metric_table_with`]).
 pub fn face_with(m: &Metrics, font: Handle<bevy::text::Font>, em: f32, w: u16, line: f32, caps: bool) -> crate::interface::Face {
-    let vector = crate::interface::VectorFace { font, em, weight: w, base: baseline_below_top(m, em), caps };
+    let vector = crate::interface::VectorFace { font, em, weight: w, base: baseline_below_top(m, em), caps, shift: 0.0 };
     crate::interface::Face { font: metric_table_with(m, em, line, w, caps), image: None, vector: Some(vector) }
 }
 
@@ -624,23 +697,58 @@ mod tests {
     fn a_screens_game_font_becomes_the_sharp_font_at_its_size() {
         let font7 = "textures\\fonts\\baked-in_monofonto_large.fnt";
         // Off: the game's font as it is (the default, and the Pip-Boy's and terminals' way).
-        let off = sharpened(raster(30.0, 36.0), font7, false);
+        let off = sharpened(raster(30.0, 36.0), font7, false, &[]);
         assert!(off.vector.is_none() && off.image.is_some());
         // Font 7 (an 'H' of 30) at the menus' em, regular, its lines as far apart as before.
-        let on = sharpened(raster(30.0, 36.0), font7, true);
+        let on = sharpened(raster(30.0, 36.0), font7, true, &[]);
         let v = on.vector.as_ref().expect("sharp");
-        assert_eq!((v.em, v.weight, v.caps), (ENTRY_EM, REGULAR, false));
+        assert_eq!((v.em, v.weight, v.caps, v.shift), (ENTRY_EM, REGULAR, false, 0.0));
         assert_eq!((on.font.size, on.image.is_none()), (36.0, true));
         // A bigger font's capitals stay as much bigger; to half units.
         assert_eq!(sharp_size(&raster(45.0, 52.0), "x.fnt").0, 46.5);
         // Futura Caps: bold capitals, measured as drawn.
-        let caps = sharpened(raster(40.0, 52.0), "textures\\fonts\\glow_futura_caps_large.fnt", true);
+        let caps = sharpened(raster(40.0, 52.0), "textures\\fonts\\glow_futura_caps_large.fnt", true, &[]);
         let v = caps.vector.as_ref().unwrap();
         assert_eq!((v.weight, v.caps), (BOLD, true));
         assert_eq!(caps.font.width("Level up"), caps.font.width("LEVEL UP"));
         // A stand-in (the font not read): sized by its line, font 7's at the menus' em.
         let stand_in = crate::interface::Face { font: crate::interface::plain_font(36.0, 17.0), image: None, vector: None };
         assert_eq!(sharp_size(&stand_in, font7).0, ENTRY_EM);
+    }
+
+    #[test]
+    fn a_sharp_line_starts_where_the_game_fonts_letters_did() {
+        // An 'H' picture 16 units wide, 1 unit after its place: two columns of glow (bright,
+        // faint), then the letter from its fifth column on.
+        let picture = |texels_per_unit: usize| {
+            let (w, h) = (16 * texels_per_unit, 8);
+            let mut rgba = vec![0u8; 4 * w * h];
+            for y in 2..6 {
+                for x in 3 * texels_per_unit..w {
+                    let a = if x < 5 * texels_per_unit { 60 } else { 255 };
+                    rgba[4 * (y * w + x)..4 * (y * w + x) + 4].copy_from_slice(&[255, 220, 150, a]);
+                }
+            }
+            let mut font = crate::interface::plain_font(36.0, 15.0);
+            font.glyphs[usize::from(b'H')] = Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 16.0, height: 8.0, ascent: 8.0, before: 1.0, after: -2.0 };
+            (font, rgba, w as u32, h as u32)
+        };
+        let (font, rgba, w, h) = picture(1);
+        assert_eq!(ink_leads(&font, &rgba, w, h), vec![('H', 6.0)], "the glow is not the letter");
+        // A mod's picture at twice the texels: the same units.
+        let (font, rgba, w, h) = picture(2);
+        assert_eq!(ink_leads(&font, &rgba, w, h), vec![('H', 6.0)]);
+        // The sharp 'H' starts its lead into its place: the line goes right by the rest.
+        let m = metrics().unwrap();
+        let on = sharpened(raster(30.0, 36.0), "textures\\fonts\\baked-in_monofonto_large.fnt", true, &[('H', 6.0)]);
+        let shift = on.vector.unwrap().shift;
+        assert!((shift - (6.0 - m.lead('H') * ENTRY_EM)).abs() < 1e-4 && shift > 3.0, "{shift}");
+        // Roboto Condensed's 'H' starts 157 font units into its 2048.
+        assert_eq!(m.lead('H'), 157.0 / 2048.0);
+        // Futura Caps measures each letter against the sharp capital it is drawn as.
+        let caps = sharpened(raster(40.0, 52.0), "textures\\fonts\\glow_futura_caps_large.fnt", true, &[('h', 6.0)]);
+        let v = caps.vector.unwrap();
+        assert!((v.shift - (6.0 - m.lead('H') * v.em)).abs() < 1e-4);
     }
 
     #[test]

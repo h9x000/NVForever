@@ -489,6 +489,9 @@ pub struct VectorFace {
     pub base: f32,
     /// Drawn in capitals (the game's Futura Caps, `crate::vector_font::screen_face`).
     pub caps: bool,
+    /// How far right of its place each line is drawn, in interface units: where the game
+    /// font's letters started (`crate::vector_font::ink_leads`); 0 for the menus' own faces.
+    pub shift: f32,
 }
 
 /// **The vector letters' dark glow** [design: owner 2026-11-15, second test: "the vanilla font
@@ -717,7 +720,8 @@ pub fn face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut As
 /// while the Menu Font row says Sharp (`crate::vector_font::screen_face`). The Pip-Boy's pages
 /// and the terminals, screens in the world, keep [`face`].
 pub fn screen_face(path: &str, stand_in: Font, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Face {
-    crate::vector_font::screen_face(face(path, stand_in, data, images, bc), path)
+    let raster = face(path, stand_in, data, images, bc);
+    crate::vector_font::screen_face(raster, path, images)
 }
 
 /// Whether the screens' letters changed (`crate::vector_font::letters`) since `seen`, which
@@ -920,12 +924,14 @@ fn draw_marked(
             run.glyphs.clear();
         }
     };
+    // A sharp line's runs are drawn `shift` right (`VectorFace::shift`): its pictures with them.
+    let shift = face.vector.as_ref().map_or(0.0, |v| v.shift);
     for &placed in &line.glyphs {
         let mut native = placed;
         if face.font.needs_cjk_fallback(placed.ch) {
             if let Some((key, glyph)) = crate::cjk_font::lookup(placed.ch, face.font.size) {
                 flush(p, &mut run, start);
-                set_cjk_glyph(p, key, glyph, x + placed.x, base, 1.0, color, mark.clone());
+                set_cjk_glyph(p, key, glyph, x + shift + placed.x, base, 1.0, color, mark.clone());
                 continue;
             }
             native.ch = '?';
@@ -957,7 +963,7 @@ fn set_bevy_line(
         let layout = (bevy::text::LineHeight::RelativeToFont(1.0), TextLayout::new(Justify::Left, LineBreak::NoWrap));
         let shadow = |part: Vec2, alpha: f32| (TextGlow(part), bevy::ui::widget::TextShadow { offset: Vec2::ZERO, color: Color::BLACK.with_alpha(alpha) });
         let ink = color.alpha();
-        p.spawn((Node { position_type: PositionType::Absolute, left: u(x), top: u(base - v.base), ..default() }, Pickable::IGNORE, GlowInk(ink))).with_children(|n| {
+        p.spawn((Node { position_type: PositionType::Absolute, left: u(x + v.shift), top: u(base - v.base), ..default() }, Pickable::IGNORE, GlowInk(ink))).with_children(|n| {
             // Dark words (black on a lit bar) have no dark glow round them.
             if dark_ink(color) {
                 n.spawn((Text::new(text), font, layout, TextColor(color), mark));
