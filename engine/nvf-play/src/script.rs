@@ -967,9 +967,22 @@ impl Runtime {
                 self.activate_again = Some(*t);
                 self.choices_passed = Some(*t);
             }
+            Some(fnv_game::activate_choices::Picked::Closed(t)) => info!("activate: the player closed the perks' choices on {}", g.data.name(*t)),
             None => return false,
         }
         self.snapshot_inventory();
+        true
+    }
+
+    /// E on an actor it otherwise does nothing to (hostile, or a creature with nothing to
+    /// say: `crate::activate`): the perks' choices on it open, if any are offered now
+    /// (Robotics Expert's, #3479). Never the default action. Whether the list opened.
+    fn choices_only(&mut self, target: FormId) -> bool {
+        if self.game.activation_refused(target) || self.game.parent_activate_only(target) || !self.game.open_activate_menu_only(target) {
+            return false;
+        }
+        let labels: Vec<&str> = self.game.activate_menu.iter().flat_map(|m| m.choices.iter().map(|c| c.label.as_str())).collect();
+        info!("activate: {} offers the perks' choices {labels:?} and no default action", self.game.data.name(target));
         true
     }
 
@@ -1463,6 +1476,12 @@ pub fn talk_by_hand(script: Option<&mut ScriptState>, sim: &mut SimState, target
         Some(rt) => with_world(rt, sim, |rt| rt.talk_only(FormId(target))),
         None => Err("the scripts are not running".into()),
     }
+}
+
+/// The perks' choices alone on `target` (`Runtime::choices_only`): whether their list
+/// opened.
+pub fn choices_by_hand(script: Option<&mut ScriptState>, sim: &mut SimState, target: u32) -> bool {
+    script.and_then(|s| s.rt.as_mut()).is_some_and(|rt| with_world(rt, sim, |rt| rt.choices_only(FormId(target))))
 }
 
 /// The player activates `target` by hand (E): through the scripts when they run.

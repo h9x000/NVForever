@@ -767,7 +767,7 @@ fn prepare_pass(
 }
 
 /// The frame as the post passes leave it, before the UI is drawn over it.
-fn capture_hudless(view: ViewQuery<(&ViewTarget, &PreparedFrameGen)>, mut ctx: RenderContext) {
+pub(crate) fn capture_hudless(view: ViewQuery<(&ViewTarget, &PreparedFrameGen)>, mut ctx: RenderContext) {
     let (target, fg) = view.into_inner();
     if !fg.prepared.load(Ordering::Relaxed) {
         return;

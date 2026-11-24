@@ -340,7 +340,16 @@ fn batch_one_answers() {
         // A call that fails gives the query no value.
         true
     });
+    // IsJumping_BROKEN tracks airborne/IsInAir state (0 grounded, 1 airborne, 0 landed)
+    // [observed: w4c_a01_isjumping_indoor, w4c_a13_isjumping_deep].
+    assert_eq!(n(&mut g, "PlayerREF.IsJumping_BROKEN"), 0.0);
+    assert_eq!(n(&mut g, "NpcRef.IsJumping_BROKEN"), 0.0);
+    g.set_motion(FormId::PLAYER_REF, fnv_game::functions::senses::Motion { in_air: true, ..fnv_game::functions::senses::Motion::default() });
     assert_eq!(n(&mut g, "PlayerREF.IsJumping_BROKEN"), 1.0);
+    assert_eq!(n(&mut g, "PlayerREF.IsJumping_BROKEN"), n(&mut g, "PlayerREF.IsInAir"));
+    assert_eq!(n(&mut g, "NpcRef.IsJumping_BROKEN"), 0.0);
+    g.set_motion(FormId::PLAYER_REF, fnv_game::functions::senses::Motion::default());
+    assert_eq!(n(&mut g, "PlayerREF.IsJumping_BROKEN"), 0.0);
     assert_eq!(n(&mut g, "IsNewGame"), 0.0);
     g.new_game();
     assert_eq!(n(&mut g, "IsNewGame"), 1.0);

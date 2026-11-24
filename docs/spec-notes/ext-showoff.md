@@ -45,12 +45,50 @@ ran.
 
 ## 4. ForceWeaponJamAnim
 
-- It returned 0 with the 10mm pistol away and 1 with it drawn [observed]. IsAnimPlayingEx 4
-  (reload) never read 1 over the 60 frames after [observed], so the jam is not a reload as
-  that function counts them.
-- A weapon without a jam animation gives 0 [documented: the .357 revolver cannot jam].
-  NVForever does not read which weapons have one yet, so any drawn weapon gives 1
-  [hypothesis], and the engine does not play the animation [not built].
+- It returned 0 with the 10mm pistol away and 1 with it drawn [observed: showoff1].
+  `IsAnimPlayingEx 4` (reload) never read 1 over the 60 frames after [observed: showoff1],
+  so the jam is not a reload as that function counts them.
+- A weapon without a jam animation gives 0 [documented: GECK wiki
+  [ForceWeaponJamAnim](https://geckwiki.com/index.php?title=ForceWeaponJamAnim), the .357
+  Magnum Revolver cannot jam], and calling it interrupts the actor's current hand action
+  (such as canceling an active reload and replacing it with the jam animation)
+  [documented: ForceWeaponJamAnim].
+- Live probes `[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin
+  184, 2026-11-23/24, GSDocMitchellHouse (0x00103DF9), 10 official base masters, clean-room
+  script probes w1_3632_onfireweapon_and_forcejam, so_34_force_weapon_jam_revolver, and
+  w4d_08_forcejam_melee_god_nonactor (tools/capture/nvse/catalogs/wave4d_extenders.json,
+  #3679); no DLL or source consulted]` confirmed:
+  - Drawn 10mm pistol (`Weap10mmPistol` `0x0000434F`, `jam_time = 1.4`) returns **`1`**
+    both normally and under `ToggleGodMode` (`w4d_08_forcejam_melee_god_nonactor`:
+    `tgm10mm(ret=1,act=9)`); immediately afterward, `GetAnimAction` reads **`9`** (not
+    `13`), `IsAnimPlayingEx 4` remains **`0`**, and calling `ForceWeaponJamAnim` again
+    while already jamming returns **`1`** (`w1_3632_onfireweapon_and_forcejam`:
+    `Player.ForceWeaponJamAnim` with holstered/drawn 10mm, Baseball Bat `0x0000421C`, and
+    unarmed fists; `ForceJamAnim` is the wiki-documented alias [documented: GECK wiki
+    ForceWeaponJamAnim]).
+  - Drawn `.357 Magnum Revolver` (`WeapNV357Revolver` `0x0008F216`, `jam_time = 0.0`,
+    `so_34_force_weapon_jam_revolver`: `AddItem` + `EquipItem` + draw `.357` vs `10mm`),
+    holstered 10mm pistol, drawn Baseball Bat (melee, `w4d_08_forcejam_melee_god_nonactor`:
+    `melee(ret=0,act=0)`), drawn Fists (unarmed), and non-actor static references (door
+    `0x103E61`, `w4d_08_forcejam_melee_god_nonactor`: `door=0`) return **`0`**.
+- NVForever checks that the actor is alive, has its weapon drawn, and has an equipped gun
+  (`DNAM/animation_type` in `3..=9`) with finite `DNAM/jam_time > 0` (`GetWeaponAnimJamTime`;
+  honoring session overrides and `TempCloneForm` clones) [observed: FalloutNV.esm WEAP
+  DNAM `Weap10mmPistol` `jam_time = 1.4` vs `WeapNV357Revolver` `jam_time = 0.0`;
+  hypothesis: using `animation_type` `3..=9` + `DNAM/jam_time > 0` as the rules-side
+  availability gate without probing BSA `.kf` presence].
+- On success, `ForceWeaponJamAnim` / `ForceJamAnim` queues the actor (deduplicated per
+  frame, capped at 64 entries for headless runs [design]) for `nvf_play::combat::fire`
+  (`Game::take_force_jam_requests`). For the player, `nvf_play::combat::fire` interrupts
+  any active reload or attack phase via `Cycle::jam` and increments `WeaponAnim::jams`
+  (which `nvforever::player_body` plays on the reload layer, interrupting any active reload
+  clip) while reporting `AnimAction::Jam` (code `9` for `GetAnimAction`, while
+  `IsAnimPlayingEx 4` remains `0` and `SetOnReloadWeaponEventHandler` does not fire;
+  generalizing `Phase::Jammed -> AnimAction::Jam` (`9` instead of `13`) to natural vanilla
+  weapon-condition jams is [hypothesis]).
+  Repeated calls while `Cycle::jammed` is already true return `1` without restarting the
+  active jam timer [design]. NPC jam animation playback remains [not built] (`nvf-play`
+  models `Cycle` for the player only). No ShowOff DLL or source code was consulted.
 
 ## 5. The 2026-10-30 batch (#1010, `nvse_showoff2.rs`)
 
@@ -124,7 +162,7 @@ on 000E8911 gives the three texts the page's example lists, the first one word f
 | SetAllyTemp (SetAllyShowOff), SetEnemyTemp (SetEnemyShowOff) `f1 f2 [flag12 flag21]` | SetAlly's and SetEnemy's reactions, not saved [documented]; they win over the saved ones until SetAlly or SetEnemy is called on the pair [hypothesis] |
 | AuxTimerTimeToCountdown `name [owner]` | the time AuxTimerStart gave, -1 when the timer is not running [documented], the name in any case [observed: showoff3 so3.aux.countdown]. The owner argument is a base form: a reference named there stands for its base, so a reference's running timer reads -1 that way and its time when called on the reference [observed: so3.aux.countdown] |
 | SetOnAuxTimerStartHandler (SetOnTimerStartHandler), SetOnAuxTimerUpdateHandler (SetOnTimerUpdateHandler) `1/0 handler name [owner]` | the start handlers get the name and the owner on each AuxTimerStart; the update ones, each frame, the name, the owner and the time since the last update (1 for a timer without flag 4), only for timers started with flag 256 [documented; observed: showoff3 so3.aux.update.counts, .frames, a frames timer's time 1]. A handler set or removed takes effect at the next frame: a start in the step that set it runs nothing, a restart a frame later runs it at once, and a restart in the step that removed it still runs it [observed: so3.aux.start.reg, .restart, .remove, .after]. NVForever's aux timers still count seconds whatever the flags say [not built: frames, the menu-mode flags] |
-| GetRadiationExtraData, SetRadiationExtraData `rads` | XRAD; a set level reaches all radiation consumers (`Game::radiation_markers_in`, using `SetRadius` if set; a reference with no positive XRDS radius gives nothing) [documented]; carried across same-run loads in `Game::Session` and not saved [hypothesis; not built: saving] |
+| GetRadiationExtraData, SetRadiationExtraData `rads` | XRAD; round-trips on a placed reference (`0.000 -> 12.500`, setter returning `1`) [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE 184 + JIP LN 57.30 with the 10 official base masters, clean-room script probe `so_16_radiation_extradata_roundtrip` (`tools/capture/nvse/catalogs/wave4a_extenders.json`, #3678 / PR #3679), calling `GetRadiationExtraData`, `SetRadiationExtraData 12.5`, `GetRadiationExtraData`, and restoring on `0x00104C0F`: `0.000,1,12.500`; no DLL or source consulted]; a set level reaches all radiation consumers (`Game::radiation_markers_in`, using `SetRadius` if set; a reference with no positive XRDS radius gives nothing) [documented]; carried across same-run loads in `Game::Session` and not saved [hypothesis; not built: saving] |
 | ModNumericINISetting `setting by` | GetNumericINISetting plus the amount, set back; 0 for no such setting [documented] |
 | TopicInfoGetResponseStrings `info` | the response texts in order [documented; observed: showoff3 so3.responses.caravan, three of 144, 120 and 90 characters]; no array (ar_Size -1) for a form that is not a line [observed: so3.responses.stimpak] |
 
@@ -237,7 +275,7 @@ their titles have a space where the name has an underscore).
 | ReadFromJSON `path [pointer] [mode] [useCache]`, WriteToJSON `value path [pointer] [mode] [useCache] [saveFile] [compact]` | files under the game's folder through NVForever's layer (`GameRoot`, never the game folder), decoded as UTF-8 with any UTF-8 BOM stripped and `Data\...` paths also resolving through NVForever's layer/VFS [design]; objects are string maps, arrays lists, forms "@Plugin.esm:FormID" [documented]; every parser mode reads standard JSON, a pointer into a missing part makes the objects on the way [hypothesis]. `useCache` gates reading/writing `ModFiles::showoff_json` (uncached saved writes drop any stale cached entry) and escaping paths are refused even when `saveFile` is 0 [design]. ReadFromJSON on a missing file gives no value, the call fails [observed 2026-11-08: readjson.missing, TestExpr 0]; a file that is not JSON likewise, a pointer to nothing 0 [hypothesis]; WriteToJSON's failures 0 [hypothesis] |
 | CreateFolder (CreateDirectory) `path`, DumpFormList (FListDump) `list [file] [append]` | the folder made in NVForever's layer; the list's forms to the console or appended to a file there [documented], the lines in NVForever's own words |
 | GetActorFadeState | 0 for a loaded actor not fading [observed: Fallout: New Vegas 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE 184, 10 official base masters, `b3_so_01_lvlup_closed_and_status_flags`: `Player.GetActorFadeState` and `rDoc.GetActorFadeState` both returned `0.0` in Doc Mitchell's house, no DLL or source consulted]; −1 for an unloaded actor [observed 2026-11-08: `showoff4.fadestate.doc`, Doc Mitchell in his unloaded house while the player stood at the airport test ground]; NVForever reports `0` for the player or a present actor in a loaded cell and `−1` otherwise [hypothesis: unloaded/non-actor is the reason for `−1`, and other fade states are unknown because NVForever does not fade actors through this state] |
-| GetCalculatedActorSpread | live actor weapon spread from the Gun Spread Formula, stance, crippled arms, `SetNoGunWobble`, and spread perks (`Game::calculated_actor_spread`) [documented: Gun Spread Formula; hypothesis: `docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md`] |
+| GetCalculatedActorSpread | live actor weapon spread from the Gun Spread Formula, stance, crippled arms, and spread perks (`Game::calculated_actor_spread`) — `SetNoGunWobble 1` does **not** zero `GetCalculatedActorSpread`; 1H guns (anim `3`, `4`) add `+0.2` right / `0` left / `+0.4` both; 2H ranged weapons (anim `5`, `6`, `8`) add `+0.4` single arm / `+0.6` both arms; thrown (anim `10`) adds `0` [documented: Gun Spread Formula; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 + ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only `PrintToConsole` probe; zero writes to game install or Saves), `w4c_a06b_spread_settled` (`wave4c_extenders.json`, #3679) and settled 6-type `w4d_09_spread_all_anim_types` (`wave4d_extenders.json`, #3802 / PR #3803): `PROBE\|w4d_09_spread_all_anim_types\|t3(0.1434,0.2359,0.1434,0.3284)\|t4(0.1388,0.2313,0.1388,0.3238)\|t5(0.1688,0.3538,0.3538,0.4463)\|t6(0.1434,0.3284,0.3284,0.4209)\|t8(0.1804,0.3654,0.3654,0.4579)\|t10(0.4504,0.4459,0.4504,0.4459)\|t3nw(0.1434,0.1434)`; zero DLL, PDB, or third-party source consulted; hypothesis: unprobed anim types and remaining scope/GMST details in `docs/spec-notes/nvse-stubs-persistent-fall-spread-unique.md`] |
 | IsFormLoading | 0 [decision: the page is marked Incomplete with no summary, arguments or result; nothing to build from] |
 
 Follow-ups: the three Incomplete pages need their text.
@@ -277,46 +315,88 @@ RemoveAllItemsShowOff.
 
 - **`ShowOff:OnDisplayObjective`** [documented: GECK wiki,
   [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
-  `ShowOff:OnDisplayObjective`]: fires when a quest objective is displayed, passing
-  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
-  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
-  `Game::set_objective_whatever` only on `displayed` transitioning `false -> true` (so
-  hiding an objective with `0`, repeating display on an already-displayed objective,
-  referencing an undefined objective index, or calling `SetObjectiveDisplayed` on an
-  already completed/failed quest does not fire), with `on = None` and
-  `GetObjectiveDisplayed` already reading `1` inside the callback [hypothesis:
-  transition-only dispatch, no calling reference, and post-update getter visibility
-  unobserved in original-game captures].
+  `ShowOff:OnDisplayObjective`; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+  ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base
+  masters, clean-room script probes `w1_3656_objectives_unholster_imod` (`StartQuest
+  0x000E282D`, `SetObjectiveDisplayed 20 1`/`20 1`/`20 0`/`20 1`/`999 1` + `CompleteQuest`
+  + `SetObjectiveDisplayed 60 1`) and `b3_so_ex_06_on_display_complete_objective`
+  (`SetObjectiveDisplayed 0x00104C1C 10 1` -> `reg=1,hit=1,dispInside=0`) in #3679; no DLL
+  or source consulted]: fires PRE-update when a quest objective transitions from hidden to
+  displayed, with calling reference `None` (`00000000`) and two arguments `(quest,
+  objective_index)` (`"first"` / `1::` filters the quest form; `"second"` / `2::` filters
+  the integer objective index). Inside the callback, `GetObjectiveDisplayed` still reads
+  `0` (PRE-update), and reads `1` after the call. Hiding (`0`), repeating display on an
+  already-displayed objective (`1 -> 1`), undefined objective index (`999`), and
+  completed/failed quests do not fire.
 - **`ShowOff:OnCompleteObjective`** [documented: GECK wiki,
   [Category:Event Handlers (ShowOff NVSE)](https://geckwiki.com/index.php?title=Category:Event_Handlers_%28ShowOff_NVSE%29),
-  `ShowOff:OnCompleteObjective`]: fires when a quest objective is completed, passing
-  `(quest, objective_index)` as two arguments (`"first"` / `1::` filters the quest form;
-  `"second"` / `2::` filters the integer objective index). NVForever dispatches it from
-  `Game::set_objective_whatever` (covering both `SetObjectiveCompleted` and
-  `CompleteAllObjectives`) only on `completed` transitioning `false -> true` (so
-  un-completing with `0`, clearing `completed` when re-displaying a hidden objective,
-  repeating completion on an already-completed objective, referencing an undefined
-  objective index, or calling `SetObjectiveCompleted` on an already completed/failed
-  quest does not fire), with `on = None` and `GetObjectiveCompleted` already reading `1`
-  inside the callback [hypothesis: transition-only dispatch, `CompleteAllObjectives`
-  firing per newly completed objective in ascending index order, hidden-objective
-  completion firing, no calling reference, and post-update getter visibility unobserved].
+  `ShowOff:OnCompleteObjective`; observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+  ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base
+  masters, clean-room script probe `w1_3656_objectives_unholster_imod` in #3679
+  (`StartQuest 0x000E282D`, `SetObjectiveCompleted` `20 1`/`20 1`/`20 0`/hidden `30 1`,
+  `SetObjectiveDisplayed 50 1` + `5 1` + `CompleteAllObjectives` firing `50` then `5`,
+  `CompleteQuest` + `SetObjectiveCompleted 60 1`); no DLL or source consulted]: fires
+  PRE-update when a **currently displayed** quest objective transitions from incomplete to
+  completed, with calling reference `None` (`00000000`) and two arguments `(quest,
+  objective_index)`. Inside the callback, `GetObjectiveCompleted` still reads `0`
+  (PRE-update), and reads `1` after the call. Completing a hidden (undisplayed) objective,
+  repeating completion (`1 -> 1`), un-completing (`1 -> 0`), undefined objective indices,
+  and completed quests do not fire. `CompleteAllObjectives` iterates objectives in
+  **`QOBJ` record order** (e.g., `50` then `5`, not ascending index order) and fires
+  `ShowOff:OnCompleteObjective` only for currently displayed incomplete objectives.
 - **`ShowOff:OnWeaponUnholster`** [documented: GECK wiki,
-  [ShowOff:OnWeaponUnholster](https://geckwiki.com/index.php?title=ShowOff%3AOnWeaponUnholster)]:
-  added in ShowOff NVSE 1.80; fires when an actor unholsters a weapon, with the actor as
-  the calling reference (`GetSelf` / `GetSelfAlt` / `0::`) and the weapon form as the
-  single argument (`"first"` / `1::`). NVForever dispatches it from `Game::set_weapon_out`
-  (driven by `nvf_play::combat::weapon_state` for the player and `nvforever::idles` for
-  drawn NPCs/creatures) and `Game::hud_tick` (scripted `SetWeaponOut 1` after
-  `WEAPON_FRAMES`) only on `weapon_out` transitioning `false -> true`, with `IsWeaponOut`
-  already reading `1` inside the callback. The weapon argument resolves from the actor's
-  equipped weapon (`equipped_weapon`), else the animating side's `held_weapon`, else
-  `Fists` (`0x000001F4`) when defined as a `WEAP` record in game data, else null form `0`
-  [hypothesis: firing at weapon-out completion rather than draw-start, unarmed/creature
-  weapon argument fallback, and `IsWeaponOut` visibility inside the callback unobserved].
-  Save restore writes `extra` directly without firing a spurious unholster event
-  [design].
+  [ShowOff:OnWeaponUnholster](https://geckwiki.com/index.php?title=ShowOff%3AOnWeaponUnholster);
+  observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184,
+  2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base masters, clean-room
+  script probe `w1_3656_objectives_unholster_imod` in #3679 (`Player.SetWeaponOut 0` /
+  `Player.SetWeaponOut 1` with `Weap10mmPistol` `0x0000434F` -> `self=0x14, arg1=0x434F,
+  IsWeaponOut=0`; `UnequipItem` + unarmed `Player.SetWeaponOut 1` -> `self=0x14, arg1=0,
+  IsWeaponOut=0`); no DLL or source consulted]: added in ShowOff NVSE 1.80; fires at
+  weapon draw START PRE-update so `IsWeaponOut` still reads `0` inside the callback.
+  Calling reference (`GetSelf` / `GetSelfAlt` / `0::`) is the actor and the single
+  argument (`"first"` / `1::`) is the actor's equipped or engine-held `WEAP` base form
+  (e.g. `0x434F` for 10mm Pistol), or null form `0` when unarmed (NOT `Fists`
+  `0x000001F4`). NVForever dispatches it at draw start in `Game::set_anim_state` (on
+  `AnimAction::Equip` while holstered) and scripted `SetWeaponOut 1` (`nvse_hud.rs`),
+  deduplicated via `ShowOffState::unholster_pending` so interleaved per-frame
+  `set_weapon_out(actor, false)` calls during the draw and draw completion
+  (`Game::set_weapon_out(actor, true)` / `hud_tick`) do not double-fire, while genuine
+  draw cancellations (`AnimAction::Unequip`, `Equip` ending on an earlier frame without
+  completing, `HolsterWeapon`, `SetWeaponOut 0`, or `forget_anim_state`) clear the latch;
+  when an actor transitions directly to `weapon_out = true` without a prior `Equip`
+  action, `set_weapon_out` / `hud_tick` still dispatches PRE-update while `IsWeaponOut`
+  reads `0` [design]. Save restore writes `extra` directly without firing a spurious
+  unholster event [design].
 - [design] All three events short-circuit on `Game::handled(...)` before allocating
   argument vectors or resolving weapon forms, leaving unmodded vanilla gameplay
   unchanged with zero allocations. No ShowOff NVSE DLL, PDB, or C++ source code was
   consulted.
+
+## 11. `ShowOff:OnFireWeapon`
+
+- **`ShowOff:OnFireWeapon`** [documented: GECK wiki Category:Event Handlers (ShowOff NVSE),
+  [SetEventHandlerAlt](https://geckwiki.com/index.php?title=SetEventHandlerAlt); observed:
+  Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin 184, 2026-11-23,
+  GSDocMitchellHouse (`0x00103DF9`), 10 official base masters, clean-room script probe
+  `w1_3632_onfireweapon_and_forcejam` in #3679 (`SetEventHandlerAlt
+  "ShowOff:OnFireWeapon"` with `begin Function { ref rWeap }`, `Player.FireWeapon` with
+  `Weap10mmPistol` `0x0000434F` and 7-pellet Caravan Shotgun `0x000CD53A`); no DLL or
+  source consulted]: dispatched when an actor fires a ranged weapon, with the firing actor
+  reference as the calling reference (`0::` filter, `GetSelf`/`GetSelfAlt`, observed for
+  `Player 0x14`; NPC-actor dispatch [documented: GECK wiki; hypothesis: unprobed in
+  committed #3679 catalog]) and the `WEAP` base form as the single argument (`1::` /
+  `"first"::` filter, `Begin Function { ref rWeapon }`, observed `0x434F` 10mm pistol and
+  `0xCD53A` Caravan Shotgun).
+- Dispatched from `Game::weapon_fired` (player shots) and `Game::projectile_fired`
+  (NPC shots and scripted `FireWeapon` shots), deduplicated per `(frame, actor, weapon)`
+  so `weapon_fired` followed by `projectile_fired` or a multi-pellet shotgun burst fires
+  once per shot [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + ShowOffNVSE Plugin
+  184, 2026-11-23, GSDocMitchellHouse (`0x00103DF9`), 10 official base masters, probe
+  `w1_3632_onfireweapon_and_forcejam` in #3679: `Player.FireWeapon` on the 7-pellet
+  Caravan Shotgun `0x000CD53A` fires `ShowOff:OnFireWeapon` once, not 7 times].
+- Excludes non-actors (e.g., trap activators) and melee weapons (`DNAM/animation_type`
+  `0..=2`), and is not suppressed by player god mode (`ToggleGodMode`), unlike JIP's
+  `SetOnFireWeaponEventHandler` whose god-mode omission is a JIP-documented quirk
+  [hypothesis: non-actor, melee, and god-mode edge cases unprobed in original ShowOff].
+- Free when no `ShowOff:OnFireWeapon` handler is registered (unmodded vanilla weapon
+  firing is unchanged). No ShowOff DLL or source code was consulted.

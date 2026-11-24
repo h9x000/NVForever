@@ -214,12 +214,20 @@ separate).
   (or cloned `LIGH`) otherwise; `SetProjectileSound` accepts `PROJ`/`SOUN` (including
   `TempCloneForm` aliases) for slots `1..=3`; `SetProjectileTraitNumeric` rejects
   non-integer/out-of-range trait IDs without mutating state.
-- **`TempCloneForm` snapshotting and fallback** [design]: cloning a `PROJ` snapshots
-  active non-flag overrides from the cloned source onto the new clone
-  (`Game::snapshot_projectile_traits`), so pre-clone edits carry onto clones and
-  clone-of-clone chains and stay isolated from later edits on the source, while fields
-  left untouched on the original before cloning keep the existing clone-to-original
-  fallback required by initial-launch controls.
+- **`TempCloneForm` copy-at-creation snapshot isolation** [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`),
+  10 official base masters, isolated staging copy, read-only, committed probe
+  `w4g_02_tempcloneform_world_proj_csty` in
+  `tools/capture/nvse/catalogs/wave4g_f2_extenders.json` (companion catalog PR #3803),
+  verbatim printed output
+  `proj(0002CD5F:t1=3.00,t2=27520.0,t4=0.0|cl1=1234.5/0.75|afterSrc=5678.5:cl2=1234.5/0.75|cl2sub=1234.5)`;
+  no DLL or source consulted]: cloning a `PROJ` snapshots all active session overrides
+  (numeric traits, `DATA/flags`, form slots, and model/muzzle-flash paths) from the
+  cloned source onto the new clone (`Game::snapshot_projectile_traits`), so pre-clone
+  edits carry onto clones and clone-of-clone chains, while post-clone edits on the
+  source (or parent clone) never bleed into already-created clones. Untouched fields on
+  a cloned `PROJ` read directly from the authored record instead of live-inheriting
+  later overrides on the original.
 - **Headless combat consumer adapter** [design]: `fnv_combat::projectile_overrides::ProjectileOverrides`
   applies sparse non-flag overrides onto per-shot / per-mine `ProjectileStats`,
   `ShotChain`, and `ProjectileFx` copies (feeding `Projectile::spawn`, `fire_projectile`,

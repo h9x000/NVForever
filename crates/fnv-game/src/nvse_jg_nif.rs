@@ -212,8 +212,9 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         // ---- a shape's alpha and stencil properties: `block item [pc]`, item 0 the flags,
         // 1 the threshold; 0 the flags, 1 the reference, 2 the mask [hypothesis: the pages
         // are incomplete; the order of the properties' fields, nif.xml NiAlphaProperty,
-        // NiStencilProperty]. The setters keep the value for the session's reads; the
-        // drawn shape keeps its own [not built: engine follow-up]. 0 without one.
+        // NiStencilProperty]. The setters keep the value for the session's reads and queue
+        // `SceneEdit::AlphaProperty` / `SceneEdit::StencilProperty` for the engine to apply
+        // live to the drawn shape's material (`nvforever::nif_mirror`). 0 without one.
         "getalphapropertyvalue" | "getstencilpropertyvalue" => {
             let Some(r) = on else { return Some(Ok(zero)) };
             let item = num(args, 1, -1.0);

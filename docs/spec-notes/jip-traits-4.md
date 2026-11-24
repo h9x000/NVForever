@@ -114,7 +114,9 @@ not decode yet.
 - 5 (shown in the Pip-Boy) reads 1 for a named quest that runs or ran, or after a script
   sets it [observed: jip4, 1 on VCG01 and VCG02, which the save has run, 0 on VMS01 and
   VMS20, which it has not, and 0 on VDeadSea, which runs from the start with no name;
-  SetQuestFlag 5 1 reads back 1; hypothesis: the rule].
+  SetQuestFlag 5 1 reads back 1; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30
+  with the 10 official base masters, clean-room script probe jip_27_quest_flag_5_shown
+  (GetQuestFlag): 0,0; no DLL or source consulted; hypothesis: the rule].
 - 7 is unknown and reads as a script set it.
 
 ## 9. Factions, cells, waters, sounds
@@ -174,7 +176,10 @@ not decode yet.
 ## 10. Game-state getters
 
 - `GetGameDifficulty`, `SetGameDifficulty n` [documented: 0 very easy … 4 very hard]:
-  NVForever's difficulty. A number outside 0–4 changes nothing [hypothesis].
+  NVForever's difficulty. A number outside 0–4 changes nothing [observed: Fallout: New
+  Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters,
+  clean-room script probe jip_26_game_difficulty_out_of_range
+  (GetGameDifficulty/SetGameDifficulty): 3,3,3; no DLL or source consulted].
 - `GetSessionTime` [documented: "the game's current session duration in seconds"]: the
   seconds run since the game started, menus included, as each frame's own length added
   up (the engine's frame time changes every frame, so the frame count times the current
@@ -208,7 +213,16 @@ not decode yet.
 - `GetStartingPos axis`, `GetStartingAngle axis` (vanilla, built with this batch in
   `functions/refs.rs`): the reference's placement in the plugins, the angle in degrees;
   the player reads 0 on every axis [observed: jip4, DocMitchellRef 2288, 2244, 7360 and
-  angle Z 22.918; his door 2430, 1536, 7359].
+  angle Z 22.918; his door 2430, 1536, 7359]. For dynamic references created via
+  `PlaceAtMe`, `GetStartingAngle` returns the reference's creation heading (`RefState::made_rot`,
+  optional backwards-compatible save field) in degrees rather than `0` [observed: Fallout:
+  New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-23, `GSDocMitchellHouse`
+  (`0x00103DF9`), 10 official base masters, isolated clean-room staging copy (read-only
+  probe; zero writes to game install or Saves), `b3_jip4_02_session_time_and_start_angle`
+  (`tools/capture/nvse/catalogs/wave4b_extenders.json`, #3679):
+  `PROBE|b3_jip4_02_session_time_and_start_angle|sess=5.31,docZ=22.92,dynZ=270.00`; zero
+  DLL, PDB, or third-party source consulted; hypothesis: X/Y axes and persistence of
+  `made_rot` across saves].
 - `GetIsPoisoned` [documented: "under the influence of a poison-type effect"]: an effect
   on the actor whose source is an ingestible that GetIsPoison counts, all its effects
   hostile and detrimental [hypothesis: the rule].

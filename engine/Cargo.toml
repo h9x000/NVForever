@@ -77,6 +77,7 @@ gpu-allocator = { path = "vendor/gpu-allocator" }
 bevy_light = { path = "vendor/bevy_light" }
 gilrs = { path = "vendor/gilrs" }
 bevy_pbr = { path = "vendor/bevy_pbr" }
+bevy_core_pipeline = { path = "vendor/bevy_core_pipeline" }
 bevy_post_process = { path = "vendor/bevy_post_process" }
 bevy_render = { path = "vendor/bevy_render" }
 bevy_shader = { path = "vendor/bevy_shader" }

@@ -130,9 +130,12 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
         return crate::nvse::call(g, ctx, current, subject, args);
     }
     let v = match name {
-        // 1 for the player standing still: the plugin's own name says it is broken
-        // [observed: rest1.old.isjumping; hypothesis: always 1] (§4).
-        "isjumping_broken" => XVal::Num(1.0),
+        // Tracks airborne/falling state (`IsInAir`): 0 when grounded indoors or outdoors,
+        // 1 while airborne/falling, 0 after landing [observed: Fallout: New Vegas 1.4.0.525
+        // + xNVSE 6.4.9 + ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse` (`0x00103DF9`)
+        // and `Goodsprings` (`0x000DAEBB`), 10 official base masters,
+        // `w4c_a01_isjumping_indoor`, `w4c_a13_isjumping_deep`, `w4c_a01b_isjumping_bare`] (§4).
+        "isjumping_broken" => return crate::nvse::call(g, ctx, "isinair", subject, &[]),
         // 1 when every character is below 128 [observed: rest1.ascii.plain 1,
         // ascii.high 0] (§5).
         "stringcontainsonlyascii" => match args.first() {

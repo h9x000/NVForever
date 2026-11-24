@@ -174,12 +174,22 @@ fn the_screen_fonts_plugins_and_the_hud() {
 fn the_lockpick_menu_and_the_throw() {
     let f = fixture();
     let mut g = game(&f);
-    // Shut: -1 [documented: GetLockPickMenuValue].
+    // Shut: -1 for all requests including out-of-range 3 [documented: GetLockPickMenuValue;
+    // observed: sup_20_lockpick_and_bobbypin_closed].
     assert_eq!(n(&mut g, "GetLockPickMenuValue 0"), -1.0);
+    assert_eq!(n(&mut g, "GetLockPickMenuValue 3"), -1.0);
+    // Request 1 returns the lock tier enum (0 Very Easy..4 Very Hard), not raw 0/25/50/75/100;
+    // out-of-range request 3 returns 0.0 while open [observed: w4h_11_sup_lockpick_menu_tiers
+    // and w4e_12_sup_lockpick_menu_value_tiers, #3802].
+    for (raw_level, expected_tier) in [(0.0, 0.0), (1.0, 1.0), (25.0, 1.0), (50.0, 2.0), (75.0, 3.0), (100.0, 4.0)] {
+        g.sup.lockpick = Some(LockpickView { angle: 90.0, level: raw_level, skill: 40.0, health: 1.0 });
+        assert_eq!(n(&mut g, "GetLockPickMenuValue 1"), expected_tier, "raw lock level {raw_level}");
+    }
     g.sup.lockpick = Some(LockpickView { angle: 90.0, level: 25.0, skill: 40.0, health: 1.0 });
     assert_eq!(n(&mut g, "GetLockPickMenuValue 0"), 90.0);
-    assert_eq!(n(&mut g, "GetLockPickMenuValue 1"), 25.0);
+    assert_eq!(n(&mut g, "GetLockPickMenuValue 1"), 1.0);
     assert_eq!(n(&mut g, "GetLockPickMenuValue 2"), 40.0);
+    assert_eq!(n(&mut g, "GetLockPickMenuValue 3"), 0.0);
     // [documented: SetBobbyPinHealth, without a value the health; above 1 allowed].
     assert_eq!(n(&mut g, "SetBobbyPinHealth"), 1.0);
     q(&mut g, "SetBobbyPinHealth 2");

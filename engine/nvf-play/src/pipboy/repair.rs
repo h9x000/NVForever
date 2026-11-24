@@ -889,4 +889,45 @@ mod tests {
         assert_eq!(resolve(None, RepairInput::Click(1)), RepairInput::Hover(1));
         assert_eq!(resolve(Some(1), RepairInput::Down), RepairInput::Down);
     }
+
+    #[test]
+    fn repair_preview_with_weapon_repair_kits_refuses_use_without_consuming_kit() {
+        let mut app = key_app(false, 1.0, 1);
+        // Replace the open session with a full-condition preview holding a weapon repair kit.
+        let (gun, kit) = (FormId(1), FormId(2));
+        let mut forms = store(&[(1, ItemKind::Weapon), (2, ItemKind::Misc)]);
+        forms.bases.insert(FormId::PLAYER_BASE, BaseForm {
+            id: FormId::PLAYER_BASE, sig: *b"NPC_", edid: None, name: None, script: None,
+            prompt: None, voice_filter: false,
+            data: BaseData::Actor(fnv_sim::forms::ActorBase { entries: Vec::new(), attributes: Some([5; 7]) }),
+        });
+        let forms = Box::leak(Box::new(forms));
+        let refs = Box::leak(Box::new(fnv_sim::RefTable::default()));
+        let mut world = fnv_sim::World::new(forms, refs, fnv_sim::SimConfig::default());
+        world.add_item(FormId::PLAYER_REF, gun, 1).unwrap();
+        world.add_item(FormId::PLAYER_REF, kit, 2).unwrap();
+        let groups: Vec<_> = world.inventory_mut(FormId::PLAYER_REF).unwrap().groups().collect();
+        let base = offer(&groups, forms, &[], gun, Pick::at(Some(1.0)), false).unwrap();
+        let with_kit = with_kits(base, &groups, forms, &|id| id == kit);
+        assert_eq!(with_kit.parts.len(), 1);
+        assert!(with_kit.parts[0].kit);
+        assert!(!with_kit.usable(), "full-condition weapon is not normally repairable");
+        app.insert_resource(SimState { forms, refs, world });
+        app.insert_resource(PipRepair(Some(Session {
+            offer: with_kit,
+            skill: 50.0,
+            settings: MergeSettings::default(),
+            first: 0,
+            selected: 1,
+            preview: true,
+        })));
+        app.world_mut().resource_mut::<ButtonInput<KeyCode>>().press(KeyCode::Enter);
+        app.update();
+        assert!(app.world().resource::<PipRepair>().is_open(), "preview stays open on refused Use");
+        assert_eq!(
+            app.world_mut().resource_mut::<SimState>().world.item_count(FormId::PLAYER_REF, kit).unwrap(),
+            2,
+            "preview must not consume Weapon Repair Kits"
+        );
+    }
 }

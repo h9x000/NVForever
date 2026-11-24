@@ -69,6 +69,30 @@ single slow frame charged to a render system that only writes a buffer
 (`upload_light_probes`, `write_binned_instance_buffers`) can be matched to a new memory
 block. `std` is linked for the clock (wgpu-hal turns the crate's `std` feature off).
 
+## bevy_core_pipeline 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
+
+HDR output (docs/design/hdr-output.md). Changes, marked `NVForever HDR output`:
+
+- `src/blit/mod.rs`: `BlitPipelineKey` gains `hdr` (a blit to an HDR window) and
+  `hdr_gamma22`, adding the shader defs `NVF_HDR_PAPER_WHITE` and `NVF_HDR_GAMMA22`. The
+  layout gains a third binding, the uniform `BlitPipeline::nvf_hdr_scale` (x: the HUD's
+  white in nits / 80), written by `nvf_write_hdr_scale` when it changes, so moving the
+  brightness rebuilds no pipeline (it was a shader constant, one pipeline per step; PR
+  #3348 review).
+- `src/blit/blit.wesl`: under those defs the 0..1 range is decoded with gamma 2.2 and the
+  colour is scaled by `nvf_hdr_scale.x` (scRGB's 1.0 is 80 nits).
+- `src/upscaling/mod.rs`: the statics `NVF_HDR_PAPER_WHITE_NITS`, `NVF_HDR_HUD_NITS` and
+  `NVF_HDR_GAMMA22` (set by nvforever's settings), and the upscaling pipeline's key takes
+  them for a window camera whose target is `Rgba16Float` while the window's surface is
+  HDR (`bevy_render`'s `NVF_HDR_SURFACE_ACTIVE`).
+
+Why: the window blit is the last pass that writes the swapchain, and the HUD is drawn
+into the picture before it, so the HUD's brightness in nits can only be set there.
+Upstream's blit copies the colour unchanged.
+
+Source: crates.io `bevy_core_pipeline` 0.20.1, archive SHA-256
+`2463cf477b683bfe8567c43142295d00ed980f8e2a293c0a69e2f9e10e9c0aaf`.
+
 ## bevy_post_process 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
 Bevy's post-processing, for its auto exposure, which meters the view for the game's eye
@@ -86,6 +110,9 @@ Why: the exposure is `curve(average) − average`. With one byte entry per 0.086
 average and bytes 0.067 EV apart, a curve `y = x` (no change) came out as a sawtooth
 between 0 and about −0.15 EV, so a daylight picture was darkened by up to 10 %, by an
 amount that jumped as the view's average crossed an entry.
+
+HDR output: `src/msaa_writeback.rs` fills `BlitPipelineKey`'s two new fields (`false`,
+`false`), as the vendored bevy_core_pipeline's key needs them.
 
 ## bevy_pbr 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 
@@ -892,6 +919,16 @@ each part marked by a comment starting `NVForever`:
 
 Without the setters and with `NVF_PIPELINE_THREADS=0`, upstream's path runs (no list pool
 either), except that the modules are made outside the lock.
+
+HDR output (docs/design/hdr-output.md), marked `NVForever HDR output` in
+`src/view/window/mod.rs`: the statics `NVF_HDR_SURFACE` (asked for), `NVF_HDR_SURFACE_ACTIVE`
+(the window's surface is fp16 scRGB) and `NVF_HDR_SURFACE_DECIDED` (a surface has been
+made). When the surface is made with HDR asked for (`NVF_HDR_SURFACE` or `NVF_HDR=1`) and
+it offers `Rgba16Float`, that format is chosen; `SurfaceColorSpace::Auto` makes it scRGB.
+Upstream prefers an sRGB format. `SurfaceData` keeps the SDR format and whether fp16 is
+offered; `nvf_hdr_changed` compares the asked-for output with the configured format each
+frame, and a change reconfigures the surface at once (no restart). Test aid
+`NVF_PLAY_TEST_SDR_SURFACE=1`: the surface counts as offering no `Rgba16Float`.
 
 ## bevy_shader 0.20.1 (MIT OR Apache-2.0, Bevy contributors)
 

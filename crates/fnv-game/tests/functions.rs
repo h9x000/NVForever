@@ -763,6 +763,36 @@ fn create_at_puts_an_actor_where_asked_and_makes_it_a_created_actor() {
 }
 
 #[test]
+fn get_starting_angle_on_dynamic_place_at_me_returns_creation_heading() {
+    let f = fixture();
+    let mut g = game(&f);
+    // Player facing 270 deg; PlaceAtMe copies the player's Z heading onto the dynamic ref
+    // [observed: b3_jip4_02_session_time_and_start_angle, dynZ=270.00].
+    g.world.get(FormId::PLAYER_REF).unwrap().rot = [0.0, 0.0, 270.0f32.to_radians()];
+    let dyn_ref = call(&mut g, 0x1025, Some(PLAYER), &[r(MISC), n(1.0)]) as u32;
+    let z0 = call(&mut g, 0x100B, Some(dyn_ref), &[ArgValue::Axis('Z')]);
+    assert!((z0 - 270.0).abs() < 1e-3, "expected 270.0 deg, got {z0}");
+    // Rotating the ref afterwards does not alter GetStartingAngle.
+    g.world.get(FormId(dyn_ref)).unwrap().rot[2] = 45.0f32.to_radians();
+    let z1 = call(&mut g, 0x100B, Some(dyn_ref), &[ArgValue::Axis('Z')]);
+    assert!((z1 - 270.0).abs() < 1e-3, "starting angle stays 270.0 after rotation, got {z1}");
+    // Player still reads 0 on all axes [observed: jip4].
+    assert_eq!(call(&mut g, 0x100B, Some(PLAYER), &[ArgValue::Axis('Z')]), 0.0);
+    // Dynamic starting angle survives snapshot save/restore.
+    let snap = g.snapshot();
+    let mut restored = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &snap.sim).unwrap(), GameConfig::default(), &snap).unwrap();
+    let z2 = call(&mut restored, 0x100B, Some(dyn_ref), &[ArgValue::Axis('Z')]);
+    assert!((z2 - 270.0).abs() < 1e-3, "starting angle survives save/restore, got {z2}");
+    // Older saves without `made_rot` still deserialize cleanly and default to 0.0.
+    let mut legacy = serde_json::to_value(&snap.sim).unwrap();
+    let entry = legacy["refs"].as_object_mut().unwrap().get_mut(&format!("{}", FormId(dyn_ref))).unwrap();
+    assert!(entry.as_object_mut().unwrap().remove("made_rot").is_some());
+    let legacy_sim: fnv_sim::world::Snapshot = serde_json::from_value(legacy).unwrap();
+    let mut legacy_game = Game::restore(&f.data, World::restore(&f.forms, &f.refs, &legacy_sim).unwrap(), GameConfig::default(), &snap).unwrap();
+    assert_eq!(call(&mut legacy_game, 0x100B, Some(dyn_ref), &[ArgValue::Axis('Z')]), 0.0);
+}
+
+#[test]
 fn actor_flags_factions_and_essential_state() {
     let f = fixture();
     let mut g = game(&f);
@@ -1215,9 +1245,11 @@ fn image_space_modifiers_play_end_and_are_removed() {
     assert!((g.image_modifiers[1].elapsed - 0.2).abs() < 1e-9);
     let snap = g.snapshot();
     assert_eq!(snap.image_modifiers.len(), 2);
-    // Applied again, it starts again.
+    // Applied again, it stacks a second instance at elapsed 0.0 [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-23, GSDocMitchellHouse, probe w1_3656_objectives_unholster_imod in #3679].
     call(&mut g, APPLY, None, &[r(IMAD_FADE)]);
-    assert_eq!(g.image_modifiers[1].elapsed, 0.0);
+    assert_eq!(g.image_modifiers.len(), 3);
+    assert!((g.image_modifiers[1].elapsed - 0.2).abs() < 1e-9);
+    assert_eq!(g.image_modifiers[2].elapsed, 0.0);
     g.frames(29);
     assert_eq!(call(&mut g, ACTIVE, None, &[r(IMAD_FADE)]), 1.0);
     g.frames(1);

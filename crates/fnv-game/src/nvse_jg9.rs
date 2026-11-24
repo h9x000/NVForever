@@ -230,11 +230,16 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
     let v = match name {
         // PlaySoundFile path [forcePlay] [shouldLoop] [playInMainMenu] [documented].
         // forcePlay is read as playing in menu mode too, as playInMainMenu [hypothesis].
+        // Returns 1 even for a nonexistent path [observed: Fallout: New Vegas 1.4.0.525 +
+        // xNVSE 6.4.9 + JohnnyGuitarNVSE 528 + JIP LN 57.30, 2026-11-23, `GSDocMitchellHouse`,
+        // `b3_jg9_01_sound_runspeed_compass_pipboy` (`wave4b_extenders.json`, #3679):
+        // `PROBE|b3_jg9_01_sound_runspeed_compass_pipboy|ps=1,ss=0,rsP=338.8,rsD=338.8,hostDir=-1,pb=0`].
+        // Paths escaping Data\ play nothing and still return 1 [design].
         "playsoundfile" => {
-            let Some(p) = text(args, 0).as_deref().and_then(data_path).filter(|p| crate::mod_files::exists(p)) else { return Some(Ok(yes(false))) };
+            let Some(p) = text(args, 0).as_deref().and_then(data_path).filter(|p| crate::mod_files::exists(p)) else { return Some(Ok(yes(true))) };
             let looping = num(args, 2, 0.0) != 0.0;
             let system = num(args, 1, 0.0) != 0.0 || num(args, 3, 0.0) != 0.0;
-            let Some(id) = g.path_sound(&p, None, looping, true) else { return Some(Ok(yes(false))) };
+            let Some(id) = g.path_sound(&p, None, looping, true) else { return Some(Ok(yes(true))) };
             g.play_faded(id, None, system, 0.0);
             yes(true)
         }

@@ -153,6 +153,8 @@ mod world_blood_tests;
 mod weapon_sound_bridge_tests;
 #[cfg(test)]
 mod bullet_snap_tests;
+#[cfg(test)]
+mod showoff_combat_tests;
 
 /// The shooter's id for projectiles (the player has no hit volume).
 const PLAYER: ActorId = u64::MAX;
@@ -1352,6 +1354,87 @@ impl Combat {
         world.remove_resource::<Combat>().unwrap()
     }
 
+    /// Build a [`Combat`] resource from [`CombatForms`] with default runtime state.
+    /// Shared by [`init_combat`] and unit tests so adding a field to `Combat` updates one
+    /// production constructor.
+    pub(crate) fn from_forms(forms: CombatForms) -> Self {
+        let rules = Rules::from_forms(&forms);
+        // A thrown grenade's restitution (combat-rules.md §5).
+        let grenade_restitution = forms.setting("fGrenadeRestitution").unwrap_or(CombatTuning::default().grenade_restitution);
+        let fists = forms.by_edid("Fists");
+        Combat {
+            forms,
+            rules,
+            tuning: CombatTuning {
+                grenade_restitution,
+                ..CombatTuning::default()
+            },
+            weapon: None,
+            equipped: None,
+            mods: 0,
+            silenced_logged: None,
+            fists,
+            ammo: None,
+            self_ammo: false,
+            melee: false,
+            swings: Melee::default(),
+            blows: 0,
+            boom: Vec::new(),
+            meltdowns: HashSet::new(),
+            debris: Vec::new(),
+            cycle: None,
+            kick: Kick::default(),
+            flying: Vec::new(),
+            dropped_live: Vec::new(),
+            settled: Vec::new(),
+            landed: Vec::new(),
+            fire_landed: Vec::new(),
+            splashes: Vec::new(),
+            ghosts: Vec::new(),
+            looping: None,
+            ejects_seen: 0,
+            vats_throw: None,
+            last_shot: 0.0,
+            next_visual: 0,
+            pending: Vec::new(),
+            script_shots: Vec::new(),
+            guarding: HashMap::new(),
+            blocked_blows: Vec::new(),
+            fresh_reload: false,
+            guard_down_until: 0.0,
+            marks: Vec::new(),
+            rng: SplitMix(1),
+            swing_rng: SplitMix(2),
+            time: 0.0,
+            no_spread: false,
+            tracer_hold: None,
+            load_magazine: None,
+            load_ammo: None,
+            chosen_ammo: std::collections::BTreeMap::new(),
+            crosshair_cone: None,
+            player_spread: None,
+            grenade_hold: 0.0,
+            grenade_held: false,
+            vats_cone: None,
+            vats_blast: VatsBlast::default(),
+            player_blocked_at: None,
+            special_swing: None,
+            throw_logged: None,
+            spread_perks_logged: None,
+            flinch_until: 0.0,
+            flinch_end: None,
+            flinch_rng: SplitMix(3),
+            kick_rng: SplitMix(5),
+            kick_just_settled: false,
+            kick_left: [0.0; 2],
+            kick_back_goal: [0.0; 2],
+            kick_back: [crate::ease::Spring::default(); 2],
+            spent_rng: SplitMix(4),
+            blood_rng: SplitMix(6),
+            blood_chance_logged: false,
+        }
+    }
+
     /// Whether the player's flinch (a staggering hit, [`player_flinch`]) still plays: the
     /// player does not walk meanwhile (`crate::player::flinch_holds_walk`).
     pub fn player_flinching(&self) -> bool {
@@ -1730,8 +1813,14 @@ impl Combat {
     /// weapon that spends itself (grenades, thrown weapons, mines) reads 5 until it leaves
     /// the hand, 6 the frame after and 4 while the next is drawn (`anim_state::
     /// throw_action`). A round-by-round reload reads 17 while it opens the weapon, 9 for
-    /// its rounds and its close [hypothesis: `AnimAction::ReloadOpen`]. A jam reads 13
-    /// [hypothesis: the page's catch-all, "every action not included in the ones above"].
+    /// its rounds and its close [hypothesis: `AnimAction::ReloadOpen`]. A forced jam reads
+    /// 9 (`AnimAction::Jam`, with `IsAnimPlayingEx 4 == 0`) [observed: Fallout: New Vegas
+    /// 1.4.0.525, xNVSE 6.4.9, ShowOffNVSE Plugin 184, 2026-11-23, GSDocMitchellHouse
+    /// (0x00103DF9), 10 official base masters, probe `w1_3632_onfireweapon_and_forcejam`
+    /// in #3679 (`Player.ForceWeaponJamAnim` on drawn `Weap10mmPistol` `0x0000434F` ->
+    /// `GetAnimAction == 9`, `IsAnimPlayingEx 4 == 0`)]; generalizing `Phase::Jammed ->
+    /// AnimAction::Jam` (`9` instead of `13`) to natural vanilla weapon-condition jams is
+    /// [hypothesis].
     /// The player's weapon is thrown or laid by hand (SUP's GetGrenadeTimeHeld,
     /// `crate::sup_screen`): its animation type is one of
     /// `fnv_sim::forms::THROWN_ANIM_TYPES`.
@@ -1769,7 +1858,7 @@ impl Combat {
             Phase::Cooldown { left } => cooldown_action(&cy.timing, left, self.self_ammo, cy.automatic && trigger, dt),
             Phase::ReloadOpen { .. } => Some(AnimAction::ReloadOpen),
             Phase::Reloading { .. } | Phase::ReloadRound { .. } | Phase::ReloadClose { .. } => Some(AnimAction::Reload),
-            Phase::Jammed { .. } => Some(AnimAction::ForceScriptAnim),
+            Phase::Jammed { .. } => Some(AnimAction::Jam),
             Phase::Ready => None,
         }
     }
@@ -2614,82 +2703,11 @@ pub(crate) fn init_combat(mut commands: Commands, d: Res<PlayWorld>) {
     let t = std::time::Instant::now();
     let tracer_hold = std::env::var("NVF_PLAY_TEST_TRACERS").ok().and_then(|v| v.trim().parse().ok()).filter(|s: &f32| *s > 0.0);
     let forms = CombatForms::build(d.lo, d.schema);
-    let rules = Rules::from_forms(&forms);
-    // A thrown grenade's restitution (combat-rules.md §5).
-    let grenade_restitution = forms.setting("fGrenadeRestitution").unwrap_or(CombatTuning::default().grenade_restitution);
-    let fists = forms.by_edid("Fists");
     info!("combat: {} weapons, {} ammo, {} projectiles, {} explosions read in {:.0} ms", forms.weapons.len(), forms.ammo.len(), forms.projectiles.len(), forms.explosions.len(), t.elapsed().as_secs_f64() * 1000.0);
-    commands.insert_resource(Combat {
-        forms,
-        rules,
-        tuning: CombatTuning {
-            grenade_restitution,
-            ..CombatTuning::default()
-        },
-        weapon: None,
-        equipped: None,
-        mods: 0,
-        silenced_logged: None,
-        fists,
-        ammo: None,
-        self_ammo: false,
-        melee: false,
-        swings: Melee::default(),
-        blows: 0,
-        boom: Vec::new(),
-        meltdowns: HashSet::new(),
-        debris: Vec::new(),
-        cycle: None,
-        kick: Kick::default(),
-        flying: Vec::new(),
-        dropped_live: Vec::new(),
-        settled: Vec::new(),
-        landed: Vec::new(),
-        fire_landed: Vec::new(),
-        splashes: Vec::new(),
-        ghosts: Vec::new(),
-        looping: None,
-        ejects_seen: 0,
-        vats_throw: None,
-        last_shot: 0.0,
-        next_visual: 0,
-        pending: Vec::new(),
-        script_shots: Vec::new(),
-        guarding: HashMap::new(),
-        blocked_blows: Vec::new(),
-        fresh_reload: false,
-        guard_down_until: 0.0,
-        marks: Vec::new(),
-        rng: SplitMix(1),
-        swing_rng: SplitMix(2),
-        time: 0.0,
-        no_spread: std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0"),
-        tracer_hold,
-        load_magazine: None,
-        load_ammo: None,
-        chosen_ammo: std::collections::BTreeMap::new(),
-        crosshair_cone: None,
-        player_spread: None,
-        grenade_hold: 0.0,
-        grenade_held: false,
-        vats_cone: None,
-        vats_blast: VatsBlast::default(),
-        player_blocked_at: None,
-        special_swing: None,
-        throw_logged: None,
-        spread_perks_logged: None,
-        flinch_until: 0.0,
-        flinch_end: None,
-        flinch_rng: SplitMix(3),
-        kick_rng: SplitMix(5),
-        kick_just_settled: false,
-        kick_left: [0.0; 2],
-        kick_back_goal: [0.0; 2],
-        kick_back: [crate::ease::Spring::default(); 2],
-        spent_rng: SplitMix(4),
-        blood_rng: SplitMix(6),
-        blood_chance_logged: false,
-    });
+    let mut combat = Combat::from_forms(forms);
+    combat.no_spread = std::env::var_os("NVF_PLAY_TEST_NO_SPREAD").is_some_and(|v| v != "0");
+    combat.tracer_hold = tracer_hold;
+    commands.insert_resource(combat);
 }
 
 /// The player's spread perks for the weapon `id`: Modify Weapon Strength Req (points off
@@ -2836,10 +2854,26 @@ fn equip_sync_step(c: &mut Combat, sim: &mut SimState, anim: &mut WeaponAnim, ke
         cy.magazine = n.min(cy.clip_size).min(carried);
     }
     // A save's magazine for this weapon (`crate::save`), no more than is carried.
+    let mut restored_mag = false;
     if let (Some((sw, n)), Some(cy)) = (c.load_magazine, c.cycle.as_mut()) {
         if sw == id.0 {
             cy.magazine = n.min(carried);
             c.load_magazine = None;
+            restored_mag = true;
+        }
+    }
+    // An unequipped weapon's saved loaded round count (`fnv_sim::inventory::Extra::magazine`):
+    // restored once on equip when no `load_magazine` or mod-keep override took precedence, then
+    // cleared so vanilla unequip/re-equip behavior stays unchanged.
+    if !restored_mag && kept.is_none() && !no_ammo {
+        if let (Some(n), Some(cy)) = (
+            sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).and_then(|i| i.equipped_magazine(id)),
+            c.cycle.as_mut(),
+        ) {
+            cy.magazine = n.min(carried);
+            if let Ok(inv) = sim.world.inventory_mut(FormId::PLAYER_REF) {
+                inv.map_equipped(id, |e| fnv_sim::inventory::Extra { magazine: None, ..e });
+            }
         }
     }
     anim.attack = w.attack_anim.clone();
@@ -3648,10 +3682,16 @@ pub(crate) fn fire(
     c.player_spread = None;
     // Scripts' EjectCasing requests (`fnv_game::nvse_jg10`) are taken every frame, so
     // those made with no gun out (or for other actors) do not pile up or fire later.
-    let (asked, allow_attack) = script
+    let (asked, allow_attack, force_jam) = script
         .as_deref_mut()
         .and_then(|s| s.rt.as_mut())
-        .map(|rt| (rt.game.take_casing_requests(), rt.game.take_allow_attack()))
+        .map(|rt| {
+            (
+                rt.game.take_casing_requests(),
+                rt.game.take_allow_attack(),
+                rt.game.take_force_jam_requests().contains(&FormId::PLAYER_REF),
+            )
+        })
         .unwrap_or_default();
     // kNVSE `AllowAttack`: clear the player's current attack/cooldown/flinch lock so
     // the next attack may start at once [documented: GECK wiki AllowAttack; design].
@@ -3813,6 +3853,16 @@ pub(crate) fn fire(
         info!("combat: {} {} (tweak)", w.edid.as_deref().unwrap_or("?"), if held_left.is_some() { "held at its release" } else { "let go" });
     }
     anim.throw_held = held_left.is_some();
+    // Scripted ForceWeaponJamAnim / ForceJamAnim interrupts the current reload or attack
+    // phase immediately before stepping the cycle [documented: GECK wiki ForceWeaponJamAnim].
+    if force_jam && apply_forced_player_jam(cycle, &mut anim, &mut stats, &w, &c.tuning, script.as_deref()) {
+        if c.vats_throw.take().is_some() {
+            if let Some(v) = vats.as_deref_mut() {
+                v.throw_left();
+            }
+        }
+        vats_shot = None;
+    }
     let own_dt = held_left.map_or(own_dt, |left| (left - 1e-4).max(0.0));
     let events = cycle.step(&c.tuning, Input { trigger: control.trigger && !broken_in_hand(&sim, id), reload: reload && !god, dt: own_dt, carried });
     // VATS mode's throw that wound up leaves now, at its point; one that no longer winds
@@ -4109,10 +4159,8 @@ pub(crate) fn fire(
                         break;
                     }
                     if jams {
-                        // The jam clip's length, else the weapon's Jam Time, else the default.
-                        let secs = anim.timing.jam_len.or(Some(w.jam_time).filter(|&t| t > 0.0)).unwrap_or(c.tuning.jam_fallback);
-                        // The player's tweak: the jam clears at the reload's pace [design: docs/design/tweaks.md].
-                        let secs = if script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace) && anim.reload_rate > 0.0 { secs / anim.reload_rate } else { secs };
+                        let at_reload_pace = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace);
+                        let secs = jam_duration(anim.timing.jam_len, w.jam_time, c.tuning.jam_fallback, anim.reload_rate, at_reload_pace);
                         cycle.jam(secs);
                         anim.jams += 1;
                         stats.jams += 1;
@@ -4157,6 +4205,50 @@ pub(crate) fn fire(
             Event::Cleared => info!("combat: the jam is cleared"),
         }
     }
+    // Also apply ForceWeaponJamAnim / ForceJamAnim if a handler invoked during Event::Fired
+    // (e.g. OnFire, SetOnFireWeaponEventHandler, ShowOff:OnFireWeapon) requested a jam.
+    let fired_force_jam = script
+        .as_deref_mut()
+        .and_then(|s| s.rt.as_mut())
+        .is_some_and(|rt| rt.game.take_force_jam_requests().contains(&FormId::PLAYER_REF));
+    if fired_force_jam && !broken_in_hand(&sim, id) {
+        apply_forced_player_jam(cycle, &mut anim, &mut stats, &w, &c.tuning, script.as_deref());
+    }
+}
+
+/// Duration of a weapon jam: the loaded jam clip's length, else the weapon's `DNAM/jam_time`,
+/// else `fallback`, scaled by `reload_rate` when `jam_at_reload_pace` is enabled
+/// [design: docs/design/tweaks.md].
+fn jam_duration(jam_len: Option<f32>, jam_time: f32, fallback: f32, reload_rate: f32, jam_at_reload_pace: bool) -> f32 {
+    let secs = jam_len.or(Some(jam_time).filter(|&t| t > 0.0)).unwrap_or(fallback);
+    if jam_at_reload_pace && reload_rate > 0.0 { secs / reload_rate } else { secs }
+}
+
+/// Apply a scripted `ForceWeaponJamAnim` / `ForceJamAnim` request to the player's weapon
+/// cycle and `WeaponAnim`, interrupting any active reload or attack phase [documented:
+/// GECK wiki ForceWeaponJamAnim]. Does not restart an already-active jam [design].
+fn apply_forced_player_jam(
+    cycle: &mut Cycle,
+    anim: &mut WeaponAnim,
+    stats: &mut CombatStats,
+    w: &WeaponStats,
+    tuning: &CombatTuning,
+    script: Option<&ScriptState>,
+) -> bool {
+    if cycle.no_ammo || cycle.jammed() || anim.jam.is_none() || (anim.timing.jam_len.is_none() && w.jam_time <= 0.0) {
+        return false;
+    }
+    let at_reload_pace = script.and_then(|s| s.rt.as_ref()).is_some_and(|rt| rt.game.tweaks.jam_at_reload_pace);
+    let secs = jam_duration(anim.timing.jam_len, w.jam_time, tuning.jam_fallback, anim.reload_rate, at_reload_pace);
+    cycle.jam(secs);
+    anim.jams += 1;
+    stats.jams += 1;
+    info!(
+        "combat: {} forced jam by script (clip {}, {secs:.2} s)",
+        w.edid.as_deref().unwrap_or("?"),
+        anim.jam.as_deref().unwrap_or("none")
+    );
+    true
 }
 
 /// The target's DT and DR from the armour it wears (its carried ARMO by the wearing rule).
@@ -7362,7 +7454,7 @@ mod tests {
             check
         };
         let roll = |check: &crate::dismember::Check, bloody_mess: bool, r: f32| {
-            let blow = Blow { on_hit: check.on_hit, corpse: check.corpse, crippled: check.crippled, overkill: check.overkill, max_health: check.max_health, bloody_mess };
+            let blow = Blow { on_hit: check.on_hit, corpse: check.corpse, crippled: check.crippled, overkill: check.overkill, max_health: check.max_health, bloody_mess, sole_part: bptd.parts.len() == 1 };
             decide(&bptd.parts[check.part], &blow, &s, r)
         };
         // Beside its trunk: the torso faces it, and goes only with Bloody Mess (80 % on a
@@ -7750,11 +7842,12 @@ mod tests {
             bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&run_fwd), dt, &mut had_weapon);
             assert_eq!((ui(&g, "a9"), ui(&g, "g7")), (1.0, 1.0));
 
-            // 4. Jammed -> ForceScriptAnim (13), then Ready clears weapon action cleanly.
+            // 4. Jammed -> Jam (code 9, IsAnimPlayingEx 4 == 0), then Ready clears weapon action cleanly.
             cycle.phase = Phase::Jammed { left: 0.5 };
             combat.cycle = Some(cycle.clone());
             bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
-            assert_eq!((ui(&g, "a13"), ui(&g, "g0")), (1.0, 2.0));
+            assert_eq!((ui(&g, "a9"), ui(&g, "a13"), ui(&g, "g0")), (2.0, 0.0, 2.0));
+            assert_eq!(q(&mut g, "Begin Function { }\nSetFunctionValue (PlayerREF.IsAnimPlayingEx 4)\nEnd\n"), fnv_script::vm::XVal::Num(0.0));
             cycle.phase = Phase::Ready;
             combat.cycle = Some(cycle.clone());
             bridge_player_anim_state(&mut g, &combat, &anim, false, false, Some(&idle_intent), dt, &mut had_weapon);
@@ -8140,6 +8233,37 @@ mod tests {
             assert_eq!(app.world().resource::<Combat>().flinch_until, 0.0);
             assert_eq!(app.world().resource::<WeaponAnim>().swing, None);
             assert!(app.world_mut().resource_mut::<ScriptState>().rt.as_mut().unwrap().game.take_allow_attack().is_empty());
+        }
+
+        #[test]
+        fn saved_extra_magazine_restores_once_on_equip_and_leaves_vanilla_unchanged() {
+            let (mut sim, mut combat) = make_sim_and_combat();
+            let mut anim = WeaponAnim::default();
+
+            // Replace plain PISTOL with a unit carrying Extra::magazine = Some(4) (clip_size = 12).
+            sim.world.remove_item(FormId::PLAYER_REF, PISTOL, 1).unwrap();
+            sim.world
+                .add_item_extra(
+                    FormId::PLAYER_REF,
+                    PISTOL,
+                    1,
+                    fnv_sim::inventory::Extra { magazine: Some(4), ..Default::default() },
+                )
+                .unwrap();
+
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.magazine_for_save(), Some((PISTOL.0, 4)));
+            // Cleared on equip so re-equipping later behaves as vanilla full-clip.
+            assert_eq!(
+                sim.world.peek(FormId::PLAYER_REF).and_then(|s| s.inventory.as_ref()).and_then(|i| i.equipped_magazine(PISTOL)),
+                None
+            );
+            sim.world.equip(FormId::PLAYER_REF, KNIFE).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            sim.world.equip(FormId::PLAYER_REF, PISTOL).unwrap();
+            equip_sync_step(&mut combat, &mut sim, &mut anim, true);
+            assert_eq!(combat.magazine_for_save(), Some((PISTOL.0, 12)));
         }
     }
 }

@@ -435,6 +435,15 @@ pub struct PlayPlugin(pub PlayData);
 impl Plugin for PlayPlugin {
     fn build(&self, app: &mut App) {
         let d = self.0;
+        // Populate `fnv_game::mod_files` read roots before `SimState::new` and
+        // `PostStartup` settings load so Stewie modular override folders
+        // (`NVSE\Plugins\Tweaks\INIs\*.ini`, `GameSettings\*.ini`) are visible at start.
+        if !app.world().contains_resource::<script_input::ModFileRootsReady>() {
+            if let Some(game_data) = app.world().get_resource::<nvf_assets::GameData>() {
+                script_input::init_mod_file_roots(game_data);
+                app.insert_resource(script_input::ModFileRootsReady);
+            }
+        }
         // Whose record names a file that is not there (game_files.rs, #2757).
         game_files::note_load_order(d.lo);
         app.insert_resource(PlayWorld(d))

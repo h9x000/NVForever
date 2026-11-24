@@ -484,6 +484,14 @@ pub struct Detection {
     pub clear: bool,
 }
 
+impl Detection {
+    /// Not detected: the value held at the top of the Hidden band, sight as measured.
+    fn hide(&mut self, settings: &Settings) {
+        self.value = self.value.min(settings.noticed_min);
+        self.band = Band::Hidden;
+    }
+}
+
 /// Seconds of game time an actor the player woke stays up ([`Game::wake`]) [our choice].
 pub const WAKE_SECONDS: f64 = 30.0;
 
@@ -732,7 +740,12 @@ impl Game<'_> {
     /// functions at the current game time. An enemy of a ghost does not detect it
     /// ([`Game::ghost_hidden_from`]): the value is held at the top of the Hidden band
     /// [engineering choice: the note says only that it is not detected], sight
-    /// (GetLineOfSight) as measured.
+    /// (GetLineOfSight) as measured. So is an unconscious detector's (SetUnconscious),
+    /// which detects no one: "Actors that are unconscious will not use AI behavior"
+    /// [documented: GECK wiki SetUnconscious; hypothesis: detecting is part of it;
+    /// observer check 3479-robotics-expert-deactivate]. Old World Blues' X-13 test needs
+    /// it: its script watches GetDetected on the robots the player has shut down too
+    /// [observed: SCTX of OldWorldBlues.esm SCPT 0x01006DA6] (#3479).
     pub fn detect(&mut self, settings: &Settings, detector: FormId, target: FormId, s: &Situation) -> (Detection, Option<Band>) {
         let p = self.detection_pair(detector, target);
         let mut d = settings.evaluate(&p, s);
@@ -743,12 +756,21 @@ impl Game<'_> {
             d.value = self.forced_detection(target, d.value);
             d.band = if d.value > 0.0 { Band::Detected } else if d.value > settings.noticed_min { Band::Noticed } else { Band::Hidden };
         }
-        if self.ghost_hidden_from(detector, target) {
-            d.value = d.value.min(settings.noticed_min);
-            d.band = Band::Hidden;
+        if self.extra.get(&detector).is_some_and(|e| e.unconscious) || self.ghost_hidden_from(detector, target) {
+            d.hide(settings);
         }
         let before = self.detection.record(detector, target, d, self.time);
         (d, before)
+    }
+
+    /// `actor` was set unconscious: what it last detected reads Hidden at once, as its
+    /// measurements do from then on ([`Game::detect`]). Awake again, its next measurement
+    /// decides.
+    pub fn forget_detected_by(&mut self, actor: FormId) {
+        let settings = Settings::read(self);
+        for (_, (d, _)) in self.detection.pairs.iter_mut().filter(|((by, _), _)| *by == actor) {
+            d.hide(&settings);
+        }
     }
 }
 

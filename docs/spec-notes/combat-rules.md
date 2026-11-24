@@ -2079,10 +2079,17 @@ parity. No associations yields the existing null/zero convention. Queries store 
 new lifetime state: ordinary World/Game snapshot and restore retain association,
 while a fresh world inherits none.
 
-[hypothesis] Native ordering, exact empty-array/null representation and unusual
-unloaded/disabled-owner timing remain probe questions. The getter relies on existing
-producer association; death/VATS production and the full installed hover mod are not
-qualified by getter tests or a manually seeded association.
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9, 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`), 10 official base masters, `w4d_42_vanilla_faction_class_kill_drop`
+(`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `dropSz=-1` (`ar_Size (GetDroppedRefs)`
+called without a reference when no dropped weapons exist); no DLL or source consulted] When no
+dropped weapons are associated, `GetDroppedRefs` returns `ar_Null` (`ar_Size == -1`), not an
+empty array (`0`).
+
+[hypothesis] Native ordering of multiple dropped refs and unusual unloaded/disabled-owner
+timing remain probe questions. The getter relies on existing producer association; death/VATS
+production and the full installed hover mod are not qualified by getter tests or a manually
+seeded association.
 
 [design] Four authored controls in the shared `fnv-game` integration binary use
 compiled source, actual World placements and explicitly seeded existing associations.

@@ -330,7 +330,13 @@ fn tony_inverse(y: f32) -> f32 {
 fn hot_light(lit: vec3<f32>, e: vec3<f32>) -> vec3<f32> {
     let d = min(lit + e, vec3(HOT_MAX));
     let hot = vec3(tony_inverse(d.r), tony_inverse(d.g), tony_inverse(d.b));
-    return mix(lit + e, hot, smoothstep(0.8, 1.5, max(e.r, max(e.g, e.b))));
+    var out = mix(lit + e, hot, smoothstep(0.8, 1.5, max(e.r, max(e.g, e.b))));
+    // HDR output (nvforever hdr.rs): the SDR picture up to white, and above white the light
+    // the shape really emits (its emissive multiplier: lantern glass x 10, neon x 25), so
+    // the HDR pass shows a neon tube brighter than a lantern. Clipped at 1 per channel, as
+    // the SDR picture is, both give the same.
+    @if(NVF_HDR) out = min(out, vec3(1.0)) + max(lit + e - vec3(1.0), vec3(0.0));
+    return out;
 }
 
 // The linear light an additive shape (blend factors SRC_ALPHA or ONE, and ONE) of linear

@@ -41,7 +41,14 @@ explicit view-selection parity remain unqualified.
   from its original. Engine consumers (`engine/nvforever/src/idles.rs` `load`/`drive`
   section holds and `engine/nvforever/src/npc_combat.rs` `no_attacking`) resolve
   metadata through `Game::idle_def`.
-- [hypothesis] Clone-of-clone `MODL/` override inheritance and original-vs-clone
-  independence for `SetIdleAnimPath` are implemented from the documented clone model
-  and remain unqualified against original-game captures. Full save/load lifetime of
-  cloned IDLEs remains session-only (`ext-save.md`).
+- [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, 2026-11-24,
+  `GSDocMitchellHouse` (`0x00103DF9`), 10 official base masters,
+  `w4d_43_nif_selector_and_ui_entities` (`tools/capture/nvse/catalogs/wave4d_extenders.json`,
+  #3679): on `IDLE` `0x00002FD2`, `rCl1 := TempCloneForm rIdle`,
+  `rCl2 := TempCloneForm rCl1`, then `SetModelPath "...\\WriteOnBlackBoardB.kf" rCl1`
+  mutated `rCl1` without mutating `rCl2` or `rIdle` (`idle(1,0,1)`);
+  no DLL or source consulted] Post-clone `MODL/` edits on a parent clone do not leak into
+  an existing child clone or back into the original `IDLE`. [hypothesis] Pre-clone
+  `MODL/` edit inheritance onto a newly created child clone and `SetIdleAnimPath`
+  specifically remain to be probed directly. Full save/load lifetime of cloned IDLEs
+  remains session-only (`ext-save.md`).

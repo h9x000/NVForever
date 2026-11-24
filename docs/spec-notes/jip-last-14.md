@@ -16,7 +16,7 @@ original what the [hypothesis] values below leave open.
 
 | Function | NVForever |
 |---|---|
-| AddNewEffect `item effect duration magnitude [range] [area] [append]` | a new entry on an ingestible's, object effect's or actor effect's list, at the top or appended (1); the new count, -1 when not added [documented]; for the session [hypothesis]. Appending (1) a second copy of the stimpak's first effect returned 5 in the original where NVForever counts 6 [observed: jip14 addneweffect.append]: whether the entry was not added or the return differs is open [decision: NVForever adds it and returns the new count, as the page says]. A row asking it on Jet did not compile, in the original or in NVForever, and was dropped. Every Nth-effect function (GetNumEffects, Get/SetNthEffectBase, Get/SetNthEffectTraitNumeric, RemoveNthEffect and this count) indexes one list: AddNewEffect's top entries newest first, the record's entries RemoveNthEffect left, AddNewEffect's appended entries [decision: #2016, so a loop over 0 to GetNumEffects − 1 reads matching bases and traits]; an added entry's traits are its own, and RemoveNthEffect can take it away; applying the item applies it after the record's entries, which keep their places [decision: the active effects keep a record index]. The range is not kept [decision: NVForever's effect entries have none] |
+| AddNewEffect `item effect duration magnitude [range] [area] [append]` | a new entry on an ingestible's, object effect's or actor effect's list, at the top (`append = 0`) or appended (`append = 1`); returns the **0-based inserted index** (`n0` = `n1 - 1`) when appended, the **new effect count** (`n1`) when prepended (the entry itself is placed at index `0`), or `-1` when not added (including non-MGEF forms) [observed: jip14 addneweffect.append returned 5 for 6th effect; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, `jip_48_addneweffect_duplicate_return` (`4,4,5`: n0=4, ret=4, n1=5) and 2026-11-24 `GSDocMitchellHouse` (`0x00103DF9`), `w4d_16_add_new_effect_edges` (`tools/capture/nvse/catalogs/wave4d_extenders.json`, #3679): `n0=4(orig=0000014E,jet=00066EB8)|prep(ret=5,n=5,e0=00066EB8,e1=0000014E)|appDup(ret=5,n=6,last=00066EB8)|nonMgef(ret=-1,n=6)`; no DLL or source consulted]; for the session [hypothesis]. A row asking it on Jet did not compile, in the original or in NVForever, and was dropped. Every Nth-effect function (GetNumEffects, Get/SetNthEffectBase, Get/SetNthEffectTraitNumeric, RemoveNthEffect and this index) indexes one list: AddNewEffect's top entries newest first, the record's entries RemoveNthEffect left, AddNewEffect's appended entries [decision: #2016, so a loop over 0 to GetNumEffects − 1 reads matching bases and traits]; an added entry's traits are its own, and RemoveNthEffect can take it away; applying the item applies it after the record's entries, which keep their places [decision: the active effects keep a record index]. The range is not kept [decision: NVForever's effect entries have none] |
 | IsSpellTargetList `list` | any effect of the list's items on the actor [documented], as IsSpellTarget |
 
 ## 2. Primitives
@@ -25,7 +25,7 @@ original what the [hypothesis] values below leave open.
 |---|---|
 | AddPrimitive `shape x y z` | 1 box, 2 sphere, 3 plane [documented]; on an activator (box or sphere) a trigger volume, on a CollisionMarker a collision shape [documented]; 1 when added. The activator's trigger takes it (`nvf_play::script_trigger`); a CollisionMarker's is kept but no collider is built [decision, follow-up] |
 | HasPrimitive | a primitive from the record (XPRM) or a script [documented] |
-| GetPrimitiveBound, SetPrimitiveBound `axis [value]` | the bound on the axis, half extents as the record keeps them [hypothesis]; -1 from the getter for a reference with no primitive [observed: jip14 primitivebound.doc]; the setter changes a trigger's volume from the next frame |
+| GetPrimitiveBound, SetPrimitiveBound `axis [value]` | the bound on the axis, half extents as the record keeps them [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe jip_49_primitive_bound_trigger (GetPrimitiveBound): -1.00,302.74,208.76,133.01; no DLL or source consulted]; -1 from the getter for a reference with no primitive [observed: jip14 primitivebound.doc]; the setter changes a trigger's volume from the next frame |
 
 ## 3. Actors
 
@@ -67,7 +67,9 @@ original what the [hypothesis] values below leave open.
   `Jip2State::keywords`, case-insensitive, resolving references to base forms and
   `TempCloneForm` origins), accepting both `ref.HasKeywordCond "keyword"` and
   `HasKeywordCond form "keyword"` [documented: GECK wiki HasKeywordCond, HasKeyword;
-  hypothesis: both calling conventions share `Game::has_keyword`].
+  observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official
+  base masters, clean-room script probe jip_50_haskeyword_cond_forms (AddKeyword/HasKeyword):
+  0,1,1; no DLL or source consulted].
 - Nothing values by decision: AttachLine (line meshes; 0), FreePlayer (the page: "don't
   use this").
 

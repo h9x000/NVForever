@@ -799,11 +799,16 @@ fn sync_cards(mut active: ResMut<ActiveMenu>, mut sim: ResMut<SimState>, script:
     }
 }
 
-/// Attach resolved ySI sorting tags and row icons to `m` when ySI is active in `game`
-/// (zero-cost no-op in vanilla sessions without ySI) [design: `docs/spec-notes/ysi-filename.md`].
+/// Attach resolved ySI sorting tags and row icons to `m` when ySI is active in `game`,
+/// honoring `yUI.ini` `[Sorting and Icons]` `bSortInventory` and `bAddInventoryIcons`
+/// (zero-cost no-op in vanilla sessions without ySI) [design:
+/// `docs/spec-notes/ysi-filename.md`, `docs/spec-notes/yui-ini.md`].
 fn sync_ysi_model(m: &mut MenuModel, game: &mut fnv_game::Game<'_>) {
-    if game.ysi_active() {
-        m.apply_ysi(|item| game.ysi_item_display(item));
+    let sort_by_tag = game.ysi_sort_inventory();
+    let add_icons = game.ysi_add_inventory_icons();
+    m.ysi_icons = add_icons;
+    if sort_by_tag || add_icons {
+        m.apply_ysi_options(sort_by_tag, add_icons, |item| game.ysi_item_display(item));
     }
 }
 

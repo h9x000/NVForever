@@ -30,6 +30,7 @@ mod native_crash;
 mod exit_watch;
 #[cfg(target_os = "linux")]
 mod native_crash_unix;
+mod camera_overlay;
 mod nif_mirror;
 mod nif_attachments;
 mod extra_camera;
@@ -81,6 +82,8 @@ mod flashlight;
 mod eye_adapt;
 mod fog;
 mod haze;
+mod hdr;
+mod hdr_calibrate;
 mod aerial;
 mod fly;
 mod foot_ik;
@@ -1916,7 +1919,7 @@ fn main() -> AppExit {
                 ..default()
             }),
     )
-    .add_plugins((window_icon::WindowIconPlugin, window_mode::WindowModePlugin))
+    .add_plugins((window_icon::WindowIconPlugin, window_mode::WindowModePlugin, hdr::HdrPlugin))
     .add_plugins(nvf_play::audio_out::AudioOutPlugin)
     .add_plugins((ArchivePlugin(game), lights::LightsPlugin, fog::FogPlugin, haze::HazePlugin, aerial::AerialPlugin, eye_adapt::EyeAdaptPlugin, emittance::EmittancePlugin, water::WaterPlugin, underwater_caustics::UnderwaterCausticsPlugin, tree::TreePlugin, terrain::TerrainPlugin, reflection::ReflectionPlugin, ripples::RipplesPlugin))
     .add_plugins(night_sky::NightSkyPlugin)
@@ -2662,9 +2665,9 @@ fn setup(mut commands: Commands, start: Res<StartPose>) {
         // Water reads the depth of what lies behind it (water.rs).
         bevy::core_pipeline::prepass::DepthPrepass,
         // The world, the water (which the reflection camera leaves out), the player's
-        // first-person arms and seen body, and the impact decals (which need this
-        // camera's prepass).
-        bevy::camera::visibility::RenderLayers::from_layers(&[0, reflection::WATER_LAYER, sky::ARMS_LAYER, sky::BODY_LAYER, decals::DECAL_LAYER]),
+        // first-person arms and seen body, the impact decals (which need this
+        // camera's prepass), and JohnnyGuitar PreIS 3D camera overlays.
+        bevy::camera::visibility::RenderLayers::from_layers(&[0, reflection::WATER_LAYER, sky::ARMS_LAYER, sky::BODY_LAYER, decals::DECAL_LAYER, camera_overlay::OVERLAY_PRE_IS_LAYER]),
     )).id();
     if start.play {
         commands.entity(cam).insert(nvf_play::PlayerCamera);

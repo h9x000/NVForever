@@ -60,7 +60,7 @@ use bevy::image::CompressedImageFormatSupport;
 use bevy::input::mouse::AccumulatedMouseScroll;
 use bevy::prelude::*;
 use crate::ui_pointer::{Button, PointerState};
-use fnv_game::crafting::{missing, skill_name, RecipeDef, RECIPE_MENU};
+use fnv_game::crafting::{missing, recipe_count, skill_name, RecipeDef, RECIPE_MENU};
 use fnv_sim::FormId;
 use nvf_assets::GameData;
 
@@ -173,9 +173,16 @@ pub struct Open {
 }
 
 /// How many times the player can make `r` with what it has: the fewest of each
-/// ingredient's count over what one making takes (no ingredients: once).
+/// ingredient's count over what one making takes (no positive ingredients: once).
 pub fn times_possible(r: &RecipeDef, have: impl Fn(FormId) -> i64) -> u32 {
-    r.ingredients.iter().filter(|(_, n)| *n > 0).map(|&(i, n)| (have(i).max(0) as u64 / n as u64) as u32).min().unwrap_or(1)
+    r.ingredients
+        .iter()
+        .filter_map(|&(i, n)| {
+            let need = recipe_count(n);
+            (need > 0).then(|| (have(i).max(0) as u64 / u64::from(need)).min(u64::from(u32::MAX)) as u32)
+        })
+        .min()
+        .unwrap_or(1)
 }
 
 #[derive(Component)]
@@ -348,7 +355,7 @@ pub(crate) fn view(rt: &mut crate::script::Runtime, sim: &mut SimState, open: &O
         let made_at = chosen.and_then(|r| r.category).and_then(|c| data.recipe_categories.get(&c)).map_or_else(String::new, |c| c.name.clone());
         let skill = chosen.and_then(|r| r.skill).map(|(av, level)| (skill_name(av).to_string(), fnv_game::functions::actor_value_capped(&mut rt.game, FormId::PLAYER_REF, av).max(0.0).floor() as u32, level));
         let skill_record = chosen.and_then(|r| r.skill).map(|(av, _)| fnv_game::chargen::skill_name(&rt.game, av));
-        let ingredients = chosen.map(|r| r.ingredients.iter().map(|&(i, n)| (i, name(i), have(rt, i).max(0) as u32, n)).collect()).unwrap_or_default();
+        let ingredients = chosen.map(|r| r.ingredients.iter().map(|&(i, n)| (i, name(i), have(rt, i).max(0) as u32, recipe_count(n))).collect()).unwrap_or_default();
         let item = chosen.and_then(|r| r.outputs.first()).and_then(|o| match forms.get(o.0).map(|b| &b.data) {
             Some(fnv_sim::forms::BaseData::Item(it)) => Some((it.weight, it.value, it.icon.clone())),
             _ => None,
@@ -601,10 +608,11 @@ fn make_recipe(rt: &mut crate::script::Runtime, sim: &mut SimState, recipe: &Rec
         }
         for &(i, k) in &recipe.ingredients {
             // Free crafting takes what there is of each part.
-            let want = (k * times) as i64;
+            let want = i64::from(recipe_count(k)) * i64::from(times);
             let n = if free { want.min(counts.iter().find(|c| c.0 == i).map_or(0, |c| c.1)) } else { want };
+            let n = n.min(i64::from(i32::MAX)) as i32;
             if n > 0 {
-                rt.game.world.remove_item(FormId::PLAYER_REF, i, n as i32).map_err(|e| format!("{e:?}"))?;
+                rt.game.world.remove_item(FormId::PLAYER_REF, i, n).map_err(|e| format!("{e:?}"))?;
             }
         }
         let mut added = Vec::new();
@@ -615,17 +623,21 @@ fn make_recipe(rt: &mut crate::script::Runtime, sim: &mut SimState, recipe: &Rec
             fnv_game::tweaks::crafted_condition(repair)
         });
         for &(i, k) in &recipe.outputs {
+            let count = recipe_count(k).saturating_mul(times).min(i32::MAX as u32);
+            if count == 0 {
+                continue;
+            }
             let worn = matches!(rt.game.data.sig(i), Some(s) if &s == b"WEAP" || &s == b"ARMO");
             match condition.filter(|c| worn && *c < 1.0) {
                 Some(c) => {
-                    rt.game.world.add_item_at_condition(FormId::PLAYER_REF, i, (k * times) as i32, Some(c)).map_err(|e| format!("{e:?}"))?;
+                    rt.game.world.add_item_at_condition(FormId::PLAYER_REF, i, count as i32, Some(c)).map_err(|e| format!("{e:?}"))?;
                     info!("recipe menu: made at {:.0} % condition (Repair tweak)", c * 100.0);
                 }
                 None => {
-                    rt.game.world.add_item(FormId::PLAYER_REF, i, (k * times) as i32).map_err(|e| format!("{e:?}"))?;
+                    rt.game.world.add_item(FormId::PLAYER_REF, i, count as i32).map_err(|e| format!("{e:?}"))?;
                 }
             }
-            added.push((i, k * times));
+            added.push((i, count));
         }
         Ok(added)
     });
@@ -1016,10 +1028,137 @@ mod tests {
 
     #[test]
     fn a_label_says_how_many_are_made_once() {
-        let r = |name: &str, n: u32| RecipeDef { name: name.into(), outputs: vec![(FormId(1), n)], ..Default::default() };
+        let r = |name: &str, n: i32| RecipeDef { name: name.into(), outputs: vec![(FormId(1), n)], ..Default::default() };
         assert_eq!(label(&r("Antivenom", 2)), "Antivenom (2)");
         assert_eq!(label(&r("Conversion, Fission Battery to SEC (25)", 25)), "Conversion, Fission Battery to SEC (25)");
         assert_eq!(label(&r("Battle Brew", 1)), "Battle Brew");
+        assert_eq!(label(&r("Negated Output", -5)), "Negated Output");
+    }
+
+    #[test]
+    fn negative_script_recipe_counts_clamp_to_zero_across_menu_paths() {
+        fn sub(sig: &[u8; 4], data: &[u8]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(6 + data.len());
+            out.extend_from_slice(sig);
+            out.extend_from_slice(&(data.len() as u16).to_le_bytes());
+            out.extend_from_slice(data);
+            out
+        }
+        fn rec(sig: &[u8; 4], id: u32, subs: &[Vec<u8>]) -> Vec<u8> {
+            let body = subs.concat();
+            let mut out = Vec::with_capacity(24 + body.len());
+            out.extend_from_slice(sig);
+            out.extend_from_slice(&(body.len() as u32).to_le_bytes());
+            out.extend_from_slice(&0u32.to_le_bytes());
+            out.extend_from_slice(&id.to_le_bytes());
+            out.extend_from_slice(&[0u8; 8]);
+            out.extend_from_slice(&body);
+            out
+        }
+        fn top(sig: &[u8; 4], body: &[u8]) -> Vec<u8> {
+            let mut out = Vec::with_capacity(24 + body.len());
+            out.extend_from_slice(b"GRUP");
+            out.extend_from_slice(&((24 + body.len()) as u32).to_le_bytes());
+            out.extend_from_slice(sig);
+            out.extend_from_slice(&[0u8; 12]);
+            out.extend_from_slice(body);
+            out
+        }
+
+        // 1. times_possible clamps -5 to 0 (ignored rather than treated as 4294967291).
+        let r_only_neg = RecipeDef { ingredients: vec![(FormId(1), -5)], outputs: vec![(FormId(3), -5)], ..Default::default() };
+        assert_eq!(times_possible(&r_only_neg, |_| 0), 1);
+        let r_mixed = RecipeDef { ingredients: vec![(FormId(1), -5), (FormId(2), 2)], outputs: vec![(FormId(3), -5)], ..Default::default() };
+        assert_eq!(times_possible(&r_mixed, |i| if i == FormId(2) { 7 } else { 0 }), 3);
+
+        // 2. View row text (`need`) and make_recipe both clamp -5 to 0 without overflow or
+        // adding/removing negative item counts.
+        const CAT: u32 = 0x800;
+        const ING_NEG: u32 = 0x801;
+        const ING_POS: u32 = 0x802;
+        const OUT_NEG: u32 = 0x803;
+        const OUT_POS: u32 = 0x804;
+        const RCPE: u32 = 0x810;
+        let rcpe_data = [(-1i32).to_le_bytes(), 0u32.to_le_bytes(), CAT.to_le_bytes(), 0u32.to_le_bytes()].concat();
+        let misc = |id: u32, edid: &[u8], full: &[u8]| rec(b"MISC", id, &[sub(b"EDID", edid), sub(b"FULL", full), sub(b"DATA", &[1, 0, 0, 0, 0, 0, 0, 0])]);
+        let neg5 = (-5i32).to_le_bytes();
+        let bytes = [
+            rec(b"TES4", 0, &[sub(b"HEDR", &[0, 0, 0x80, 0x3F, 0, 0, 0, 0, 0, 0, 0, 0])]),
+            top(b"NPC_", &rec(b"NPC_", 0x7, &[sub(b"EDID", b"Player\0")])),
+            top(
+                b"MISC",
+                &[
+                    misc(ING_NEG, b"NegIng\0", b"Neg Scrap\0"),
+                    misc(ING_POS, b"PosIng\0", b"Pos Scrap\0"),
+                    misc(OUT_NEG, b"NegOut\0", b"Neg Widget\0"),
+                    misc(OUT_POS, b"PosOut\0", b"Pos Widget\0"),
+                ]
+                .concat(),
+            ),
+            top(b"RCCT", &rec(b"RCCT", CAT, &[sub(b"EDID", b"TestBench\0"), sub(b"FULL", b"Bench\0")])),
+            top(
+                b"RCPE",
+                &rec(
+                    b"RCPE",
+                    RCPE,
+                    &[
+                        sub(b"EDID", b"NegCountRecipe\0"),
+                        sub(b"FULL", b"Signed Brew\0"),
+                        sub(b"DATA", &rcpe_data),
+                        sub(b"RCIL", &ING_NEG.to_le_bytes()),
+                        sub(b"RCQY", &neg5),
+                        sub(b"RCIL", &ING_POS.to_le_bytes()),
+                        sub(b"RCQY", &2u32.to_le_bytes()),
+                        sub(b"RCOD", &OUT_NEG.to_le_bytes()),
+                        sub(b"RCQY", &neg5),
+                        sub(b"RCOD", &OUT_POS.to_le_bytes()),
+                        sub(b"RCQY", &3u32.to_le_bytes()),
+                    ],
+                ),
+            ),
+        ]
+        .concat();
+        let plugin = fnv_esm::Plugin::parse(&bytes, "SignedCraft.esm".into()).unwrap();
+        let mut script = ScriptState::over_plugins(&[plugin]);
+        let rt = script.rt.as_mut().unwrap();
+        let mut sim = SimState { forms: rt.game.world.forms, refs: rt.game.world.placed, world: fnv_sim::World::new(rt.game.world.forms, rt.game.world.placed, fnv_sim::SimConfig::default()) };
+        sim.world.add_item(FormId::PLAYER_REF, FormId(ING_NEG), 4).unwrap();
+        sim.world.add_item(FormId::PLAYER_REF, FormId(ING_POS), 5).unwrap();
+
+        let open = Open { category: FormId(CAT), station: None, filter: 0, selected: 0, first: 0, drawn: None, quantity: None, pointer_pick: false, navigated: 0 };
+        let v = view(rt, &mut sim, &open);
+        assert_eq!(v.rows.len(), 1);
+        assert!(v.rows[0].ready, "recipe with -5 ingredient and sufficient positive ingredient is ready");
+        assert_eq!(v.rows[0].label, "Signed Brew", "negative first output count clamps to 0 in label");
+        assert_eq!(v.ingredients.len(), 2);
+        assert_eq!((v.ingredients[0].0, v.ingredients[0].2, v.ingredients[0].3), (FormId(ING_NEG), 4, 0));
+        assert_eq!((v.ingredients[1].0, v.ingredients[1].2, v.ingredients[1].3), (FormId(ING_POS), 5, 2));
+
+        let recipe = rt.game.data.recipes[&FormId(RCPE)].clone();
+        let counts: Vec<(FormId, i64)> = recipe
+            .ingredients
+            .iter()
+            .map(|&(i, _)| (i, sim.world.item_count(FormId::PLAYER_REF, i).unwrap_or(0) as i64))
+            .collect();
+        assert_eq!(times_possible(&recipe, |i| counts.iter().find(|c| c.0 == i).map_or(0, |c| c.1)), 2);
+
+        // Exercise make_recipe directly through a Bevy world with UiSound message writer.
+        let mut app = App::new();
+        app.add_message::<UiSound>();
+        app.insert_resource(script);
+        app.insert_resource(sim);
+        let recipe_for_sys = recipe.clone();
+        app.add_systems(Update, move |mut script: ResMut<ScriptState>, mut sim: ResMut<SimState>, mut sounds: MessageWriter<UiSound>| {
+            let rt = script.rt.as_mut().unwrap();
+            make_recipe(rt, &mut sim, &recipe_for_sys, 2, &mut sounds, None);
+        });
+        app.update();
+
+        let mut sim = app.world_mut().resource_mut::<SimState>();
+        assert_eq!(sim.world.item_count(FormId::PLAYER_REF, FormId(ING_NEG)).unwrap(), 4, "-5 ingredient removes 0 items");
+        assert_eq!(sim.world.item_count(FormId::PLAYER_REF, FormId(ING_POS)).unwrap(), 1, "+2 ingredient x2 removes 4 of 5");
+        assert_eq!(sim.world.item_count(FormId::PLAYER_REF, FormId(OUT_NEG)).unwrap(), 0, "-5 output adds 0 items");
+        assert_eq!(sim.world.item_count(FormId::PLAYER_REF, FormId(OUT_POS)).unwrap(), 6, "+3 output x2 adds 6 items");
     }
 
     #[test]

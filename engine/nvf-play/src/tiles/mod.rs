@@ -117,8 +117,10 @@ impl MenuFiles<'_, '_> {
         }
         let Some(data) = self.data.as_ref() else { return };
         let vfs = data.vfs.clone();
-        game.ui_extra.measure = Some(draw::string_measure(move |number| {
-            let path = crate::interface::font_file(crate::interface::FONT_FILES[number as usize - 1]);
+        let extra = crate::interface::load_xfonts(&vfs);
+        let load_extra = extra.clone();
+        game.ui_extra.measure = Some(draw::string_measure_with_fonts(extra, move |number| {
+            let path = crate::interface::slot_font_path(number, &load_extra)?;
             let bytes = vfs.read(&path)?.ok()?;
             fnv_font::Font::parse(&bytes).ok()
         }));

@@ -27,6 +27,22 @@ impl Game<'_> {
             self.tweaks.weightless_worn_armor
         } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bWeightlessWornPowerArmor") {
             self.tweaks.weightless_worn_power_armor
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bSynchronizeContainerCategories") {
+            self.tweaks.sync_categories
+        } else if section.eq_ignore_ascii_case("Synchronized Container Categories")
+            && key.eq_ignore_ascii_case("bPreventSwitchWhenEmptyingCategory")
+        {
+            // Retained child choice under the synchronized-categories parent switch.
+            self.tweaks.prevent_switch_when_emptying_category
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bBarterCheckActorBuySellFlags") {
+            self.tweaks.vendor_lists_both
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bDontOpenDoorsAfterLockpick") {
+            self.tweaks.no_door_after_pick
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bNoSkipDialog") {
+            self.tweaks.no_skip_dialogue
+        } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bRestoreLockedDoorSound") {
+            // NVForever already plays DRSLocked when activating a refused lock (docs/design/tweaks.md).
+            true
         } else if section.eq_ignore_ascii_case("Tweaks") && key.eq_ignore_ascii_case("bArmorConditionLabel") {
             self.tweaks.armor_condition
         } else {

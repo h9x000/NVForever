@@ -280,16 +280,18 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             zero
         }
         // `quest stage`: as SetStage, then GetStage is the stage even below the highest
-        // done: the stages above it are no longer done [documented: "set the specified
-        // quest's highest completed stage ... even if it is lower"; hypothesis: the
-        // stages above read as not done].
+        // done, without clearing GetStageDone for higher completed stages [documented:
+        // "set the specified quest's highest completed stage ... even if it is lower";
+        // observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe
+        // jip_29_setstagealt_clears_higher: SetStage 20 then SetStageAlt 10 -> GetStage=10,
+        // GetStageDone 20 == 1].
         "setstagealt" => {
             let (Some(q), Some(s)) = (quest_at(g, 0), num(args, 1)) else { return Some(Ok(zero)) };
             let s = s as i32;
             g.set_stage(q, s);
             if let Some(st) = g.quests.get_mut(&q) {
-                st.stages_done.retain(|&d| d <= s);
                 st.stages_done.insert(s);
+                st.current_stage = Some(s);
             }
             zero
         }

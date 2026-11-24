@@ -30,8 +30,15 @@ mod attach_model_probe;
 impl Plugin for NifMirrorPlugin {
     fn build(&self, app: &mut App) {
         attach_model_probe::install(app);
+        crate::camera_overlay::install(app);
         crate::nif_attachments::install(app);
-        app.add_systems(PostUpdate, (crate::nif_attachments::produce, mirror).chain().in_set(MirrorSystems).before(TransformSystems::Propagate));
+        app.add_systems(
+            PostUpdate,
+            (crate::camera_overlay::sync, crate::nif_attachments::produce, mirror)
+                .chain()
+                .in_set(MirrorSystems)
+                .before(TransformSystems::Propagate),
+        );
     }
 }
 
@@ -55,8 +62,12 @@ struct Memory {
     edit_order: u64,
     tables: HashMap<String, HashMap<String, [f32; 9]>>,
     materials: HashMap<(u32, ModelView, String), [f32; 9]>,
+    alpha_props: HashMap<(u32, ModelView, String), [f32; 2]>,
+    stencil_props: HashMap<(u32, ModelView, String), [f32; 3]>,
     owned: HashMap<Entity, Handle<NifMaterial>>,
     attachment_materials: HashMap<Entity, [f32; 9]>,
+    attachment_alpha: HashMap<Entity, [f32; 2]>,
+    attachment_stencil: HashMap<Entity, [f32; 3]>,
     /// Each model's shapes' NiAlphaProperty and NiStencilProperty values, by shape name.
     props: HashMap<String, HashMap<String, Props>>,
     /// Each model's node tree as its file holds it, for items drawn as flat shapes.
@@ -254,6 +265,75 @@ fn set_material(m: &mut NifMaterial, v: &[f32; 9], changed: usize) {
     m.base.emissive = LinearRgba::rgb(v[3] * v[8], v[4] * v[8], v[5] * v[8]);
     nvf_assets::authored::set_legacy_roughness(m, nvf_assets::nif_spawn::gloss_roughness(v[6]));
     m.base.base_color.set_alpha(v[7].clamp(0.0, 1.0));
+}
+
+/// Apply live `NiAlphaProperty` values (`[flags, threshold]`) to a shape's private
+/// `NifMaterial` via the engine's canonical `nif_spawn::alpha_mode` mapping [design].
+fn set_alpha_property(m: &mut NifMaterial, v: &[f32; 2]) {
+    m.base.alpha_mode = nvf_assets::nif_spawn::alpha_mode(v[0].round() as i64, v[1].round() as i64);
+}
+
+/// Apply live `NiStencilProperty` draw-mode bits (`flags` bits 10-11) to a shape's
+/// private `NifMaterial` [documented: nif.xml StencilDrawMode; design: Bevy's
+/// `StandardMaterial` does not expose per-material hardware stencil ref/mask].
+fn set_stencil_property(m: &mut NifMaterial, v: &[f32; 3]) {
+    let (double_sided, cull_mode) = nvf_assets::nif_spawn::stencil_cull(v[0].round() as i64);
+    m.base.double_sided = double_sided;
+    m.base.cull_mode = cull_mode;
+}
+
+/// Shape material components queried by [`mirror`] and [`mutate_shape_material`].
+type DrawnMaterials<'w, 's> = Query<
+    'w,
+    's,
+    (
+        Option<&'static MeshMaterial3d<NifMaterial>>,
+        Option<&'static crate::mesh_terrain_blend::BlendShape>,
+        Option<&'static nvf_assets::nif_material::MaterialOverride>,
+    ),
+>;
+
+/// Snapshot of a live particle system's name, emitter object name, and script values.
+type EmitterSummary = (String, Option<String>, [f32; 21]);
+
+/// Clone-on-write a shape entity's `NifMaterial` (sharing one private copy across
+/// multiple edits in the same frame via `made_now` / `owned`) and run `mutate`.
+#[allow(clippy::too_many_arguments)]
+fn mutate_shape_material(
+    e: Entity,
+    drawn: &DrawnMaterials,
+    assets: Option<&mut Assets<NifMaterial>>,
+    owned: &mut HashMap<Entity, Handle<NifMaterial>>,
+    made_now: &mut HashMap<Entity, Handle<NifMaterial>>,
+    commands: &mut Commands,
+    mutate: impl FnOnce(&mut NifMaterial),
+) {
+    let Some(assets) = assets else { return };
+    let Ok((handle, blend, drawing)) = drawn.get(e) else { return };
+    let Some(handle) = nvf_assets::nif_surface_blend::source_material(handle, blend) else { return };
+    // A private copy made earlier in this drain is not drawn yet (deferred
+    // insert): a later edit of the same shape goes to that copy, or a second
+    // copy of the old material would win with the first edit lost (#2981).
+    let source = match made_now.get(&e) {
+        Some(h) => h.clone(),
+        None => nvf_assets::nif_material::plain_material(handle, drawing).clone(),
+    };
+    match owned.get(&e).filter(|h| **h == source).cloned() {
+        Some(h) => {
+            if let Some(mut m) = assets.get_mut(&h) {
+                mutate(&mut m);
+            }
+            commands.entity(e).insert(MeshMaterial3d(h));
+        }
+        None => {
+            let Some(mut m) = assets.get(&source).cloned() else { return };
+            mutate(&mut m);
+            let h = assets.add(m);
+            owned.insert(e, h.clone());
+            made_now.insert(e, h.clone());
+            commands.entity(e).insert(MeshMaterial3d(h));
+        }
+    }
 }
 
 /// A node transform a script set, held over the animation.
@@ -472,7 +552,7 @@ fn apply_held(root: Entity, node: &str, held: Held, nodes: &mut NodeQuery, rig: 
 }
 
 /// The material side of [`mirror`]: the data files, the shapes' materials, the assets.
-type Materials<'w, 's> = (Option<Res<'w, GameData>>, Query<'w, 's, (Option<&'static MeshMaterial3d<NifMaterial>>, Option<&'static crate::mesh_terrain_blend::BlendShape>, Option<&'static nvf_assets::nif_material::MaterialOverride>)>, Option<ResMut<'w, Assets<NifMaterial>>>);
+type Materials<'w, 's> = (Option<Res<'w, GameData>>, DrawnMaterials<'w, 's>, Option<ResMut<'w, Assets<NifMaterial>>>);
 
 /// The roots of created items (`nvf_play::dropped`) and the entities with children: an
 /// item whose shapes hang straight from its root is drawn flat.
@@ -525,7 +605,7 @@ fn mirror_game(
     (globals, boxes, mut particles, world, sim): Extra,
     dropped: Dropped,
 ) {
-    let Memory { logged, held, bound_held, pending_held, edit_order, tables, materials, owned, attachment_materials, props, files } = mem;
+    let Memory { logged, held, bound_held, pending_held, edit_order, tables, materials, alpha_props, stencil_props, owned, attachment_materials, attachment_alpha, attachment_stencil, props, files } = mem;
     game.scene.use_separate_player_models();
     let edits = game.scene.take_targeted_edits();
     let mut edits_rest = Vec::new();
@@ -535,7 +615,8 @@ fn mirror_game(
             SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. }
             | SceneEdit::Flags { r, .. } | SceneEdit::ChildFlags { r, .. } | SceneEdit::Rename { r, .. }
             | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Light { r, .. }
-            | SceneEdit::Material { r, .. } | SceneEdit::Particle { r, .. } => *r,
+            | SceneEdit::Material { r, .. } | SceneEdit::AlphaProperty { r, .. } | SceneEdit::StencilProperty { r, .. }
+            | SceneEdit::Particle { r, .. } => *r,
             SceneEdit::ForModel { .. } => continue,
         };
         let view = concrete_view(r.0, view);
@@ -598,7 +679,7 @@ fn mirror_game(
     let mut made_now: HashMap<Entity, Handle<NifMaterial>> = HashMap::new();
     for (view, edit, entity) in edits_rest {
         let r = match &edit {
-            SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::ChildFlags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Light { r, .. } | SceneEdit::Material { r, .. } | SceneEdit::Particle { r, .. } => *r,
+            SceneEdit::Translation { r, .. } | SceneEdit::Rotation { r, .. } | SceneEdit::Scale { r, .. } | SceneEdit::Flags { r, .. } | SceneEdit::ChildFlags { r, .. } | SceneEdit::Rename { r, .. } | SceneEdit::Remove { r, .. } | SceneEdit::Insert { r, .. } | SceneEdit::Attach { r, .. } | SceneEdit::Light { r, .. } | SceneEdit::Material { r, .. } | SceneEdit::AlphaProperty { r, .. } | SceneEdit::StencilProperty { r, .. } | SceneEdit::Particle { r, .. } => *r,
             SceneEdit::ForModel { .. } => continue,
         };
         let Some(root) = root_of(r.0, view, &rigs, &visuals) else { continue };
@@ -612,6 +693,7 @@ fn mirror_game(
             SceneEdit::Insert { target, .. } | SceneEdit::Attach { target, .. } | SceneEdit::Light { target, .. } => find(root, target, &nodes, &rig),
             SceneEdit::Flags { node, .. } | SceneEdit::Rename { node, .. }
             | SceneEdit::Remove { node, .. } | SceneEdit::Material { node, .. }
+            | SceneEdit::AlphaProperty { node, .. } | SceneEdit::StencilProperty { node, .. }
             | SceneEdit::Particle { node, .. } => find(root, node, &nodes, &rig),
             _ => None,
         });
@@ -677,12 +759,23 @@ fn mirror_game(
                 }
                 commands.entity(t).add_child(new);
             }
-            // A placed model's particle system of that name (or emitting from a node of
-            // that name), changed while it lives (JohnnyGuitar's SetNiPSysModifierValue).
+            // A placed or attached/overlay model's particle system of that name (or
+            // emitting from a node of that name), changed while it lives (JohnnyGuitar's
+            // SetNiPSysModifierValue / SetParticleEmitterSpawnRate). Attached nodes
+            // mutate only their own instance's emitter, never a namesake placed system.
             SceneEdit::Particle { node, id, v, .. } => {
-                // Attached particle simulation is not supplied by this producer;
-                // a namesake placed system is not the attached node's owner.
-                if entity.is_some_and(|e| nodes.get(e).is_ok_and(|n| n.5.is_some())) { continue; }
+                let attached = entity.and_then(|e| nodes.get(e).ok()).and_then(|n| n.5).cloned();
+                if let Some(attached) = attached {
+                    let Some(owner) = attached.emitter_owner else { continue };
+                    if let Some(p) = particles.as_deref_mut() {
+                        for d in crate::particles::instance_systems(p, owner) {
+                            if d.name.eq_ignore_ascii_case(&node) || d.emitter.object.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&node)) {
+                                crate::particles::set_script_value(d, id, v);
+                            }
+                        }
+                    }
+                    continue;
+                }
                 if let Some(p) = particles.as_deref_mut() {
                     for d in crate::particles::placed_systems(p, r.0) {
                         if d.name.eq_ignore_ascii_case(&node) || d.emitter.object.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&node)) {
@@ -704,41 +797,74 @@ fn mirror_game(
                     values[id] = v;
                     *values
                 } else {
-                if view == ModelView::FirstPerson { continue; }
-                let Some(d) = data.as_deref() else { continue };
-                let model = fnv_game::nif_blocks::model_of(game, r).unwrap_or_default();
-                let table = tables.entry(model.clone()).or_insert_with(|| material_table(d, &model));
-                let base = node.split(':').next().unwrap_or(&node).to_string();
-                let Some(&start) = table.get(&node).or_else(|| table.get(&base)) else { continue };
-                let vals = materials.entry((r.0, view, node.clone())).or_insert(start);
-                vals[id] = v;
-                *vals
+                    if view == ModelView::FirstPerson { continue; }
+                    let Some(d) = data.as_deref() else { continue };
+                    let model = fnv_game::nif_blocks::model_of(game, r).unwrap_or_default();
+                    let table = tables.entry(model.clone()).or_insert_with(|| material_table(d, &model));
+                    let base = node.split(':').next().unwrap_or(&node).to_string();
+                    let Some(&start) = table.get(&node).or_else(|| table.get(&base)) else { continue };
+                    let vals = materials.entry((r.0, view, node.clone())).or_insert(start);
+                    vals[id] = v;
+                    *vals
                 };
                 let Some(e) = entity else { continue };
-                let Some(assets) = assets.as_deref_mut() else { continue };
-                let Ok((handle, blend, drawing)) = drawn.get(e) else { continue };
-                let Some(handle) = nvf_assets::nif_surface_blend::source_material(handle, blend) else { continue };
-                // A private copy made earlier in this drain is not drawn yet (deferred
-                // insert): a later edit of the same shape goes to that copy, or a second
-                // copy of the old material would win with the first edit lost (#2981).
-                let source = match made_now.get(&e) {
-                    Some(h) => h.clone(),
-                    None => nvf_assets::nif_material::plain_material(handle, drawing).clone(),
+                mutate_shape_material(e, &drawn, assets.as_deref_mut(), owned, &mut made_now, &mut commands, |m| {
+                    set_material(m, &vals, id);
+                });
+            }
+            // Live NiAlphaProperty override (JohnnyGuitar's SetAlphaPropertyValue):
+            // updates the drawn shape's private NifMaterial `alpha_mode`.
+            SceneEdit::AlphaProperty { node, item, v, .. } => {
+                if item >= 2 { continue; }
+                let attached = entity.and_then(|e| nodes.get(e).ok()).and_then(|n| n.5).cloned();
+                let vals = if let Some(attached) = attached {
+                    let Some(initial) = attached.source.alpha else { continue };
+                    let values = attachment_alpha.entry(entity.expect("attached entity")).or_insert(initial);
+                    values[item] = v;
+                    *values
+                } else {
+                    if view == ModelView::FirstPerson { continue; }
+                    let Some(d) = data.as_deref() else { continue };
+                    let model = fnv_game::nif_blocks::model_of(game, r).unwrap_or_default();
+                    let table = props.entry(model.clone()).or_insert_with(|| property_table(d, &model));
+                    let base = node.split(':').next().unwrap_or(&node);
+                    let Some(start) = table.get(&node).or_else(|| table.get(base)).and_then(|p| p.0) else { continue };
+                    let vals = alpha_props.entry((r.0, view, node.clone())).or_insert(start);
+                    vals[item] = v;
+                    *vals
                 };
-                match owned.get(&e).filter(|h| **h == source).cloned() {
-                    Some(h) => {
-                        if let Some(mut m) = assets.get_mut(&h) {
-                            set_material(&mut m, &vals, id);
-                        }
-                        commands.entity(e).insert(MeshMaterial3d(h));
-                    }
-                    None => {
-                        let Some(mut m) = assets.get(&source).cloned() else { continue };
-                        set_material(&mut m, &vals, id);
-                        let h = assets.add(m);
-                        owned.insert(e, h.clone());
-                        made_now.insert(e, h.clone());
-                        commands.entity(e).insert(MeshMaterial3d(h));
+                let Some(e) = entity else { continue };
+                mutate_shape_material(e, &drawn, assets.as_deref_mut(), owned, &mut made_now, &mut commands, |m| {
+                    set_alpha_property(m, &vals);
+                });
+            }
+            // Live NiStencilProperty override (JohnnyGuitar's SetStencilPropertyValue):
+            // updates the drawn shape's private NifMaterial `double_sided` / `cull_mode`
+            // when flags (item 0) change; reference/mask (items 1-2) stay mirrored.
+            SceneEdit::StencilProperty { node, item, v, .. } => {
+                if item >= 3 { continue; }
+                let attached = entity.and_then(|e| nodes.get(e).ok()).and_then(|n| n.5).cloned();
+                let vals = if let Some(attached) = attached {
+                    let Some(initial) = attached.source.stencil else { continue };
+                    let values = attachment_stencil.entry(entity.expect("attached entity")).or_insert(initial);
+                    values[item] = v;
+                    *values
+                } else {
+                    if view == ModelView::FirstPerson { continue; }
+                    let Some(d) = data.as_deref() else { continue };
+                    let model = fnv_game::nif_blocks::model_of(game, r).unwrap_or_default();
+                    let table = props.entry(model.clone()).or_insert_with(|| property_table(d, &model));
+                    let base = node.split(':').next().unwrap_or(&node);
+                    let Some(start) = table.get(&node).or_else(|| table.get(base)).and_then(|p| p.1) else { continue };
+                    let vals = stencil_props.entry((r.0, view, node.clone())).or_insert(start);
+                    vals[item] = v;
+                    *vals
+                };
+                if item == 0 {
+                    if let Some(e) = entity {
+                        mutate_shape_material(e, &drawn, assets.as_deref_mut(), owned, &mut made_now, &mut commands, |m| {
+                            set_stencil_property(m, &vals);
+                        });
                     }
                 }
             }
@@ -778,6 +904,16 @@ fn mirror_game(
         true
     });
     attachment_materials.retain(|e, _| {
+        let alive = nodes.get(*e).is_ok_and(|n| n.5.is_some());
+        if !alive { owned.remove(e); }
+        alive
+    });
+    attachment_alpha.retain(|e, _| {
+        let alive = nodes.get(*e).is_ok_and(|n| n.5.is_some());
+        if !alive { owned.remove(e); }
+        alive
+    });
+    attachment_stencil.retain(|e, _| {
         let alive = nodes.get(*e).is_ok_and(|n| n.5.is_some());
         if !alive { owned.remove(e); }
         alive
@@ -848,6 +984,19 @@ fn mirror_game(
                 .map(|p| crate::particles::placed_systems(p, r.0).into_iter().map(|d| (d.name.clone(), d.emitter.object.clone(), crate::particles::script_values(d))).collect())
                 .unwrap_or_default() };
             let walked = walk(root, &nodes, &rig);
+            let mut attached_emitters: HashMap<Entity, Vec<EmitterSummary>> = HashMap::new();
+            if let Some(p) = particles.as_deref_mut() {
+                for &(e, _) in &walked {
+                    if let Some(owner) = nodes.get(e).ok().and_then(|n| n.5).and_then(|a| a.emitter_owner) {
+                        attached_emitters.entry(owner).or_insert_with(|| {
+                            crate::particles::instance_systems(p, owner)
+                                .into_iter()
+                                .map(|d| (d.name.clone(), d.emitter.object.clone(), crate::particles::script_values(d)))
+                                .collect()
+                        });
+                    }
+                }
+            }
             // A player rig's root is told in the reference's own frame (its position and
             // angles), as the world positions compose it back (`fnv_game::nif_blocks::
             // node_place`): its pose, not the entity's transform, which the first-person
@@ -877,9 +1026,25 @@ fn mirror_game(
                     let material = if let Some(attached) = attached { attachment_materials.get(&e).copied().or(attached.material) }
                         else if view == ModelView::FirstPerson { None }
                         else { materials.get(&(r.0, view, shown.clone())).or_else(|| table.get(&base)).copied() };
-                    let (alpha, stencil) = attached.map(|n| (n.source.alpha, n.source.stencil))
-                        .unwrap_or_else(|| props.get(&base).copied().unwrap_or_default());
-                    let emitter = if attached.is_some() { None } else { systems.iter().find(|(n, o, _)| n.eq_ignore_ascii_case(&base) || o.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&base))).map(|s| s.2) };
+                    let (alpha, stencil) = if let Some(attached) = attached {
+                        (
+                            attachment_alpha.get(&e).copied().or(attached.source.alpha),
+                            attachment_stencil.get(&e).copied().or(attached.source.stencil),
+                        )
+                    } else {
+                        let (base_alpha, base_stencil) = props.get(&base).copied().unwrap_or_default();
+                        (
+                            alpha_props.get(&(r.0, view, shown.clone())).copied().or(base_alpha),
+                            stencil_props.get(&(r.0, view, shown.clone())).copied().or(base_stencil),
+                        )
+                    };
+                    let emitter = if let Some(attached) = attached {
+                        attached.emitter_owner
+                            .and_then(|owner| attached_emitters.get(&owner))
+                            .and_then(|list| list.iter().find(|(n, o, _)| n.eq_ignore_ascii_case(&base) || o.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&base))).map(|s| s.2))
+                    } else {
+                        systems.iter().find(|(n, o, _)| n.eq_ignore_ascii_case(&base) || o.as_deref().is_some_and(|o| o.eq_ignore_ascii_case(&base))).map(|s| s.2)
+                    };
                     let info = NodeInfo { identity: Some(SceneIdentity { model: root.to_bits(), node: e.to_bits() }), bound: node_bound(k, &walked, &globals, &boxes), emitter, alpha, stencil };
                     Some(SceneNode {
                         name: shown,
@@ -942,6 +1107,10 @@ mod player_models_tests;
 #[cfg(test)]
 #[path = "nif_attachments/tests.rs"]
 mod attachment_tests;
+
+#[cfg(test)]
+#[path = "camera_overlay/tests.rs"]
+mod camera_overlay_tests;
 
 #[cfg(test)]
 mod tests {

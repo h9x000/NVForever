@@ -223,10 +223,39 @@ impl Game<'_> {
         self.small.real_seconds
     }
 
+    /// Cached `Data\NVSE\Plugins\yUI.ini` (with `Data\menus\ySI\ySI.ini` overlay) settings,
+    /// or `None` when neither INI file is installed (`docs/spec-notes/yui-ini.md`).
+    pub fn yui_config(&self) -> Option<crate::yui_ini::YuiConfig> {
+        crate::ysi_filename::yui_config(self)
+    }
+
+    /// Override the session's cached `yUI.ini` configuration (primarily for isolated tests).
+    pub fn set_yui_config(&mut self, cfg: Option<crate::yui_ini::YuiConfig>) {
+        crate::ysi_filename::set_yui_config(self, cfg);
+    }
+
+    /// Whether `menus/ySI/ySI.xml` menu injection is permitted by `yUI.ini`
+    /// (`[General] bSortingIcons`; defaults to allowed when `yUI.ini` is absent so
+    /// standalone `ySI.xml` tests and installs keep working) [design:
+    /// `docs/spec-notes/yui-ini.md`].
+    pub fn ysi_xml_enabled(&self) -> bool {
+        self.yui_config().is_none_or(|c| c.sorting_icons)
+    }
+
+    /// Whether `[General] bMatchingCursor` is enabled in `yUI.ini` (`false` when absent)
+    /// [documented: yUI v1.4d `Data\NVSE\Plugins\yUI.ini`].
+    pub fn yui_matching_cursor(&self) -> bool {
+        self.yui_config().is_some_and(|c| c.matching_cursor)
+    }
+
     /// Whether ySI configuration, session `ySISetTrait` overrides, or injected `ySI` UI
     /// tiles are active in this session. Returns `false` with zero menu overhead in vanilla
-    /// sessions without ySI [design: `docs/spec-notes/ysi-filename.md`].
+    /// sessions without ySI, or when `yUI.ini` explicitly disables `[General] bSortingIcons`
+    /// [design: `docs/spec-notes/ysi-filename.md`, `docs/spec-notes/yui-ini.md`].
     pub fn ysi_active(&mut self) -> bool {
+        if self.yui_config().is_some_and(|c| !c.sorting_icons) {
+            return false;
+        }
         !self.small.ysi_tag.is_empty()
             || !self.small.ysi_icon.is_empty()
             || !self.small.ysi_icon_by_tag.is_empty()
@@ -235,11 +264,47 @@ impl Game<'_> {
             || crate::ysi_filename::has_loaded_book(self)
     }
 
+    /// Whether inventory/container/barter list sorting by ySI tags is active
+    /// (`[Sorting and Icons] bSortInventory`, gated by `bSortingIcons`) [design:
+    /// `docs/spec-notes/yui-ini.md`].
+    pub fn ysi_sort_inventory(&mut self) -> bool {
+        self.ysi_active() && self.yui_config().is_none_or(|c| c.effective_sort_inventory())
+    }
+
+    /// Whether ySI row icons in inventory, container, barter, repair, and item-mod menus
+    /// are active (`[Sorting and Icons] bAddInventoryIcons`, gated by `bSortingIcons`)
+    /// [design: `docs/spec-notes/yui-ini.md`].
+    pub fn ysi_add_inventory_icons(&mut self) -> bool {
+        self.ysi_active() && self.yui_config().is_none_or(|c| c.effective_add_inventory_icons())
+    }
+
+    /// Whether replacing hotkey icons with ySI icons is active (`[Sorting and Icons]
+    /// bReplaceHotkeyIcons`, gated by `bSortingIcons`; off when `yUI.ini` is absent so
+    /// vanilla hotkey icons remain unchanged) [design: `docs/spec-notes/yui-ini.md`].
+    pub fn ysi_replace_hotkey_icons(&self) -> bool {
+        self.yui_config().is_some_and(|c| c.effective_replace_hotkey_icons())
+    }
+
+    /// Resolves an item's ySI icon filename for hotkey icon replacement when
+    /// `[General] bSortingIcons = 1` and `[Sorting and Icons] bReplaceHotkeyIcons = 1`
+    /// (`None` when disabled, when `yUI.ini` is absent, or when the item has no ySI icon)
+    /// [design: `docs/spec-notes/yui-ini.md`].
+    pub fn ysi_hotkey_icon_path(&self, item: FormId) -> Option<String> {
+        if !self.ysi_replace_hotkey_icons() {
+            return None;
+        }
+        self.ysi_item_display_readonly(item).and_then(|d| d.icon)
+    }
+
     /// Resolves an item's effective ySI sorting tag, icon texture filename, and XML template
     /// name using the same precedence as `ySIGetTrait`: session `ySISetTrait` overrides take
     /// precedence over `menus/ySI/*.json` rules (`ysi_filename`), and a tag's icon applies to
     /// every form sharing that tag [design: `docs/spec-notes/ysi-filename.md`].
     pub fn ysi_item_display(&mut self, item: FormId) -> Option<crate::ui_ysi::YsiItemDisplay> {
+        self.ysi_item_display_readonly(item)
+    }
+
+    fn ysi_item_display_readonly(&self, item: FormId) -> Option<crate::ui_ysi::YsiItemDisplay> {
         let orig = self.unclone(item);
         let base = if self.world.forms.item(orig).is_some() {
             orig
@@ -662,8 +727,7 @@ pub(crate) fn call(g: &mut Game, ctx: &RunCtx, name: &str, subject: Option<FormI
             if let Some(value) = g.loaded_stewie_inventory_value(key, section) {
                 return Some(Ok(XVal::Num(value)));
             }
-            let ini = g.mod_files.read_text("NVSE\\Plugins\\nvse_stewie_tweaks.ini");
-            match ini.and_then(|t| crate::mod_files::ini_get(&t, &section.trim().to_ascii_lowercase(), key.trim())) {
+            match crate::stewie_inis::query_value(&g.mod_files, key, section) {
                 Some(v) => v.parse::<f64>().map(XVal::Num).unwrap_or(XVal::Str(v.trim_matches('"').to_string())),
                 None => zero,
             }

@@ -122,6 +122,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
             g.snapshot_projectile_traits(f, id);
             g.snapshot_weapon_sounds(f, id);
             g.snapshot_object_effect(f, id);
+            g.snapshot_weapon_crit_damage(f, id);
             g.clones.insert(id, f);
             // A clone of an item goes into containers (MCM's list of mods, `World`).
             g.world.add_clone_item(id, f);

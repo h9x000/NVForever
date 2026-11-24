@@ -286,8 +286,15 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         }
         // ---- weapons ----
         // `[poison]` on an actor's equipped weapon or a weapon's inventory reference; none
-        // or a null form takes it off [documented]. A poison is an ALCH with the Poison
-        // flag [hypothesis: the page's Bleak Venom is one]; anything else is not put on.
+        // or a null form takes it off [documented]. Requires an ALCH poison (`Game::is_poison`:
+        // Hostile + Detrimental effects); applying a poison or clearing with omitted arg
+        // returns 1, while non-poison ALCH (Stimpak) returns 0 and leaves the weapon
+        // unpoisoned [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 +
+        // JohnnyGuitarNVSE 528 + JIP LN 57.30, 2026-11-24, `GSDocMitchellHouse`,
+        // `w4h_09_apply_weapon_poison_stimpak` (`wave4h_reconcile.json`, #3803):
+        // `PROBE|w4h_09_apply_weapon_poison_stimpak|eq=00004326|isPois(b=1,s=1,st=0)|init=00000000|bleak(1:001613D0)|clr1(1:00000000)|stim(0:00000000)|silver(1:00167475)|clr2(1:00000000)`].
+        // Rejecting a non-ALCH form or leaving an already-applied poison unchanged on
+        // rejection and returning 0 without an equipped WEAP [hypothesis].
         "applyweaponpoison" => {
             let Some(r) = subject else { return Some(Ok(zero)) };
             let key = match g.temp_item(r) {
@@ -302,15 +309,16 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
                 return Some(Ok(zero));
             }
             match form(args, 0) {
-                Some(p) if sig(g, p) == Some(*b"ALCH") => {
+                Some(p) if g.is_poison(p) => {
                     g.other.jg10.poisons.insert(key, p);
+                    XVal::Num(1.0)
                 }
-                Some(_) => {}
+                Some(_) => zero,
                 None => {
                     g.other.jg10.poisons.remove(&key);
+                    XVal::Num(1.0)
                 }
             }
-            zero
         }
         // `[node] [model]`: a casing from the reference's weapon [documented].
         "ejectcasing" => {

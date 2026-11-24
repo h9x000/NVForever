@@ -28,8 +28,8 @@ the pages' and their meaning a [hypothesis]. Not probed yet: set `jgnif` of
 | GetNiBound `[block] [pc]` | [x, y, z, radius] in the world, the root's without a block [documented], and for a block the reference does not have [hypothesis: §4 bound gave four values]: the sphere round the boxes of the shapes under the node, the node's own place with radius 0 when it has none [hypothesis: the engine's boxes for the file's bounds]; an empty array before the engine told the tree [hypothesis] |
 | GetNiPSysModifierValue, SetNiPSysModifierValue `block id [value] [pc]` | the particle system of that name, or emitting from a node of that name, of a placed model: its values by the page's IDs 0-19 [documented: the table]; 0 order (not kept), 1 active, 16 the particles' base scale [hypothesis]; the setter changes the engine's live system while it lives, 1 when it found one [documented: "success:bool"] |
 | GetParticleEmitterSpawnRate, SetParticleEmitterSpawnRate `block [value] [pc]` | the system's birth rate per second; set, it replaces any keyed rate [hypothesis] |
-| Get/SetAlphaPropertyValue `block item [value] [pc]` | the shape's NiAlphaProperty from the model file: item 0 the flags, 1 the threshold [hypothesis: the page is a template; the fields' order, nif.xml]; set for the session's reads; the drawn shape keeps its own [not built: engine follow-up] |
-| Get/SetStencilPropertyValue `block item [value] [pc]` | NiStencilProperty: 0 the flags, 1 the reference, 2 the mask [hypothesis], the same way |
+| Get/SetAlphaPropertyValue `block item [value] [pc]` | the shape's NiAlphaProperty from the model file: item 0 the flags, 1 the threshold [hypothesis: the page is a template; the fields' order, nif.xml]; set for the session's reads and queued via `SceneEdit::AlphaProperty` so `nvforever::nif_mirror` updates the drawn shape's private `NifMaterial::base.alpha_mode` live (`nvf_assets::nif_spawn::alpha_mode`) [design] |
+| Get/SetStencilPropertyValue `block item [value] [pc]` | NiStencilProperty: 0 the flags, 1 the reference, 2 the mask [hypothesis]; set for the session's reads and queued via `SceneEdit::StencilProperty` so `nvforever::nif_mirror` updates the drawn shape's private `NifMaterial` `double_sided`/`cull_mode` from flags bits 10–11 via `nvf_assets::nif_spawn::stencil_cull` / `stencil_draw_mode_cull` (shared with load-time `NiStencilProperty` material creation so spawn and live updates produce identical face culling for draw modes `0..=3`) [documented: nif.xml `StencilDrawMode`; design: hardware stencil ref/mask test state is not exposed by Bevy's `StandardMaterial`, so items 1–2 remain mirrored only] |
 | SetSwitchNodeIndex `block index [pc]` | the node's child of that index shown alone, the others hidden through the NIF block flags [documented: "Sets the active index"]; an index past them hides all [hypothesis] |
 | IsNiSequenceActive `sequence [block] [pc]` | 1 when the reference plays a sequence of that name: its body's clip or one a script played (by file name), or its movement group [hypothesis: the page is a template] |
 | GetSequenceAnimGroup `slot` | the anim group code in that slot, 0 idle … 7 special idle [documented]: Idle (0) in slot 0 standing [observed: §4], the body's other movement groups in slot 1; -1 otherwise [observed: slot 4; hypothesis: the engine tells the movement group alone, and an actor it told nothing of stands] |
@@ -76,14 +76,47 @@ between `TEMP_REF_BASE` (`0xFE40_0000..0xFE7F_0000`, enforced in `Game::temp_ref
 `EditorIDToFormID`, `GetEditorID`, and `Host::form_sig` all let an explicit `SetEditorID`
 or a loaded plugin record at the same FormID win first, falling back to `REFR` for the
 built-in overlay references so `IsFormValid` and `IsReference` report `1` and
-NIF/particle script calls accept them without raising `NoReference` [hypothesis: exact
-native FormIDs and renderer-side overlay pass behavior are unobserved].
+NIF/particle script calls (including `ModelHasBlock`) accept them without raising
+`NoReference` [hypothesis: exact native FormIDs and renderer-side overlay pass behavior
+are unobserved].
+
+**Renderer-side 3D camera overlay consumer (`engine/nvforever/src/camera_overlay.rs`).**
+`camera_overlay::sync` runs in `PostUpdate` ahead of `nif_attachments::produce` and
+`nif_mirror::mirror` with an O(1) vanilla empty fast-path (`SceneMirror::is_watched`):
+when neither overlay reference is watched, zero overlay roots, cameras, render targets,
+or UI nodes are spawned [design]. Once watched, each stage spawns a `RefVisual` holder
+rotated by `world::game_to_bevy()` (so NIF `+Y` projects ahead along Bevy `-Z`, `+X`
+right, `+Z` up) with a `"Scene Root"` child so `AttachModel`, `InsertNode`,
+`SetNifBlockTranslation`/`Rotation`/`Scale`, `SetNifBlockFlag`, `RemoveNifBlock`,
+`SetMaterialPropertyValue`, `SetAlphaPropertyValue`, `SetStencilPropertyValue`, and
+attached `NiParticleSystem` overrides work through the existing attachment and mirror
+pipelines [design; hypothesis: overlay camera-local axes follow game-space NIF conventions]:
+- `JG_CameraOverlayRef_PreIS` spawns under the main `WorldCamera` on dedicated
+  `OVERLAY_PRE_IS_LAYER` (18), rendered by the main camera before `ImageSpaceGrade` and
+  excluded from sun shadows, water reflection, scope lens, and extra PiP cameras [design].
+- `JG_CameraOverlayRef_PreUI` spawns under a lazily created offscreen `Camera3d` (`order: -5`,
+  transparent clear, `near: 0.1`, `far: 10_000.0`, FOV/aspect synced from the main camera)
+  on dedicated `OVERLAY_PRE_UI_LAYER` (19), composited full-screen via `ImageNode` at
+  `GlobalZIndex(-2)` (after `ImageSpaceGrade`, strictly beneath HUD/UI tiles and loading
+  screens); the offscreen camera remains inactive until geometry or particles are attached
+  and resizes its target texture in-place on window resize [design].
+- Both stages hide their roots (and deactivate the `PreUI` offscreen camera and composite
+  node) while `Loading::active()` is true [documented: JohnnyGuitar NVSE 5.28 release
+  notes, "Don't render camera overlays during loading screen"], and tear down cleanly on
+  session reset [design].
+- Attached NIF models with `PreparedModel::particles` spawn a per-instance
+  `ModelEmitter::attached` (using the overlay holder as `space_root` and its render layer
+  for camera overlays), isolated from the host reference's placed particle systems via
+  `particles::instance_systems` so `Get/SetNiPSysModifierValue` and
+  `Get/SetParticleEmitterSpawnRate` read and mutate only that attached instance [design].
+No JohnnyGuitar NVSE or third-party mod DLL or C++ source code was consulted.
 
 ## 3. Engine follow-ups
 
-The alpha and stencil properties drawn as set; the first-person model's nodes (pc); the
-other sequence slots of GetSequenceAnimGroup; renderer-side 3D drawing of models attached
-to `JG_CameraOverlayRef_PreIS` and `JG_CameraOverlayRef_PreUI`.
+The first-person model's nodes (pc); the other sequence slots of GetSequenceAnimGroup;
+hardware stencil reference/mask test state for `SetStencilPropertyValue` items 1–2 (Bevy
+`StandardMaterial` exposes face culling only); original-game probe verification of exact
+camera-overlay near-plane / depth-clear behavior under JohnnyGuitar NVSE 5.28.
 
 ## 4. Probe answers (set jgnif, run 2026-11-09)
 

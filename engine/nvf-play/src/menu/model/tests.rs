@@ -1320,6 +1320,59 @@ fn ysi_apply_sorts_by_tag_keeps_folders_and_preserves_selection() {
     assert_eq!(m.selected_row(Side::Player).map(|r| r.item), Some(target_item), "selection tracks moved row");
 }
 
+#[test]
+fn ysi_apply_options_honors_sort_inventory_and_add_inventory_icons_independently() {
+    let f = fixture();
+    let mut w = World::new(&f.forms, &f.refs, SimConfig::default());
+    let base_order: Vec<FormId> = MenuModel::open_inventory(&mut w).unwrap().list(Side::Player).rows.iter().map(|r| r.item).collect();
+    assert!(base_order.len() >= 3);
+    let target_item = base_order[2];
+    let second_item = base_order[1];
+    let resolve = |id: FormId| {
+        if id == target_item {
+            Some(fnv_game::ui_ysi::YsiItemDisplay {
+                tag: Some("(a01)".into()),
+                icon: Some("icons\\target.dds".into()),
+                template: fnv_game::ui_ysi::YSI_DEFAULT_TEMPLATE.into(),
+            })
+        } else if id == second_item {
+            Some(fnv_game::ui_ysi::YsiItemDisplay {
+                tag: Some("(b02)".into()),
+                icon: Some("icons\\second.dds".into()),
+                template: fnv_game::ui_ysi::YSI_DEFAULT_TEMPLATE.into(),
+            })
+        } else {
+            None
+        }
+    };
+
+    // 1. bSortInventory = 1, bAddInventoryIcons = 0: sorted by ySI tag, no row icon metadata retained.
+    let mut m_sort_only = MenuModel::open_inventory(&mut w).unwrap();
+    m_sort_only.apply_ysi_options(true, false, resolve);
+    assert!(!m_sort_only.ysi_icons, "bAddInventoryIcons=0 must propagate ysi_icons=false to tile menus");
+    let rows_sort = &m_sort_only.list(Side::Player).rows;
+    assert_eq!(rows_sort[0].item, target_item);
+    assert_eq!(rows_sort[1].item, second_item);
+    assert!(rows_sort.iter().all(|r| r.ysi.is_none()), "bAddInventoryIcons=0 must strip row icons");
+
+    // 2. bSortInventory = 0, bAddInventoryIcons = 1: vanilla alphabetical order kept, row icons attached.
+    let mut m_icons_only = MenuModel::open_inventory(&mut w).unwrap();
+    m_icons_only.apply_ysi_options(false, true, resolve);
+    assert!(m_icons_only.ysi_icons);
+    let rows_icons = &m_icons_only.list(Side::Player).rows;
+    let icon_order: Vec<FormId> = rows_icons.iter().map(|r| r.item).collect();
+    assert_eq!(icon_order, base_order, "bSortInventory=0 must preserve vanilla alphabetical order");
+    assert_eq!(rows_icons[2].ysi.as_ref().and_then(|y| y.icon.as_deref()), Some("icons\\target.dds"));
+
+    // 3. Both off: vanilla order and no row icons.
+    let mut m_off = MenuModel::open_inventory(&mut w).unwrap();
+    m_off.apply_ysi_options(false, false, resolve);
+    let rows_off = &m_off.list(Side::Player).rows;
+    let off_order: Vec<FormId> = rows_off.iter().map(|r| r.item).collect();
+    assert_eq!(off_order, base_order);
+    assert!(rows_off.iter().all(|r| r.ysi.is_none()));
+}
+
 /// The Quantity Menu Respects Companion Carry Cap tweak: what fits, at least one.
 #[test]
 fn a_companion_takes_no_more_than_it_can_carry() {

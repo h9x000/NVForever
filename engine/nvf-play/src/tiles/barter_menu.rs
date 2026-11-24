@@ -356,7 +356,7 @@ pub(crate) mod tests {
                 titles: ["Merchant".into(), "Personal items".into()], weight: String::new(), focus: Side::Player,
                 pointer_pick: false, asking: false, navigated: 0,
                 card: Some(Info { weight: Some("2.50".into()), value: Some("8".into()), ..Default::default() }),
-                icon: None, take_all: false, take_all_hint: String::new(), note: None,
+                icon: None, take_all: false, take_all_hint: String::new(), note: None, ysi_icons: true,
             },
             rows: [vec![("0.9".into(), true)], vec![("--".into(), false), ("18".into(), false), ("2".into(), false), ("3".into(), false)]],
             purses: ["Coins   200".into(), "Coins   40".into()], caps: "Coins".into(), hints: ["[A]".into(), "[X]".into()],

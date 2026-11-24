@@ -1046,7 +1046,9 @@ fn apply(
         } else {
             e.remove::<(bevy::post_process::bloom::Bloom, bevy::camera::Hdr, crate::post::ImageSpaceGlow)>();
         }
-        if temporal {
+        // HDR output (hdr.rs) keeps the main view in fp16 so its highlights band no more
+        // than the screen's.
+        if temporal || crate::hdr::on() {
             e.insert(bevy::camera::Hdr);
         }
         // Eye adaptation (eye_adapt.rs) and the bright pass need the HDR view; each has

@@ -396,18 +396,35 @@ fn tell_player_state(
     sync_pad_state(&mut rt.game, &pads);
 }
 
-/// Once the game's Data is open: mods' files are read from NVForever's mods layer, then
-/// the game's Data, and the archives answer FileExists (fnv_game::mod_files).
-fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, mut done: Local<bool>) {
-    let Some(d) = data.filter(|_| !*done) else { return };
-    *done = true;
+/// Marker inserted once [`init_mod_file_roots`] has populated `fnv_game::mod_files` for
+/// this `App` (either early during `PlayPlugin::build` or on the first `Update`).
+#[derive(Resource)]
+pub(crate) struct ModFileRootsReady;
+
+/// Populate `fnv_game::mod_files` read roots, archive list, and VFS hooks from `data`:
+/// NVForever's mods layer first, then any mounted loose layers highest-precedence first,
+/// with the game's `Data` folder last (so `mod_files::data_dir` remains `Data`).
+pub(crate) fn init_mod_file_roots(d: &nvf_assets::GameData) {
     let vfs = d.vfs.clone();
     let reader_vfs = d.vfs.clone();
     let mods = fnv_install::EngineHome::default_root().map(|r| fnv_install::EngineHome::new(r).mods());
     let data_dir = vfs.data_dir().to_path_buf();
+    let mut read_roots: Vec<std::path::PathBuf> = Vec::new();
+    if let Some(m) = mods {
+        read_roots.push(m);
+    }
+    for root in vfs.loose_roots().iter().rev() {
+        if !read_roots.iter().any(|existing| existing == root) {
+            read_roots.push(root.clone());
+        }
+    }
+    if read_roots.last() != Some(&data_dir) {
+        read_roots.retain(|existing| existing != &data_dir);
+        read_roots.push(data_dir);
+    }
     let archives: Vec<String> = vfs.archives().map(str::to_string).collect();
     fnv_game::mod_files::update_roots(move |r| {
-        r.read = mods.into_iter().chain(std::iter::once(data_dir)).collect();
+        r.read = read_roots;
         r.archives = archives;
         r.reader = Some(std::sync::Arc::new(move |p: &str| reader_vfs.read(p).and_then(Result::ok)));
         r.lookup = Some(std::sync::Arc::new(move |p: &str| {
@@ -420,6 +437,17 @@ fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, mut done: Local<bool>
             }
         }));
     });
+}
+
+/// Once the game's Data is open: mods' files are read from NVForever's mods layer, then
+/// the game's Data, and the archives answer FileExists (fnv_game::mod_files).
+fn mod_file_roots(data: Option<Res<nvf_assets::GameData>>, ready: Option<Res<ModFileRootsReady>>, mut done: Local<bool>) {
+    if ready.is_some() || *done {
+        return;
+    }
+    let Some(d) = data else { return };
+    *done = true;
+    init_mod_file_roots(&d);
 }
 
 #[cfg(test)]

@@ -55,9 +55,9 @@ The actor records keep INAM, TPLT and SPLO for these (`ACTOR_SUBS`, data.rs).
 |---|---|
 | Get/SetWeaponDetectionSoundLevel `weapon [level]` | VNAM, 0 loud, 1 normal, 2 silent [documented] |
 | SetWeaponItemMod `weapon slot [mod]` | WMI1-3; left out, none [documented: the examples]; a weapon mod (IMOD) only [hypothesis] |
-| SetWeaponItemModEffect, SetWeaponItemModValue `weapon slot value` | DNAM effect_mod1-3 and value_a_mod1-3; an effect 1-16, 0 (none) ignored [documented: the table, 0-14, and the JohnnyGuitar note; observed: 0 leaves the effect, 15 is stored; hypothesis: 16, the enum's last] |
+| SetWeaponItemModEffect, SetWeaponItemModValue `weapon slot value` | DNAM effect_mod1-3 and value_a_mod1-3; an effect 1-16, 0 (none) ignored [documented: the table, 0-14, and the JohnnyGuitar note; observed: 0 leaves the effect, 15 is stored; Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe jip_21_weapon_mod_effect_16 (GetWeaponItemModEffect/SetWeaponItemModEffect): 2,2,2; no DLL or source consulted] |
 | SetWeaponOnHitSetting `weapon 0-3` | DNAM on_hit [documented] |
-| SetWeaponSemiAutoFireDelay `weapon setMax delay` | DNAM's min or max delay, not below 0 [hypothesis] |
+| SetWeaponSemiAutoFireDelay `weapon setMax delay` | DNAM's min or max delay, raw finite floats including negative values stored unclamped [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe jip_22_weapon_semiauto_delay_neg (GetWeaponSemiAutoFireDelay/SetWeaponSemiAutoFireDelay): 0.000,-0.500; no DLL or source consulted] |
 | SetWeaponModel `weapon mask path` | 0 MODL, 1-7 MWD1-7, as GetWeaponModel reads them [documented: the table] |
 | Get/SetWeaponModReloadAnim `weapon [anim]` | DNAM reload_animation_mod, 0-22 [the enum: xEdit WEAP] |
 | WeaponHasModType `weapon type` | the slot 1-3 whose effect is the type, else 0; a placed weapon by its base [documented]; the type IDs are DNAM's effect values [the enum: xEdit WEAP; observed: the 10mm pistol's 2, 3, 11 in slots 1-3] |
@@ -70,7 +70,7 @@ The actor records keep INAM, TPLT and SPLO for these (`ACTOR_SUBS`, data.rs).
 | Function | NVForever |
 |---|---|
 | Get/SetIdleLoopTimes `idle getMax` / `idle min max` | IDLE DATA loop_min, loop_max, each clamped to a u8, the max raised to the min [documented; observed: RepairWall02 2/5, and 300 2 reads 255 255] |
-| Get/SetBodyPartReplacementModel `bpd part [path]` | the part's NAM1; "" without one or without the part; a part the record lacks is not added [hypothesis] |
+| Get/SetBodyPartReplacementModel `bpd part [path]` | the part's NAM1; "" without one or without the part; a part the record lacks is not added [observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe jip_23_bodypart_repl_missing_part (GetBodyPartReplacementModel/SetBodyPartReplacementModel): 0,0; no DLL or source consulted] |
 | SetBodyPartName `bpd part name` | the part's BPTN, read by GetBodyPartName |
 
 A part is the group of subrecords from its BPTN (or its BPNN when it has no name) to the

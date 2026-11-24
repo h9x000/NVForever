@@ -330,6 +330,25 @@ fn sync(mut st: ResMut<ChargenMenus>, script: Option<ResMut<ScriptState>>, sim: 
     });
 }
 
+/// Mouse wheel operations on the character-creation list menu: when `levelup_wheel` is
+/// enabled on the S.P.E.C.I.A.L. attributes menu, wheel up raises and wheel down lowers
+/// the hovered arrow's attribute (or the selected one); otherwise scrolls as usual
+/// [design; Stewie's Tweaks 9.65/9.70 public changelogs].
+fn chargen_wheel_ops(wheel: f32, levelup_wheel: bool, attributes: bool, hover: Option<ListButton>) -> Vec<Op> {
+    if wheel.abs() < 1.0 {
+        return Vec::new();
+    }
+    if levelup_wheel && attributes {
+        let target = match hover {
+            Some(ListButton::Plus(r) | ListButton::Minus(r)) => Some(r),
+            _ => None,
+        };
+        vec![Op::Adjust(target, wheel > 0.0); wheel.abs().round() as usize]
+    } else {
+        vec![Op::Scroll(-wheel.round() as i32)]
+    }
+}
+
 fn list_or_none(names: &[String]) -> String {
     if names.is_empty() {
         "none".into()
@@ -354,6 +373,7 @@ fn input(
     mut sounds: MessageWriter<UiSound>,
     mut traits: Option<ResMut<crate::tiles::trait_menu::TraitTiles>>,
     mut tags: Option<ResMut<crate::tiles::tag_menu::TagTiles>>,
+    tweaks: Option<Res<crate::tweaks::TweakSettings>>,
 ) {
     let keys = keys.snapshot();
     use KeyCode::*;
@@ -453,8 +473,11 @@ fn input(
                     ops.push((op, "key"));
                 }
             }
-            if wheel.abs() >= 1.0 && !tiled {
-                ops.push((Op::Scroll(-wheel.round() as i32), "wheel"));
+            if !tiled {
+                let wheel_sets = tweaks.as_ref().is_some_and(|t| t.levelup_wheel);
+                for op in chargen_wheel_ops(wheel, wheel_sets, m.attributes(), m.hover) {
+                    ops.push((op, "wheel"));
+                }
             }
             for (i, r) in &rows {
                 match i {
@@ -880,6 +903,18 @@ mod tests {
         assert!(st.tags_open().is_none());
         let Some(OpenMenu::List(menu)) = st.open.as_ref() else { panic!("missing sheet") };
         assert!(tile_ops(menu, TileAct::SkillClick(32)).is_empty());
+    }
+
+    #[test]
+    fn chargen_wheel_adjusts_special_attributes_when_enabled() {
+        // Default off: scrolls as before.
+        assert_eq!(chargen_wheel_ops(1.0, false, true, Some(ListButton::Plus(2))), vec![Op::Scroll(-1)]);
+        // Enabled on SPECIAL attributes menu: raises/lowers hovered +/- attribute or selected row.
+        assert_eq!(chargen_wheel_ops(1.0, true, true, Some(ListButton::Plus(2))), vec![Op::Adjust(Some(2), true)]);
+        assert_eq!(chargen_wheel_ops(-2.0, true, true, Some(ListButton::Minus(5))), vec![Op::Adjust(Some(5), false), Op::Adjust(Some(5), false)]);
+        assert_eq!(chargen_wheel_ops(1.0, true, true, None), vec![Op::Adjust(None, true)]);
+        // Tag skills / traits still scroll.
+        assert_eq!(chargen_wheel_ops(-1.0, true, false, None), vec![Op::Scroll(1)]);
     }
 
 }

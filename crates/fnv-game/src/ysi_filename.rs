@@ -5,6 +5,7 @@ use fnv_script::vm::{form_type_code, Value, XVal};
 use fnv_sim::FormId;
 use serde_json::{Map, Value as Json};
 use std::collections::BTreeSet;
+use std::sync::OnceLock;
 
 // Mapped configuration resource bounds, not native limits.
 const MAX_FILES: usize = 128;
@@ -16,7 +17,9 @@ pub(crate) struct State {
     // Original configuration documentation describes launch-time classification.
     // This session's first query freezes its input snapshot, including a load error.
     // Game restore creates a fresh cache; no result is attached to an item or save.
-    book: Option<Result<Book, String>>,
+    book: OnceLock<Result<Book, String>>,
+    // Cached `Data\NVSE\Plugins\yUI.ini` (with `Data\menus\ySI\ySI.ini` overlay) snapshot.
+    yui_ini: OnceLock<Option<crate::yui_ini::YuiConfig>>,
 }
 struct Rule {
     priority: i64,
@@ -79,52 +82,52 @@ pub(crate) fn call(
     {
         return Err("ySIGetTrait \"filename\" requires a live inventory item or item base".into());
     }
-    if g.ysi_filename.book.is_none() {
-        g.ysi_filename.book = Some(Book::load());
-    }
     let book = g
         .ysi_filename
         .book
-        .as_ref()
-        .expect("loaded")
+        .get_or_init(Book::load)
         .as_ref()
         .map_err(Clone::clone)?;
     Ok(XVal::Str(book.filename(g, base)?))
 }
 
+/// Returns the session's cached `yUI.ini` (+ `menus\ySI\ySI.ini` overlay) configuration,
+/// loading it lazily once on first query (`None` when neither INI exists).
+pub(crate) fn yui_config(g: &Game<'_>) -> Option<crate::yui_ini::YuiConfig> {
+    *g.ysi_filename
+        .yui_ini
+        .get_or_init(crate::yui_ini::YuiConfig::load_from_data)
+}
+
+/// Replaces the session's cached `yUI.ini` configuration (primarily for isolated tests).
+pub(crate) fn set_yui_config(g: &mut Game<'_>, cfg: Option<crate::yui_ini::YuiConfig>) {
+    g.ysi_filename.yui_ini = OnceLock::from(cfg);
+}
+
 /// Resolves a form's certain JSON-configured ySI tag using the session's cached
 /// configuration snapshot (returns `None` when configuration is unavailable,
 /// unmatched, ambiguous, or blocked by an unsupported predicate).
-pub(crate) fn json_tag(g: &mut Game<'_>, form: FormId) -> Option<String> {
-    if g.ysi_filename.book.is_none() {
-        g.ysi_filename.book = Some(Book::load());
-    }
-    let book = g.ysi_filename.book.as_ref()?.as_ref().ok()?;
+pub(crate) fn json_tag(g: &Game<'_>, form: FormId) -> Option<String> {
+    let book = g.ysi_filename.book.get_or_init(Book::load).as_ref().ok()?;
     book.resolve_tag(g, form).ok()
 }
 
 /// Resolves the certain winning JSON icon `filename` for a ySI sorting tag using
 /// the session's cached configuration snapshot.
-pub(crate) fn json_icon_filename(g: &mut Game<'_>, tag: &str) -> Option<String> {
+pub(crate) fn json_icon_filename(g: &Game<'_>, tag: &str) -> Option<String> {
     json_icon_spec(g, tag).map(|(filename, _)| filename)
 }
 
 /// Resolves the certain winning JSON icon `(filename, optional template)` for a ySI
 /// sorting tag using the session's cached configuration snapshot.
-pub(crate) fn json_icon_spec(g: &mut Game<'_>, tag: &str) -> Option<(String, Option<String>)> {
-    if g.ysi_filename.book.is_none() {
-        g.ysi_filename.book = Some(Book::load());
-    }
-    let book = g.ysi_filename.book.as_ref()?.as_ref().ok()?;
+pub(crate) fn json_icon_spec(g: &Game<'_>, tag: &str) -> Option<(String, Option<String>)> {
+    let book = g.ysi_filename.book.get_or_init(Book::load).as_ref().ok()?;
     book.icon_spec(tag).ok()
 }
 
 /// Whether a valid `menus/ySI/*.json` configuration book is loaded in this session.
-pub(crate) fn has_loaded_book(g: &mut Game<'_>) -> bool {
-    if g.ysi_filename.book.is_none() {
-        g.ysi_filename.book = Some(Book::load());
-    }
-    g.ysi_filename.book.as_ref().is_some_and(Result::is_ok)
+pub(crate) fn has_loaded_book(g: &Game<'_>) -> bool {
+    g.ysi_filename.book.get_or_init(Book::load).is_ok()
 }
 
 impl Book {

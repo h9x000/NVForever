@@ -458,7 +458,8 @@ them.
 
 Shown while the player sneaks (`PlayerControl::sneak`), with the rest of the HUD. Which
 word [hypothesis: the meaning players give the words; not documented]: `[DANGER]` when
-an actor is in Combat with the player as its target; else `[CAUTION]` when an actor in
+an actor is in Combat with the player as its detected target (an enemy left in an unloaded
+cell, or out of reach, detects the player no more: alert.md §2, #3390); else `[CAUTION]` when an actor in
 Alert or Lost has the player among its threats or an alarm the player caused
 (`fnv_game::awareness`); else `[DETECTED]` when some actor's latest detection of the
 player is in the detected band (`Game::detection`, value above 0); else `[HIDDEN]`.

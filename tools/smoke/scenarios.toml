@@ -2420,6 +2420,17 @@ order = [[
 forbid = [{ text = "Caught rendering error", label = "a rendering (validation) error while the HDR view's parts come and go" }]
 
 [[scenario]]
+name = "hdr-sdr-fallback"
+source = "docs/design/hdr-output.md: HDR asked for (NVF_HDR=1) on a surface with no Rgba16Float (forced by the test aid NVF_PLAY_TEST_SDR_SURFACE=1, so on any machine) stays SDR: the window says so, the corner text and log line say the screen offers no HDR, and no HDR surface is made"
+areas = ["renderer", "graphics", "settings"]
+paths = ["engine/nvforever/src/hdr.rs", "engine/nvforever/src/hdr_calibrate.rs", "engine/nvforever/src/hdr_expand.wesl", "engine/vendor/bevy_render/src/view/window/**", "engine/vendor/bevy_core_pipeline/src/blit/**", "engine/vendor/bevy_core_pipeline/src/upscaling/**"]
+env = { NVF_HDR = "1", NVF_PLAY_TEST_SDR_SURFACE = "1" }
+args = ["--cell", "Goodsprings", "--play", "--no-voice", "--no-messages", "--hour", "12"]
+run_seconds = 12
+expect = ["hdr: this surface offers no Rgba16Float; staying SDR", "hdr: HDR asked for, but this screen offers no HDR (Windows HDR off?)"]
+forbid = ["hdr: window surface Rgba16Float (scRGB)", "hdr: output on (scRGB)", "Caught rendering error"]
+
+[[scenario]]
 name = "distant-lights"
 source = "[design, #3013] docs/design/graphics-enhanced.md §3.22 Distant lights at night (engine/nvforever/src/distant_lights.rs, distant_lights.wesl): started with --graphics-only distant-lights at Goodsprings 22:00, the distant lights come on once, list the cells in reach with their light references and glow statics, draw glows, and the glows' pipeline compiles and is ready (pipeline_gate.rs `distant lights pipeline <n> ready`, with NVF_PLAY_TEST_PIPELINE_LOG); the exit summary counts cells, lights, glow statics and glows drawn, without a rendering, validation or pipeline error. Whether towns glow where they should is checked in pictures by hand"
 areas = ["renderer", "graphics"]
@@ -6259,6 +6270,23 @@ forbid = [
 manual = "Compare flashlight_aimed_off.png and flashlight_aimed_on.png (1280x720): with the flashlight on, the aimed Ranger Sequoia cylinder, frame, sights and gloved hand must remain cleanly readable (not blown out to white) while the interior wallpaper and window ahead are brightly illuminated by the flashlight cone."
 
 # ------------------------------------------------------------------ sounds
+
+[[scenario]]
+name = "missile-launch-sounds"
+source = "#3444 (player report R-DWTU2458), docs/spec-notes/audio.md §15.6: Lonesome Road's second silo, the missile silent in flight: the sound key of Backward names a 2D SOUN with no radii (NVDLC04QSTMissileLaunchPt2), which the distance to the silo silenced"
+note = "The player stands at NVDLC04MissileLaunchViewMarkerREF, where the script moves them, 2,900 units from the silo; the launch quest is started at 8 s, as the launch control's script does. Forward follows about 1 s later, Backward 13 s after that. Needs LonesomeRoad.esm (the ten masters), as the other add-on scenarios need theirs: without it the run fails, it is not skipped."
+areas = ["audio", "object-anims", "lonesome-road"]
+paths = ["engine/nvf-play/src/sfx.rs", "engine/nvforever/src/object_anims.rs", "engine/nvforever/src/anim_sounds.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "0.3", NVF_PLAY_TEST_SCRIPT = "8:start:NVDLC04MissileLaunchQuest" }
+args = ["--play", "--world", "NVDLC04Road02World", "--pos=27963,6159,19024", "--heading", "14", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 36
+order = [[
+  { re = 'playgroup: NVDLC04MissileLaunchREF passes the sound key NVDLC04QSTMissileLaunchPt1 of Forward', label = "Forward's sound key" },
+  { re = 'sfx: sound key NVDLC04QSTMissileLaunchPt1 starts: .*qst_missilelaunch_explode_pt1\.wav, .* gain (?P<n>[0-9.]+), 2D, .* (2[89]|30)\d\d units away', range = [0.3, 0.4], label = "it starts, 9.25 dB off" },
+  { re = 'playgroup: NVDLC04MissileLaunchREF passes the sound key NVDLC04QSTMissileLaunchPt2 of Backward', label = "Backward's sound key" },
+  { re = 'sfx: sound key NVDLC04QSTMissileLaunchPt2 starts: .*qst_missilelaunch_explode_pt2\.wav, .* gain (?P<n>[0-9.]+), 2D, .* (2[89]|30)\d\d units away', range = [0.95, 1.05], label = "the flight's sound starts whole, from 2,900 units" },
+]]
+forbid = [{ re = 'sfx: sound key NVDLC04QSTMissileLaunchPt\d (not heard|dropped)', label = "a launch sound is not heard" }]
 
 [[scenario]]
 name = "own-sounds-goodsprings"
@@ -12604,6 +12632,25 @@ forbid = [
   { re = 'hud: sneak \[(DETECTED|CAUTION)\]', label = "Boone alone sets neither [DETECTED] nor [CAUTION]" },
 ]
 
+# ------------------------------------------------------------------ enemies left behind (issue #3390)
+
+[[scenario]]
+name = "hud-sneak-left-behind"
+source = "issue #3390 (docs/design/alert.md §2): an enemy whose pair with the player is measured no more (its cell unloaded) loses the player: [DANGER] goes, and it goes Lost and then Normal on the timers"
+note = "a gecko (NVCrGecko, the first created reference, 0xFF000000) placed at the player in Goodsprings at 3 s, put 600 units away and set on the player at 6 s, the player sneaking from 7 s; at 10 s the player is moved to the XMarker in Boone's room (0x000CAEB6, NovacBoonesRoom), where no enemy is. The gecko: hidden 1 s later, Lost 15 s after it last detected the player, Normal 30 s after it was hidden. Not run yet"
+areas = ["hud", "detection", "combat"]
+paths = ["crates/fnv-game/src/awareness.rs", "engine/nvforever/src/detection.rs", "engine/nvf-play/src/hud.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "3:call:player:PlaceAtMe:NVCrGecko:1,5:moveto:0xFF000000:player:0:600:0,6:combat:0xFF000000:player,10:moveto:player:0x000CAEB6", NVF_PLAY_TEST_CONTROL = "7:sneak" }
+args = ["--cell", "Goodsprings", "--pos=-68375,4800,8700", "--heading", "0", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 70
+order = [[
+  { re = 'alert: .*FF000000 (Normal|Alert) → Combat', label = "the gecko fights the player" },
+  { re = 'hud: sneak \[DANGER\]', label = "in the fight the sneak word is [DANGER]" },
+  { re = 'hud: sneak \[(HIDDEN|DETECTED)\]', label = "left behind, it is [DANGER] no more" },
+  { re = 'alert: .*FF000000 Combat → Lost', label = "the gecko loses the player" },
+  { re = 'alert: .*FF000000 Lost → Normal', label = "and gives up" },
+]]
+
 # ------------------------------------------------------------------ the enemy bar's show rule (issue #935)
 
 [[scenario]]
@@ -17179,6 +17226,28 @@ expect = [
   { re = 'GetCannibal.*>> 1\.00', label = "the player is in the cannibalism act" },
   { re = 'HasBeenEaten.*>> 0\.00', label = "not eaten while the act lasts (capture ac4)" },
   { re = 'HasBeenEaten.*>> 1\.00', label = "eaten once the 7.7 s act is over" },
+]
+
+[[scenario]]
+name = "perk-robot-deactivate"
+source = "#3479 (docs/spec-notes/perk-activation.md §2): with Robotics Expert, E on a hostile robot opens the perk's Deactivate while the player sneaks undetected (before, E did nothing to a hostile actor, so the choice never opened); without it, standing, or once it is shut down, E still does nothing (#2536)"
+note = "VCrTier0CrProtectron (00167ED5: Very Aggressive, no Allow PC Dialogue) placed 300 units from the player at 3 s (the first created reference, 0xFF000000), the coyotes there disabled; the unseen test aid keeps it from detecting the player (GetDetected 0). E is pressed standing at 10 s, crouched at 15 s (the list's first button answered by the menu aid after 1 s) and again at 23 s"
+areas = ["scripts", "perks", "activation"]
+paths = ["crates/fnv-game/src/activate_choices.rs", "engine/nvf-play/src/script.rs", "engine/nvf-play/src/script_hud.rs", "engine/nvf-play/src/activate.rs"]
+env = { NVF_PLAY_TEST_GOD = "1", NVF_PLAY_TEST_UNSEEN = "1", NVF_PLAY_TEST_SCRIPT_MENUS = "1", NVF_PLAY_TEST_SCRIPT = "2:call:VERGSCoyote1REF:Disable,2.1:call:VERGSCoyote2REF:Disable,2.2:call:VERGSCoyote3REF:Disable,2.3:call:VERGSCoyote4REF:Disable,2.4:call:VERGSCoyote5REF:Disable,2.5:call:VERGSCoyote6REF:Disable,3:call:player:PlaceAtMe:VCrTier0CrProtectron:1:300:0", NVF_PLAY_TEST_CONSOLE = "5:player.addperk 00031DC2;5.3:close;19:FF000000.getunconscious;19.3:close", NVF_PLAY_TEST_FACE = "9.5:FF000000,14.5:FF000000,22.5:FF000000", NVF_PLAY_TEST_CONTROL = "9.8:aimref=FF000000,11:sneak,14.8:aimref=FF000000,22.8:aimref=FF000000", NVF_PLAY_TEST_ACTIVATE = "10,15,23" }
+args = ["--cell", "Goodsprings", "--pos=-61000,4500,8500", "--play", "--hour", "12", "--no-voice", "--no-messages"]
+run_seconds = 26
+order = [[
+  { re = 'activate 0xFF000000 Protectron: nothing to do \(hostile\)', label = "standing: E does nothing to the hostile robot" },
+  { re = 'activate: .* offers the perks. choices \["Deactivate"\] and no default action', label = "crouched and undetected: the perk's choice" },
+  { re = 'activate: the player chose Deactivate \(Robot', label = "Deactivate is chosen" },
+  { re = 'GetUnconscious.*>> 1\.00', label = "the robot is shut down" },
+  { re = 'activate 0xFF000000 Protectron: nothing to do', label = "and not offered again" },
+]]
+expect = [{ re = 'activate: .* offers the perks. choices', count = 1, label = "the list opens once" }]
+forbid = [
+  { re = 'Protectron \(Talk\)', label = "Talk on the robot" },
+  { re = 'reticle: prompt "[^"]+" on "Protectron"', label = "an action prompt on the robot" },
 ]
 
 [[scenario]]

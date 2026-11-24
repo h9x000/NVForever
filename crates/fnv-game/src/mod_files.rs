@@ -351,6 +351,55 @@ pub fn read_loose(rel: &str) -> Option<Vec<u8>> {
     roots().read.iter().find_map(|root| std::fs::read(find_file(root, rel)?).ok())
 }
 
+/// Strip a leading UTF-8 BOM (either decoded as `\u{feff}` or as three latin-1 chars
+/// `\u{ef}\u{bb}\u{bf}`) from INI text.
+fn strip_bom(text: String) -> String {
+    if let Some(rest) = text.strip_prefix('\u{feff}') {
+        rest.to_string()
+    } else if let Some(rest) = text.strip_prefix("\u{ef}\u{bb}\u{bf}") {
+        rest.to_string()
+    } else {
+        text
+    }
+}
+
+/// Read all loose `.ini` files directly inside `folder` across `roots` (earlier root wins
+/// on case-insensitive filename collision; path components matched without regard to
+/// case), sorted case-insensitively (`A..Z`) by filename.
+pub fn read_folder_inis_from_roots(roots: &[PathBuf], folder: &str) -> Vec<(String, String)> {
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    let mut entries: Vec<(String, PathBuf)> = Vec::new();
+    for root in roots {
+        let Some(dir) = find_dir(root, folder) else { continue };
+        let Ok(rd) = std::fs::read_dir(&dir) else { continue };
+        for e in rd.flatten() {
+            let path = e.path();
+            if !path.is_file() {
+                continue;
+            }
+            let name = e.file_name().to_string_lossy().to_string();
+            let lower = name.to_ascii_lowercase();
+            if lower.ends_with(".ini") && seen.insert(lower) {
+                entries.push((name, path));
+            }
+        }
+    }
+    entries.sort_by_key(|(name, _)| name.to_ascii_lowercase());
+    entries
+        .into_iter()
+        .filter_map(|(name, path)| {
+            let bytes = std::fs::read(path).ok()?;
+            Some((name, strip_bom(latin1(&bytes))))
+        })
+        .collect()
+}
+
+/// Read all loose `.ini` files directly inside `folder` across the current read roots,
+/// sorted case-insensitively (`A..Z`) by filename.
+pub fn read_data_folder_inis(folder: &str) -> Vec<(String, String)> {
+    read_folder_inis_from_roots(&roots().read, folder)
+}
+
 /// Whether NVForever may write `path`: never inside the game's install or the original
 /// game's user folder (`fnv_install::guard_write`), nor under the game folder the Data
 /// read root stands in (a headless run that did not register the install).
@@ -393,6 +442,36 @@ impl ModFiles {
     /// session's write first.
     pub(crate) fn read_text(&self, rel: &str) -> Option<String> {
         self.read(rel)
+    }
+
+    /// A Data file's text with case-insensitive path matching on disk, this session's
+    /// write first, with any leading UTF-8 BOM stripped.
+    pub(crate) fn read_text_any_case(&self, rel: &str) -> Option<String> {
+        if let Some(t) = self.written.get(&norm(rel)) {
+            return Some(strip_bom(t.clone()));
+        }
+        let rel = rel.replace('/', "\\");
+        on_disk(Path::new(""), &rel)?;
+        read_loose(&rel).map(|b| strip_bom(latin1(&b)))
+    }
+
+    /// Loose `.ini` files directly inside `folder` across the current read roots and this
+    /// session's in-memory writes, sorted case-insensitively (`A..Z`) by filename.
+    /// Session writes override disk files with the same case-insensitive filename.
+    pub fn read_folder_inis(&self, folder: &str) -> Vec<(String, String)> {
+        let mut by_lower: std::collections::BTreeMap<String, (String, String)> = std::collections::BTreeMap::new();
+        for (name, text) in read_data_folder_inis(folder) {
+            by_lower.insert(name.to_ascii_lowercase(), (name, text));
+        }
+        let prefix = format!("{}\\", norm(folder).trim_end_matches('\\'));
+        for (path_lower, text) in &self.written {
+            if let Some(file_lower) = path_lower.strip_prefix(&prefix) {
+                if !file_lower.is_empty() && !file_lower.contains('\\') && file_lower.ends_with(".ini") {
+                    by_lower.insert(file_lower.to_string(), (file_lower.to_string(), strip_bom(text.clone())));
+                }
+            }
+        }
+        by_lower.into_values().collect()
     }
 
     /// A file's text: this session's write, else NVForever's layer, else the game's Data.

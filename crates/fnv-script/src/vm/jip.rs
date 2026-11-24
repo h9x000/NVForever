@@ -105,9 +105,10 @@ pub const JIP_NAMES: [&str; 1] = ["JIP NVSE Plugin"];
 /// missing" messages although NVForever runs the functions TTW calls from them
 /// (`TTW_GetPlugins` and the other `TTW_*`, StewieGetValue; `fnv_game::nvse_small`)
 /// [design, owner 2026-11-08: "technically the dll is present, just in engine"]:
-/// Stewie's Tweaks is reported at 941, the lowest TTW 3.4 accepts, and ttw_nvse at 1,
-/// as TTW only asks whether it is there. Most of Stewie's tweaks themselves are not
-/// built (ext-small.md).
+/// Stewie's Tweaks started at 941 (TTW 3.4's minimum) and was promoted to 945 once the
+/// 9.42–9.45 changelog features and Casino Rewards Fix 1.1 consumers were verified
+/// (#3179, ext-version.md §5.1); ttw_nvse stays at 1, as TTW only asks whether it is
+/// there. Higher gates (960, 970) remain unpromoted until their own steps are verified.
 ///
 /// The same holds for every other plugin whose functions the engine builds: a mod that
 /// asks `IsPluginInstalled "SUP NVSE Plugin"` before calling SUP's functions got 0 and
@@ -143,7 +144,7 @@ pub const PLUGINS: [(&str, f64); 16] = [
     ("kNVSE", 37.0),
     ("JohnnyGuitarNVSE", 528.0),
     ("MCM Extensions", 1.0),
-    ("lStewieAl's Tweaks", 941.0),
+    ("lStewieAl's Tweaks", 945.0),
     ("ttw_nvse", 1.0),
     ("CUI", 120.0),
     ("hNVSE", 120.0),

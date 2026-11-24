@@ -424,6 +424,10 @@ fn session_zone_level_and_assignment_overrides_reach_spawns_and_survive_same_run
         "SetZoneMinLevel TestZone 9\nSetZoneFlag TestZone 1 1\nSetZoneFlag SafeZone 2 0\nSetZoneOwner TestZone Wolf\nSetCellEncounterZone PlainCell SafeZone",
     );
     assert_eq!(num(&mut g2, "GetZoneOwner TestZone"), f64::from(WOLF));
+    // SetZoneOwner with a null owner (0) leaves the current owner unchanged [observed:
+    // 2026-11-23, GSDocMitchellHouse (0x00103DF9), probe anh_11_zone_owner_readback].
+    q(&mut g2, "SetZoneOwner TestZone 0");
+    assert_eq!(num(&mut g2, "GetZoneOwner TestZone"), f64::from(WOLF));
     assert_eq!(call(&mut g2, GET_IN_ZONE, OUTSIDE, &[ArgValue::Value(Value::Ref(SAFE_ZONE))]), 1.0);
     let snap: fnv_game::game::GameSnapshot = serde_json::from_str(&serde_json::to_string(&g2.checked_snapshot().unwrap()).unwrap()).unwrap();
 

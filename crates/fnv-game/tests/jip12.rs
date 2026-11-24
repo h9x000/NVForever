@@ -30,6 +30,7 @@ const MARKER: u32 = 0x939;
 const REF_OUT: u32 = 0x93A;
 const REF_NORTH: u32 = 0x93B;
 const IMAD: u32 = 0x93C;
+const IMAD2: u32 = 0x943;
 const RCPE: u32 = 0x93D;
 const MISC: u32 = 0x93E;
 const NPC: u32 = 0x93F;
@@ -61,7 +62,12 @@ fn plugin_bytes() -> Vec<u8> {
     ]
     .concat();
     let misc = edid(b"MISC", MISC, "TestThing", &[]);
-    let imad = edid(b"IMAD", IMAD, "TestModifier", &[]);
+    let imad_dnam = [u32s(&[1]), f32b(10.0), vec![0; 236]].concat();
+    let imad = [
+        edid(b"IMAD", IMAD, "TestModifier", &[sub(b"DNAM", imad_dnam.clone())]),
+        edid(b"IMAD", IMAD2, "TestModifierTwo", &[sub(b"DNAM", imad_dnam)]),
+    ]
+    .concat();
     let rcpe = edid(b"RCPE", RCPE, "TestRecipe", &[sub(b"FULL", z("Test Recipe"))]);
     let wrld = edid(b"WRLD", WRLD, "TestWorld", &[sub(b"CNAM", u32s(&[CLMT]))]);
     let pcell = edid(b"CELL", PCELL, "", &[sub(b"DATA", vec![0])]);
@@ -262,10 +268,14 @@ fn cells_light_and_settings() {
     q(&mut g, "SetInternalMarker TestMarker 0");
     assert!(!g.internal_marker(FormId(MARKER)));
 
-    // Image space modifiers on.
+    // Image space modifiers on: ApplyImageSpaceModifier A, B, A -> GetActiveIMODs
+    // returns [A, B, A] end-to-end in application order without deduplication
+    // [observed: w4d_24_active_imods_order: `n=3,0=00054E13,1=001736A8,2=00054E13`].
     assert_eq!(ids(&mut g, "GetActiveIMODs"), "none");
-    g.apply_image_modifier(FormId(IMAD));
+    q(&mut g, "ApplyImageSpaceModifier TestModifier");
     assert_eq!(ids(&mut g, "GetActiveIMODs"), format!("{IMAD:08X}"));
+    q(&mut g, "ApplyImageSpaceModifier TestModifierTwo\nApplyImageSpaceModifier TestModifier");
+    assert_eq!(ids(&mut g, "GetActiveIMODs"), format!("{IMAD:08X} {IMAD2:08X} {IMAD:08X}"));
 }
 
 #[test]
@@ -312,8 +322,12 @@ fn barter_and_item_menus() {
     g.set_barter_view(None);
     assert_eq!(g.barter_price_mults(), [None, None], "the trade's multipliers go with it");
 
-    // The item menus: before one was open, weapons for the inventory [observed].
+    // The item menus: before menus are opened, inventory (1002) defaults to 1 while
+    // container (1008) and barter (1053) return -1 [observed: jip12 filter.inventory;
+    // Wave 4 jip_40_barter_and_filter_defaults: 1, -1, -1].
     assert_eq!(n(&mut g, "GetMenuItemFilter 1002"), 1.0);
+    assert_eq!(n(&mut g, "GetMenuItemFilter 1008"), -1.0);
+    assert_eq!(n(&mut g, "GetMenuItemFilter 1053"), -1.0);
     let view = ItemMenuView { filter: [3, 0], lists: [MenuList { owner: Some(FormId::PLAYER_REF), rows: vec![(0, FormId(MISC), false), (2, FormId(STAT), true)] }, MenuList::default()] };
     g.set_item_menu_view(1008, Some(view));
     assert_eq!(n(&mut g, "GetMenuItemFilter 1008"), 3.0);

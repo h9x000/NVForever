@@ -273,7 +273,7 @@ pub(crate) fn call(g: &mut Game, name: &str, subject: Option<FormId>, args: &[XV
         "comparenames" => {
             let a = form(args, 1).or(subject).map(|f| base(g, f));
             let b = form(args, 0).map(|f| base(g, f));
-            let name_of = |f: Option<FormId>| f.and_then(|f| g.name_overrides.get(&f).or_else(|| g.data.full_names.get(&f)).cloned()).unwrap_or_default().to_lowercase();
+            let name_of = |f: Option<FormId>| f.and_then(|f| g.name_overrides.get(&f).or_else(|| g.forms.saved_names.get(&f)).or_else(|| g.data.full_names.get(&f)).cloned()).unwrap_or_default().to_lowercase();
             XVal::Num(match name_of(a).cmp(&name_of(b)) {
                 std::cmp::Ordering::Less => -1.0,
                 std::cmp::Ordering::Equal => 0.0,

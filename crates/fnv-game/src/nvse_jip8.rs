@@ -602,11 +602,13 @@ pub(crate) fn call(g: &mut Game, _ctx: &RunCtx, name: &str, subject: Option<Form
             }
             zero
         }
-        // `weapon setMax delay`: DNAM's semi-automatic fire delay min or max.
+        // `weapon setMax delay`: DNAM's semi-automatic fire delay min or max; stores raw
+        // finite floats including negative values without clamping [observed: Fallout: New
+        // Vegas 1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30, probe jip_22_weapon_semiauto_delay_neg:
+        // 0.000 -> -0.500].
         "setweaponsemiautofiredelay" => {
             let path = if num(args, 1, 0.0) != 0.0 { "semi_automatic_fire_delay_max" } else { "semi_automatic_fire_delay_min" };
-            // Not below 0 [hypothesis: a delay].
-            if let (Some(w), Some(v)) = (of_sig(g, form(args, 0), b"WEAP"), field_number(num(args, 2, f64::NAN), 0.0, F32.1)) {
+            if let (Some(w), Some(v)) = (of_sig(g, form(args, 0), b"WEAP"), field_number(num(args, 2, f64::NAN), F32.0, F32.1)) {
                 g.set_field8(w, "DNAM", path, XVal::Num(v));
             }
             zero

@@ -807,8 +807,12 @@ pub(crate) fn activate(
         }
     }
     // An actor shown by name only (hostile, or a creature with nothing to say): E does
-    // nothing (playtest list 4, item 19).
+    // nothing (playtest list 4, item 19) but open the perks' choices, if they offer any on
+    // it now (Robotics Expert's, #3479).
     if matches!(t.action, Action::Name | Action::Hostile) {
+        if crate::script::choices_by_hand(script.as_deref_mut(), &mut sim, t.form_id) {
+            return;
+        }
         info!("activate 0x{:08X} {}: nothing to do ({})", t.form_id, t.name, if t.action == Action::Hostile { "hostile" } else { "name only" });
         return;
     }

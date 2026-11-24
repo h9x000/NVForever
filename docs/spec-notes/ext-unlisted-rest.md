@@ -114,9 +114,20 @@ probe rows for the other matrix ones did not compile, in either version (a fault
 probe script). NVForever hands each `_OLD` command to the current one [hypothesis: the same
 for the rows not compared].
 
-IsJumping_BROKEN read 1 for the standing player [observed: rest1.old.isjumping], while the
-current IsJumping did not compile called on a reference. NVForever answers 1 [hypothesis:
-always, as the name says it is broken].
+`IsJumping_BROKEN` read `1` in the earlier `rest1.old.isjumping` run, while bare `IsJumping`
+does not compile (`Unquoted argument IsJumping`). Follow-up Wave 4C clean-room read-only
+console probes resolved its live predicate [observed: Fallout: New Vegas 1.4.0.525 +
+xNVSE 6.4.9 + JIP LN 57.30 + ShowOffNVSE 184, 2026-11-24, `GSDocMitchellHouse`
+(`0x00103DF9`) and `Goodsprings` (`0x000DAEBB`), 10 official base masters,
+`tools/capture/nvse/catalogs/wave4c_extenders.json` (#3679), no DLL or source consulted]:
+- `w4c_a01_isjumping_indoor`: `gnd(j=0,doc=0,air=0,z=7360.3)|mid(j=0,air=0,z=7360.3)|post(j=0,air=0,z=7360.3)`
+  — returns `0` for grounded `Player` and Doc Mitchell indoors.
+- `w4c_a13_isjumping_deep`: `in(gnd=0,fallJ=1,fallA=1,post=0)|out(cell=000DAEBB,gnd=0,gndA=0,jmpFallJ=1,jmpFallA=1,post=0)`
+  — returns `0` when grounded indoors and outdoors, flips to `1` while airborne/falling
+  (even via `SetPos Z + 120` without pressing Jump, matching `IsInAir`), and returns `0`
+  after landing.
+- `w4c_a01b_isjumping_bare`: `COMPILE_FAIL` (bare `IsJumping` is unregistered).
+NVForever delegates `IsJumping_BROKEN` to `IsInAir`.
 
 ## 5. Pure getters (batch 1)
 
@@ -129,8 +140,11 @@ always, as the name says it is broken].
   [observed: rest1.funcname.*: 4110 GetActorValue, 10361 AttachLight, 1 and 65000 "script
   call failed"]. NVForever gives the catalogue's name, else the longest of the opcode
   table's names for the code (an alias is the shorter) [hypothesis].
-- **IsNewGame**: 0 in a loaded save [observed: rest1.isnewgame]. NVForever gives 1 from the
-  New Game menu until a save is loaded [hypothesis].
+- **IsNewGame**: 0 in a loaded save [observed: rest1.isnewgame], 1 in a fresh New Game
+  session [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters, clean-room
+  script probe `sup_12_is_new_game` (`IsNewGame`): `1`; no DLL or source consulted].
+  NVForever gives 1 from the New Game menu until a save is loaded.
 
 ## 6. SUP's JSON commands (batch 2)
 
@@ -143,16 +157,27 @@ never the game folder (`crate::mod_files`). Code: `crates/fnv-game/src/nvse_json
 - **JSONToString** `path`: the cached copy in one line, keys sorted; "" when not cached.
 - **JSONCloseFile** `path flag [n]`: `1` drops the cached copy and gives 0; `0` gives -5
   and keeps it.
-- **JSONCacheFileFromString** `text name`: -3 both times, with either order, for text whose
-  quotes came through escaped [hypothesis: -3 is "not JSON"; NVForever caches valid text
-  under the name].
-- **JSONGetValueType** `path key flag`: object 1, array 2, string 3, number 5, missing -2
-  [hypothesis: boolean 4, null 0]. Only top-level keys: `obj/inner`, `obj.inner` and
-  `/obj/inner` all gave -2.
-- **JSONGetValueArray** `path key flag`: an array of 3 for a 3-element array. Its elements
-  read back neither as numbers nor as strings, and an object gave an array of 1 and a
-  number one of 2 [observed: json1.arr.*, json2.arr.*]. NVForever gives the array's
-  elements, an object's pairs as a string map, and nothing for a scalar [hypothesis; open].
+- **JSONCacheFileFromString** `text name`: -3 for invalid JSON text [observed: json1/json2;
+  observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525
+  + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters, clean-room script probe
+  `sup_18_json_cache_from_string` (`JSONCacheFileFromString`/`JSONGetValueType`): `-3`;
+  no DLL or source consulted]; NVForever caches valid text under the name [hypothesis].
+- **JSONGetValueType** `path key flag`: object 1, array 2, string 3, boolean 4, number 5,
+  null 0, missing -2 [observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout:
+  New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP NVSE 855 with the 10 official base masters,
+  clean-room script probe `sup_17_json_get_value_types_and_paths`
+  (`JSONGetValueType`/`JSONGetValue`/`JSONGetValueArray`): `1,2,3,4,5,0,-2 ; 1`; no DLL
+  or source consulted]. Only top-level keys: `obj/inner`, `obj.inner` and `/obj/inner`
+  all gave -2.
+- **JSONGetValueArray** `path key flag`: an array of 3 for a 3-element array, an object
+  gives 1, and a number gives 2 [observed: json1.arr.*, json2.arr.*; observed: 2026-11-23,
+  `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + SUP
+  NVSE 855 with the 10 official base masters, clean-room script probe
+  `sup_31_json_get_value_array_shapes` (`JSONGetValueArray`): `3,1,2`; no DLL or source
+  consulted]. (By contrast, `JSONGetValue` in `ext-sup5.md` §2 returns a tagged list
+  `[type_code]` / `[type_code, scalar_value]` as observed in `w4d_37_sup_json_and_excel_edges`, #3802 / PR #3803.)
+  NVForever gives the array's elements, an object's pairs as a string map,
+  and nothing for a scalar [hypothesis; open].
 - **The last flag of the readers and writers**: 0 is the file on disk, 1 the cached copy.
   With 0 the file is rewritten at once, indented by four spaces, and the cache keeps its
   old copy. With 1 a file that is not cached gives -4 (`json2.uncached.set.cache`).
@@ -272,9 +297,15 @@ commands that touch the menus, the sky or the minimap ran one per launch].
 - **GetRaceAgeRace** `race which`: 0 the older race (ONAM), 1 the younger (YNAM)
   (Caucasian: CaucasianOld, CaucasianChild; CaucasianOld 0: none). **GetRaceVoice** `race
   which`: 0 the male voice, 1 the female (VTCK). **SetRaceAgeRace / SetRaceVoice** answer 0;
-  NVForever's getters read the change back for the session [hypothesis].
+  NVForever's getters read the change back for the session [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+  script probe jip_52_race_age_voice_setters (GetRaceAgeRace/SetRaceAgeRace/GetRaceVoice/SetRaceVoice):
+  0,1,000042C2; no DLL or source consulted].
 - **GetEquippedArmorRefs**: the actor's equipped armour, 3 for the player and 1 for Doc.
-  NVForever lists the base forms [hypothesis: the original's are inventory references].
+  The original returns inventory references (`FFxxxxxx`) [observed: Fallout: New Vegas
+  1.4.0.525 + xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room
+  script probe jip_53_equipped_armor_refs_kind (GetEquippedArmorRefs): 2,FF001342; no DLL
+  or source consulted]; NVForever currently lists the base forms [design: follow-up].
 - **GetArrayValue** `array index`: the element (20 for index 1 of [10 20 30]); 0 for a
   reference given instead of an array.
 - **SetContainerOpenSound / SetContainerCloseSound** `sound [container]`: the container's
@@ -284,7 +315,12 @@ commands that touch the menus, the sky or the minimap ran one per launch].
   holds one key. **RefMapArrayGetValue** `name key` gave a one-element list. Its element
   read back as a float with a denormal value (2.1e-310) when 5 was set, so how the value is
   stored is open. NVForever keeps the value as given and lists it.
-- **HasActionRef**: 1 for Doc [hypothesis: 1 for an actor, 0 otherwise].
+- **HasActionRef**: returned `0` on Player, `1` on Doc Mitchell, and `1` on a door in
+  `GSDocMitchellHouse` [observed: rest5.hasactionref.doc; Fallout: New Vegas 1.4.0.525 +
+  xNVSE 6.4.9 + JIP LN 57.30 with the 10 official base masters, clean-room script probe
+  jip_54_hasactionref_non_actor (HasActionRef): 0,1,1; no DLL or source consulted];
+  contradicts the earlier actor-only hypothesis (NVForever currently returns 1 for actors,
+  0 otherwise [design: open follow-up to determine exact ActionRef predicate]).
 
 **Constant answers** (each [observed] for the inputs probed; what each changes is not seen):
 

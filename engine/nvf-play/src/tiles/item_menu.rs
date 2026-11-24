@@ -87,6 +87,10 @@ pub struct Snapshot {
     /// The container adapter's Take All hint.
     pub take_all_hint: String,
     pub note: Option<String>,
+    /// Whether `apply_row_icon` should instantiate `ySIImage` row tiles (`yUI.ini`
+    /// `[Sorting and Icons] bAddInventoryIcons`, gated by `bSortingIcons`) [design:
+    /// `docs/spec-notes/yui-ini.md`].
+    pub ysi_icons: bool,
 }
 
 /// The rows of a listing with their keys.
@@ -177,7 +181,11 @@ pub fn write_lists(ui: &mut Ui, s: &Snapshot, st: &mut MenuTiles) {
             if let Some(t) = list::child(ui, row.tile, st.paths.row_mark) {
                 ui.set_trait(t, "visible", on(shown.equipped));
             }
-            fnv_game::ui_ysi::apply_row_icon(ui, &fnv_ui::MemSource::default(), row.tile, shown.ysi.as_ref());
+            if s.ysi_icons {
+                fnv_game::ui_ysi::apply_row_icon(ui, &fnv_ui::MemSource::default(), row.tile, shown.ysi.as_ref());
+            } else if let Some(existing) = list::child(ui, row.tile, fnv_game::ui_ysi::YSI_IMAGE_TILE) {
+                ui.unload_tile(existing);
+            }
         }
         set(ui, st.paths.titles[i], "string", Value::Str(s.titles[i].clone()));
         set(ui, st.paths.lists[i], "_num_filtered", Value::Num(s.lists[i].filtered as f64));

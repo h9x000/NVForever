@@ -139,6 +139,10 @@ pub(crate) struct Props {
     vertex_alpha: bool,
     /// NiStencilProperty draw mode DRAW_BOTH; also set on dismemberment caps (actor.rs).
     pub(crate) double_sided: bool,
+    /// NiStencilProperty draw mode (`0..=3`: `DRAW_CCW_OR_BOTH` / `DRAW_CCW`, `DRAW_CW`,
+    /// `DRAW_BOTH`) [documented: nif.xml StencilDrawMode], mapped through
+    /// [`stencil_draw_mode_cull`] so load-time and live `SetStencilPropertyValue` culling match.
+    stencil_draw_mode: Option<i64>,
     vertex_colors_tint: bool,
     /// BSShaderNoLightingProperty: drawn without lighting (effects, glows).
     unlit: bool,
@@ -503,7 +507,9 @@ fn apply_property(file: &NifFile, dec: &Decoded, r: i32, p: &mut Props) {
         "NiStencilProperty" => {
             // 20.1.0.3+: draw mode in flags bits 10-11; older files: draw_mode field.
             let mode = s.int("draw_mode").or_else(|| s.int("flags").map(|f| (f >> 10) & 3)).unwrap_or(0);
-            p.double_sided = mode == 3;
+            let (double_sided, _) = stencil_draw_mode_cull(mode);
+            p.double_sided = double_sided;
+            p.stencil_draw_mode = Some(mode);
         }
         "NiVertexColorProperty" => p.vertex_colors_tint = true,
         _ => {}
@@ -536,7 +542,7 @@ pub fn is_editor_marker(name: Option<&str>) -> bool {
 /// so GREATER moves the cutoff half a step above the threshold; other functions keep ≥.
 pub(crate) const BLEND_TEST_CUT: i64 = 64;
 
-pub(crate) fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
+pub fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
     let (src, dst) = ((flags >> 1) & 0xF, (flags >> 5) & 0xF);
     let (blend, test) = (flags & 1 != 0, flags & 0x200 != 0);
     let strict = (flags >> 10) & 7 == 4;
@@ -548,6 +554,35 @@ pub(crate) fn alpha_mode(flags: i64, threshold: i64) -> AlphaMode {
         (true, _, 1 | 4, _) => AlphaMode::Multiply,
         (true, ..) => AlphaMode::Blend,
         _ => AlphaMode::Opaque,
+    }
+}
+
+/// Double-sided flag and face culling from a `NiStencilProperty` `StencilDrawMode`
+/// (`0/1` `DRAW_CCW_OR_BOTH`/`DRAW_CCW` -> back-face cull, `2` `DRAW_CW` -> front-face cull,
+/// `3` `DRAW_BOTH` -> double-sided / no cull) [documented: nif.xml StencilDrawMode;
+/// design: shared by load-time `NiStencilProperty` material creation and live
+/// `SetStencilPropertyValue` updates so both paths produce identical culling].
+pub fn stencil_draw_mode_cull(draw_mode: i64) -> (bool, Option<bevy::render::render_resource::Face>) {
+    match draw_mode & 3 {
+        3 => (true, None),
+        2 => (false, Some(bevy::render::render_resource::Face::Front)),
+        _ => (false, Some(bevy::render::render_resource::Face::Back)),
+    }
+}
+
+/// Double-sided flag and face culling from `NiStencilProperty` flags bits 10-11
+/// (`draw_mode`: 0/1 `DRAW_CCW`, 2 `DRAW_CW`, 3 `DRAW_BOTH`) [documented: nif.xml
+/// StencilDrawMode; design: Bevy's `StandardMaterial` does not expose per-material
+/// hardware stencil reference/mask state, so only the face-cull mode applies live].
+pub fn stencil_cull(flags: i64) -> (bool, Option<bevy::render::render_resource::Face>) {
+    stencil_draw_mode_cull((flags >> 10) & 3)
+}
+
+fn props_cull(props: &Props) -> (bool, Option<bevy::render::render_resource::Face>) {
+    if props.double_sided {
+        stencil_draw_mode_cull(3)
+    } else {
+        stencil_draw_mode_cull(props.stencil_draw_mode.unwrap_or(0))
     }
 }
 
@@ -1254,6 +1289,7 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
         .flatten()
         .and_then(|t| textures.texture(t, true));
     let (reflectance, masked) = specular(props, normal.is_some(), unmasked);
+    let (double_sided, cull_mode) = props_cull(props);
     let material = StandardMaterial {
         base_color: Color::srgba(1.0, 1.0, 1.0, props.material_alpha.unwrap_or(1.0)),
         base_color_texture: base,
@@ -1268,8 +1304,8 @@ fn shape_material_inner(props: &Props, mesh: &mut Mesh, textures: &mut impl Text
         emissive: emissive.unwrap_or(LinearRgba::BLACK),
         emissive_texture: glow,
         alpha_mode,
-        double_sided: props.double_sided,
-        cull_mode: if props.double_sided { None } else { Some(bevy::render::render_resource::Face::Back) },
+        double_sided,
+        cull_mode,
         unlit: props.unlit,
         ..default()
     };
@@ -2961,5 +2997,23 @@ mod bc5_material_tests {
         assert!(refused.base.normal_map_texture.is_none());
         assert!(refused.base.specular_texture.is_none());
         assert_eq!(refused.base.reflectance, 0.3);
+    }
+
+    #[test]
+    fn stencil_cull_maps_draw_mode_bits() {
+        assert_eq!(stencil_cull(0), (false, Some(bevy::render::render_resource::Face::Back)));
+        assert_eq!(stencil_cull(1 << 10), (false, Some(bevy::render::render_resource::Face::Back)));
+        assert_eq!(stencil_cull(2 << 10), (false, Some(bevy::render::render_resource::Face::Front)));
+        assert_eq!(stencil_cull(3 << 10), (true, None));
+        for mode in 0..=3i64 {
+            let flags = (mode << 10) | 0x0015;
+            let expected = stencil_cull(flags);
+            let props = Props {
+                double_sided: mode == 3,
+                stencil_draw_mode: Some(mode),
+                ..Default::default()
+            };
+            assert_eq!(props_cull(&props), expected, "load-time props_cull must match stencil_cull for mode {mode}");
+        }
     }
 }

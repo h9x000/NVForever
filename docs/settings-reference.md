@@ -333,6 +333,16 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
 - Command-line switches: `--size`
 - Registered in `engine/nvforever/src/settings.rs`
 
+### `hdr-output`: HDR output
+
+- On the page: On: the game is drawn for an HDR screen (Windows HDR on). Takes effect at once.
+  Calibrate... sets the screen's peak and the brightness.
+- In full: A choice list: Off, On, Calibrate.... On draws the game in HDR on a screen with Windows
+  HDR on; with no HDR screen or no fp16 surface it stays SDR. It switches live, with no restart.
+  Calibrate... opens the calibration pictures for the screen's peak and the brightness.
+- More: docs/design/hdr-output.md
+- Registered in `engine/nvforever/src/hdr.rs`
+
 ### `borderless`: Full screen
 
 - On the page: On: the game fills its monitor without a frame, at the full screen resolution

@@ -308,7 +308,7 @@ mod tests {
     /// shadows row; #2981's authored materials row and its reflections row; #2701's
     /// full-detail scenery row; #3014's distant objects row; #2993's aerial perspective row;
     /// #2995's night sky detail row; #3013's distant lights row; #3322's terrain parallax row), by the group it registers with.
-    const KNOWN: [(&str, &str); 152] = [
+    const KNOWN: [(&str, &str); 153] = [
         ("detached-camera", "Gameplay"),
         ("gore-shake", "Gameplay"),
         ("advanced-movement", "Gameplay"),
@@ -373,6 +373,7 @@ mod tests {
         ("sky-clock", "World"),
         ("resolution", "Display"),
         ("borderless", "Display"),
+        ("hdr-output", "Display"),
         ("monitor", "Display"),
         ("first-person-body", "Display"),
         ("weapon-inertia", "Display"),
@@ -477,6 +478,7 @@ mod tests {
         deselect-hotkeys map-remembers terminal-number-keys faster-hacking dialogue-music dialogue-radio \
         console-skips-player holster-real-time power-armor-no-screen-blood no-red-crosshair-cloaked \
         god-mode-quiet-landing console-compress-repeats console-timestamps living-anatomy-dr sync-categories \
+        sync-categories-keep-empty \
         perks-per-level special-points pick-without-skill hack-without-skill no-terminal-lockout no-casino-bans \
         loot-unconscious revive-companions revive-down-seconds pickpocket-worn no-sneak-criticals reload-when-empty \
         no-travel-time power-armor-fall weightless-armor weightless-aid weightless-ammo weightless-weapons \
@@ -485,7 +487,7 @@ mod tests {
         map-door-kinds hostiles-prefer-player prefer-player-start prefer-player-mid prefer-player-detection \
         equip-broken-items keep-broken-equipped hardcore-tweaks hardcore-ammo-weight hardcore-essential-companions \
         hardcore-sleep-heals weightless-worn-power-armor no-travel-crippled-leg wait-only-seated kill-reward-ap \
-        jump-ap-cost run-ap-cost no-selling custom-skill-points skill-point-base skill-points-per-int \
+        jump-ap-cost jump-ap-danger-only jump-without-enough-ap run-ap-cost no-selling custom-skill-points skill-point-base skill-points-per-int \
         no-unconscious-message no-voice-filter no-skip-dialogue lockpick-mouse no-max-casino-bet no-aiming-slowdown \
         repeat-jumping hold-to-sneak vats-entry-ap power-attack-ap quest-marker-reach scope-zoom-time drop-key \
         no-container-after-pick no-door-after-pick mark-unvisited-doors no-exit-hacking no-grab-owned agility-speed \
@@ -559,7 +561,7 @@ mod tests {
         hack-no-repeat-words hack-dud-when-full hack-spare-guessed hack-mark-guesses-as-duds \
         hack-keep-matching-chars hack-compact-guesses hack-replenish-bonus run-overencumbered over-run-ap over-jump-ap \
         npc-melee-part-damage disarm-needs-skill disarm-mult disarm-explode-mult cap-skills-by-special skill-cap-base \
-        skill-cap-per-special skill-cap-per-luck skill-cap-most cap-skills-spare-tagged hold-breath breath-sway \
+        skill-cap-per-special skill-cap-per-luck skill-cap-most cap-skills-spare-tagged hold-breath breath-activate breath-sway \
         breath-ap scope-wheel-zoom wheel-cycles-hotkeys dpad-cycles-hotkeys keys-with-pad double-tap-ammo \
         improved-weather vats-stop-following-dead night-vision-toggle night-vision-off-first night-vision-by-day \
         kill-cam-outside-vats kill-cam-hit-location weather-trip-distance compass-pips-fade compass-places-fade \
@@ -766,8 +768,8 @@ mod tests {
         let tweaks = tweak_rows();
         // 564 less the console and screenshot keys, bindings since 2026-11-16 (Controls),
         // plus Keep Chosen Ammo (#3305), the four Stewie 9.45 sub-options (#3179),
-        // and Running Costs AP sneak options (#3183).
-        assert_eq!(tweaks.len(), 569);
+        // Running Costs AP sneak options (#3183), and Stewie 9.65-9.70 sub-options (#3184).
+        assert_eq!(tweaks.len(), 573);
         let mut rows: Vec<(&'static str, &'static str)> = KNOWN.to_vec();
         rows.extend(&tweaks);
         let list = registry(&rows);
@@ -791,9 +793,17 @@ mod tests {
         assert_eq!(next("tweak-revive-companions"), "tweak-revive-down-seconds");
         assert_eq!(next("tweak-revive-down-seconds"), "tweak-revive-on-cell-change");
         assert_eq!(next("tweak-hack-mark-guesses-as-duds"), "tweak-hack-keep-matching-chars");
+        assert_eq!(next("tweak-hold-breath"), "tweak-breath-activate");
+        assert_eq!(next("tweak-sync-categories"), "tweak-sync-categories-keep-empty");
+        assert_eq!(next("tweak-jump-ap-cost"), "tweak-jump-ap-danger-only");
+        assert_eq!(next("tweak-jump-ap-danger-only"), "tweak-jump-without-enough-ap");
         assert_eq!(next("tweak-sleep-heal-min-hours"), "tweak-sleep-misc-stat-requires-duration");
         assert_eq!(next("tweak-grabbing-is-theft"), "tweak-grabbing-is-theft-min-value");
         assert_eq!(next("tweak-no-self-explosion-damage"), "tweak-no-self-explosion-non-hostiles");
+        assert_eq!(needs("tweak-breath-activate").len(), 1);
+        assert_eq!(needs("tweak-breath-activate")[0].parent, "tweak-hold-breath");
+        assert_eq!(needs("tweak-sync-categories-keep-empty").len(), 1);
+        assert_eq!(needs("tweak-sync-categories-keep-empty")[0].parent, "tweak-sync-categories");
         assert_eq!(needs("tweak-revive-on-cell-change")[0].parent, "tweak-revive-companions");
         assert_eq!(needs("tweak-no-self-explosion-non-hostiles")[0].parent, "tweak-no-self-explosion-damage");
         assert_eq!(needs("tweak-grabbing-is-theft-min-value")[0].parent, "tweak-grabbing-is-theft");

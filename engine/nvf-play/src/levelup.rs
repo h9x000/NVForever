@@ -314,15 +314,13 @@ fn input(
         for right in crate::pad::sideways(&typed, &keys) {
             ops.push((if right { Op::Raise(None) } else { Op::Lower(None) }, "key"));
         }
-        // The player's tweak: on the skills page the wheel raises and lowers the chosen
-        // skill (the one under the pointer) instead of scrolling [design: docs/design/tweaks.md].
-        let wheel_sets = tweaks.as_ref().is_some_and(|t| t.levelup_wheel) && st.open.as_ref().is_some_and(|m| m.page == model::Page::Skills);
-        if wheel.abs() >= 1.0 && wheel_sets {
-            for _ in 0..wheel.abs().round() as i32 {
-                ops.push((if wheel > 0.0 { Op::Raise(None) } else { Op::Lower(None) }, "wheel"));
-            }
-        } else if wheel.abs() >= 1.0 {
-            ops.push((Op::Scroll(-wheel.round() as i32), "wheel"));
+        // The player's tweak: on the skills page the wheel raises and lowers the hovered
+        // (or chosen) skill instead of scrolling [design: docs/design/tweaks.md].
+        let wheel_sets = tweaks.as_ref().is_some_and(|t| t.levelup_wheel);
+        let on_skills = st.open.as_ref().is_some_and(|m| m.page == model::Page::Skills);
+        let hovered_part = st.open.as_ref().and_then(|m| m.hover);
+        for op in levelup_wheel_ops(wheel, wheel_sets, on_skills, hovered_part) {
+            ops.push((op, "wheel"));
         }
         for (i, r) in &rows {
             match i {
@@ -369,6 +367,25 @@ fn input(
         if st.answered {
             break;
         }
+    }
+}
+
+/// Mouse wheel operations on the level-up menu: when `levelup_wheel` is enabled on the
+/// Skills page, wheel up raises and wheel down lowers the hovered arrow's row (or the
+/// selected row); otherwise scrolls as usual [design; Stewie's Tweaks 9.65 public changelog].
+fn levelup_wheel_ops(wheel: f32, levelup_wheel: bool, on_skills: bool, hover: Option<Part>) -> Vec<Op> {
+    if wheel.abs() < 1.0 {
+        return Vec::new();
+    }
+    if levelup_wheel && on_skills {
+        let target = match hover {
+            Some(Part::Plus(r) | Part::Minus(r)) => Some(r),
+            _ => None,
+        };
+        let op = if wheel > 0.0 { Op::Raise(target) } else { Op::Lower(target) };
+        vec![op; wheel.abs().round() as usize]
+    } else {
+        vec![Op::Scroll(-wheel.round() as i32)]
     }
 }
 
@@ -592,5 +609,17 @@ mod tests {
     fn only_the_level_up_menu_is_drawn_here() {
         assert!(draws(menus::LEVEL_UP));
         assert!(!draws(menus::TAG_SKILLS) && !chargen::has_own_menu(menus::LEVEL_UP));
+    }
+
+    #[test]
+    fn levelup_wheel_adjusts_hovered_arrow_row_on_skills_page() {
+        // Off by default: scrolls even on the Skills page.
+        assert_eq!(levelup_wheel_ops(1.0, false, true, Some(Part::Plus(3))), vec![Op::Scroll(-1)]);
+        // Enabled on Skills: wheel up raises, wheel down lowers, targeting hovered +/- row.
+        assert_eq!(levelup_wheel_ops(2.0, true, true, Some(Part::Plus(3))), vec![Op::Raise(Some(3)), Op::Raise(Some(3))]);
+        assert_eq!(levelup_wheel_ops(-1.0, true, true, Some(Part::Minus(4))), vec![Op::Lower(Some(4))]);
+        assert_eq!(levelup_wheel_ops(1.0, true, true, None), vec![Op::Raise(None)]);
+        // Perks page always scrolls.
+        assert_eq!(levelup_wheel_ops(-1.0, true, false, None), vec![Op::Scroll(1)]);
     }
 }

@@ -11,7 +11,7 @@ use bevy::image::{CompressedImageFormatSupport, CompressedImageFormats, ImageSam
 use bevy::prelude::*;
 use fnv_font::{Font, Glyph, Line};
 use nvf_assets::GameData;
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::atomic::{AtomicU32, Ordering};
 
 mod tga;
@@ -688,7 +688,7 @@ pub fn font_file(path: &str) -> String {
     font_file_in(path, INSTALL_FONTS.get())
 }
 
-fn font_file_in(path: &str, install: Option<&[Option<String>; 9]>) -> String {
+pub(crate) fn font_file_in(path: &str, install: Option<&[Option<String>; 9]>) -> String {
     let own = install.and_then(|fonts| {
         let n = FONT_FILES.iter().position(|f| f.eq_ignore_ascii_case(path))?;
         fonts[n].clone()
@@ -701,7 +701,7 @@ fn font_file_in(path: &str, install: Option<&[Option<String>; 9]>) -> String {
 /// `LOADED_FONTS = 8`; `GetFontFile 9` returning `""`]). Keep it unloaded in the shared
 /// [`face`] loader so every caller (`tiles::draw::FontKit`, `credits::start`,
 /// `loading_look::fit_tip`, `wait`, etc.) keeps the vanilla stand-in consistently [design].
-fn is_unloaded_font(path: &str) -> bool {
+pub(crate) fn is_unloaded_font(path: &str) -> bool {
     path.len() == FONT_FILES[8].len()
         && path.bytes().zip(FONT_FILES[8].bytes()).all(|(a, b)| {
             let a = if a == b'/' { b'\\' } else { a.to_ascii_lowercase() };
@@ -798,6 +798,91 @@ pub const FONT_FILES: [&str; 9] = [
     "textures\\fonts\\glow_futura_caps_large.fnt",
     "textures\\fonts\\nvfont_test.fnt",
 ];
+
+/// VFS folder where mods ship extended font slot definitions (`*.txt`) for JIP LN NVSE
+/// [documented: JIP LN NVSE Plugin (`https://www.nexusmods.com/newvegas/mods/58277`,
+/// 50.80+, current 57.30) Nexus article "Installing extra UI fonts using JIP LN NVSE";
+/// observed: MAPMO v6.4 (`https://www.nexusmods.com/newvegas/mods/74365`) public
+/// `Data\NVSE\Plugins\xfonts\MAPMO.txt` asset; no third-party DLL or source code consulted].
+pub const XFONTS_DIR: &str = "nvse\\plugins\\xfonts\\";
+
+/// Parse `<slot>=<path>` entries from an `xfonts` text file into `out`.
+///
+/// Only extended slots `10..=255` are accepted so vanilla INI slots `1..=9` (and the
+/// unloaded vanilla font `9` rule) are never overwritten by mod `xfonts` files
+/// [documented: JIP LN NVSE 50.80+ `xfonts` format (`10..=31` in the 50.80 article,
+/// `10..=89` on GECK Wiki `SetFontFile`); observed: MAPMO v6.4 `MAPMO.txt` maps slots
+/// `21` and `22` to `textures\fonts\mapmo_hud_caps_font.fnt` and
+/// `textures\fonts\mapmo_hud_caps_font2.fnt`; design: comment/quote/slash/`data\`
+/// normalization and `10..=255` upper slot guard].
+pub fn parse_xfonts(text: &str, out: &mut BTreeMap<u8, String>) {
+    for raw in text.lines() {
+        let line = raw.trim_start_matches('\u{feff}').trim();
+        if line.is_empty()
+            || line.starts_with(';')
+            || line.starts_with('#')
+            || line.starts_with("//")
+        {
+            continue;
+        }
+        let Some((lhs, rhs)) = line.split_once('=') else {
+            continue;
+        };
+        let Ok(slot) = lhs.trim().parse::<u8>() else {
+            continue;
+        };
+        if slot < 10 {
+            continue;
+        }
+        let mut path = rhs
+            .trim()
+            .trim_matches(|c| c == '"' || c == '\'')
+            .replace('/', "\\")
+            .to_ascii_lowercase();
+        while let Some(rest) = path.strip_prefix('\\') {
+            path = rest.to_string();
+        }
+        if let Some(rest) = path.strip_prefix("data\\") {
+            path = rest.to_string();
+        }
+        if !path.is_empty() {
+            out.insert(slot, path);
+        }
+    }
+}
+
+/// Discover and parse all `NVSE\Plugins\xfonts\*.txt` files visible through `vfs`.
+///
+/// Files are processed in case-insensitive sorted path order so overrides are
+/// deterministic [design]. Returns an empty map when no `xfonts` definitions exist,
+/// leaving unmodded vanilla font loading completely unchanged.
+pub fn load_xfonts(vfs: &fnv_vfs::Vfs) -> BTreeMap<u8, String> {
+    let mut paths = vfs.paths(|p| {
+        let lower = p.to_ascii_lowercase();
+        lower.starts_with(XFONTS_DIR) && lower.ends_with(".txt")
+    });
+    paths.sort_by_key(|a| a.to_ascii_lowercase());
+    let mut out = BTreeMap::new();
+    for path in paths {
+        if let Some(Ok(bytes)) = vfs.read(&path) {
+            parse_xfonts(&String::from_utf8_lossy(&bytes), &mut out);
+        }
+    }
+    out
+}
+
+/// Resolve a font slot number (`1..=9` vanilla or `10..=255` extended `xfonts`) to its
+/// normalized VFS `.fnt` path [design]. Slot `0` and unregistered extended slots return
+/// `None`.
+pub fn slot_font_path(slot: u8, extra: &BTreeMap<u8, String>) -> Option<String> {
+    if (1..=9).contains(&slot) {
+        Some(font_file(FONT_FILES[usize::from(slot) - 1]))
+    } else if slot >= 10 {
+        extra.get(&slot).cloned()
+    } else {
+        None
+    }
+}
 
 /// Where a font's letters stand from a line's top: the tallest glyph's rise [design].
 pub fn line_base(face: &Face) -> f32 {
@@ -1555,5 +1640,36 @@ pub(crate) mod tests {
     fn a_caps_only_font_centres_its_glyphs_on_the_cap_height() {
         let face = measured_font(true);
         assert_eq!(x_height(&face), line_base(&face));
+    }
+
+    #[test]
+    fn xfonts_parse_and_slot_paths_preserve_vanilla_slots_and_normalize_paths() {
+        let mut extra = BTreeMap::new();
+        parse_xfonts(
+            "\u{feff}   ; comment after BOM and leading spaces\n# hash\n// slash\n\
+             0=textures\\fonts\\bad0.fnt\n\
+             1=textures\\fonts\\override_vanilla.fnt\n\
+             9=textures\\fonts\\override_nine.fnt\n\
+             \u{feff}  21=textures\\fonts\\mapmo_hud_caps_font.fnt\n\
+             22 = \"Data/Textures/Fonts/MAPMO_HUD_Caps_Font2.fnt\"\n\
+             42=   \n\
+             256=textures\\fonts\\too_high.fnt\n\
+             not_a_line\n",
+            &mut extra,
+        );
+        assert_eq!(extra.len(), 2);
+        assert_eq!(extra.get(&21).map(String::as_str), Some("textures\\fonts\\mapmo_hud_caps_font.fnt"));
+        assert_eq!(extra.get(&22).map(String::as_str), Some("textures\\fonts\\mapmo_hud_caps_font2.fnt"));
+        assert!(!extra.contains_key(&0) && !extra.contains_key(&1) && !extra.contains_key(&9) && !extra.contains_key(&42));
+        // Later definitions for the same extended slot replace earlier ones cleanly.
+        parse_xfonts("22=\\textures/fonts/override_22.fnt\n", &mut extra);
+        assert_eq!(extra.get(&22).map(String::as_str), Some("textures\\fonts\\override_22.fnt"));
+        // Slot path resolution preserves vanilla 1..=9 and returns None for 0 / unregistered.
+        assert_eq!(slot_font_path(0, &extra), None);
+        assert_eq!(slot_font_path(1, &extra).as_deref(), Some(FONT_FILES[0]));
+        assert_eq!(slot_font_path(9, &extra).as_deref(), Some(FONT_FILES[8]));
+        assert_eq!(slot_font_path(21, &extra).as_deref(), Some("textures\\fonts\\mapmo_hud_caps_font.fnt"));
+        assert_eq!(slot_font_path(22, &extra).as_deref(), Some("textures\\fonts\\override_22.fnt"));
+        assert_eq!(slot_font_path(42, &extra), None);
     }
 }
