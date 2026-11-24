@@ -88,6 +88,34 @@ pub fn follow_menu_font(menu_font: Option<Res<crate::pause::MenuFont>>, fonts: O
     set_sharp(on);
 }
 
+/// A text in Bevy's own font (NVForever's pieces with no game font: the sneak gauges' labels,
+/// the location markers' names) drawn in the sharp font while [`sharp`], at its own size.
+#[derive(Component, Clone, Copy, Default)]
+pub struct SharpText;
+
+/// The font `TextFont` of a [`SharpText`] should hold: the sharp font, without the kerning
+/// and ligatures as every sharp line ([`features`]), or Bevy's own.
+fn sharp_text_font(font: &mut bevy::text::TextFont, on: bool) {
+    let (handle, features) = if on { (FONT_HANDLE, features()) } else { (Handle::default(), bevy::text::FontFeatures::default()) };
+    *font = bevy::text::TextFont { font_features: features, ..font.clone().with_font(handle) };
+}
+
+/// Give each new [`SharpText`], and every one when the letters change ([`letters`]), the
+/// font it should be in.
+#[allow(clippy::type_complexity)]
+pub fn follow_sharp_texts(mut seen: Local<u32>, mut texts: ParamSet<(Query<&mut bevy::text::TextFont, Added<SharpText>>, Query<&mut bevy::text::TextFont, With<SharpText>>)>) {
+    let on = sharp();
+    if crate::interface::letters_changed(&mut seen) {
+        for mut font in &mut texts.p1() {
+            sharp_text_font(&mut font, on);
+        }
+    } else {
+        for mut font in &mut texts.p0() {
+            sharp_text_font(&mut font, on);
+        }
+    }
+}
+
 /// The 'H' of font 7, the font the menus' sizes were set by ([`ENTRY_EM`]), in interface
 /// units, its glow included [observed: the owner's screenshots, module notes].
 const FONT7_CAP: f32 = 30.0;
@@ -749,6 +777,25 @@ mod tests {
         let caps = sharpened(raster(40.0, 52.0), "textures\\fonts\\glow_futura_caps_large.fnt", true, &[('h', 6.0)]);
         let v = caps.vector.unwrap();
         assert!((v.shift - (6.0 - m.lead('H') * v.em)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn bevys_own_font_pieces_follow_the_letters() {
+        use bevy::text::{FontSource, TextFont};
+        let size = crate::interface::font_units(13.0);
+        let mut font = TextFont { font_size: size, ..default() };
+        sharp_text_font(&mut font, true);
+        assert_eq!((&font.font, font.font_size), (&FontSource::Handle(FONT_HANDLE), size), "sharp, at its own size");
+        assert_eq!(font.font_features, features());
+        sharp_text_font(&mut font, false);
+        assert_eq!(font.font, FontSource::Handle(Handle::default()), "Bevy's own again");
+        // A new one gets the letters of the moment (whichever the switch says now).
+        let mut app = App::new();
+        app.add_systems(Update, follow_sharp_texts);
+        let text = app.world_mut().spawn((SharpText, TextFont { font_size: size, ..default() })).id();
+        app.update();
+        let want = if sharp() { FONT_HANDLE } else { Handle::default() };
+        assert_eq!(app.world().get::<TextFont>(text).unwrap().font, FontSource::Handle(want));
     }
 
     #[test]

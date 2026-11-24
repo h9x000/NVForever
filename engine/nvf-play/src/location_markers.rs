@@ -101,6 +101,7 @@ fn labels(markers: Res<LocationMarkers>, mut commands: Commands, old: Query<Enti
             Node { position_type: PositionType::Absolute, ..default() },
             Text::new(m.name.clone()),
             TextFont { font_size: FontSize::Px(14.0), ..default() },
+            crate::vector_font::SharpText,
             TextColor(colour(m)),
             Visibility::Hidden,
             GlobalZIndex(4),

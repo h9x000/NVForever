@@ -426,7 +426,10 @@ fn draw(
     mut drawn: Local<Drawn>,
 ) {
     let rgb = nvf_play::interface::hud_rgb();
-    if !overlay.dirty && (!counter.show || rgb == drawn.rgb) {
+    // The Menu Font row changed the letters: the kit made again, the panel set again.
+    let letters = nvf_play::vector_font::letters();
+    let new_letters = drawn.kit.as_ref().is_some_and(|k| k.letters != letters);
+    if !overlay.dirty && !(counter.show && new_letters) && (!counter.show || rgb == drawn.rgb) {
         return;
     }
     overlay.dirty = false;
@@ -441,7 +444,7 @@ fn draw(
         return;
     }
     // Font 7 once there is game data to read it from; Bevy's font until then.
-    if drawn.kit.as_ref().is_none_or(|k| !k.had_data && data.is_some()) {
+    if drawn.kit.as_ref().is_none_or(|k| (!k.had_data && data.is_some()) || k.letters != letters) {
         drawn.kit = Some(draw::Kit::load(data.as_deref(), &mut images, formats.as_deref()));
     }
     let rows = readings::rows(&overlay.readings, &counter.rows);

@@ -167,7 +167,7 @@ fn spawn(mut commands: Commands, root: Query<(), With<GaugeRoot>>) {
     commands.spawn((GaugeRoot, node, Visibility::Hidden, GlobalZIndex(5))).with_children(|p| {
         for (bar, name) in ["LIGHT", "NOISE"].into_iter().enumerate() {
             p.spawn(Node { height: u(ROW), align_items: AlignItems::Center, ..default() }).with_children(|row| {
-                row.spawn((Node { width: u(LABEL), ..default() }, Text::new(name), TextFont { font_size: crate::interface::font_units(13.0), ..default() }, TextColor(amber(255.0))));
+                row.spawn((Node { width: u(LABEL), ..default() }, Text::new(name), TextFont { font_size: crate::interface::font_units(13.0), ..default() }, crate::vector_font::SharpText, TextColor(amber(255.0))));
                 row.spawn(Node { width: u(WIDTH - LABEL), height: u(BAR), column_gap: u(GAP), ..default() }).with_children(|segs| {
                     for k in 0..SEGMENTS {
                         segs.spawn((

@@ -5,8 +5,9 @@
 //! The text is the game's font 7 (`baked-in_monofonto_large.fnt`, the HUD's corner
 //! messages' font) set as glyphs of its texture as the HUD sets it
 //! (`nvf_play::interface::set_line`), at [`TEXT_SCALE`] of the HUD's size and the UI
-//! scale; without the game's font (no game data) Bevy's own font stands in, in the same
-//! layout. Labels are drawn dim and values full in the HUD's colour
+//! scale, or in the sharp font as the HUD while the Menu Font row says Sharp
+//! (`nvf_play::vector_font::screen_face`); without the game's font (no game data) Bevy's
+//! own font stands in, in the same layout. Labels are drawn dim and values full in the HUD's colour
 //! (`nvf_play::interface::amber`, so the settings' HUD colour holds here too); a row that
 //! warns gets its label at full brightness and a `!` mark beside it, never another
 //! colour [design: issue #1868].
@@ -70,22 +71,37 @@ const GRAPH_PX: (u32, u32) = (8, 2048);
 #[derive(Component)]
 pub(super) struct PanelRoot;
 
-/// What the panel is drawn with: font 7 (or its stand-in).
+/// What the panel is drawn with: font 7 (or its stand-in), in the sharp font while the Menu
+/// Font row says Sharp (`nvf_play::vector_font::screen_face`).
 pub(super) struct Kit {
     face: Face,
     /// Whether there was game data to read the font from; a kit made without it is made
     /// again once the data is there.
     pub(super) had_data: bool,
+    /// The letters it was made in (`nvf_play::vector_font::letters`): made again on a change.
+    pub(super) letters: u32,
     mark_width: f32,
+    /// Where the rows' letters stand under their tops: font 7's, in either letters, so the
+    /// sharp ones stand on the game's line.
+    base: f32,
 }
 
 impl Kit {
     pub(super) fn load(data: Option<&GameData>, images: &mut Assets<Image>, formats: Option<&CompressedImageFormatSupport>) -> Kit {
         // Font 7 [documented: Fallout_default.ini `sFontFile_7`]; the stand-in as the
         // corner messages' (`nvf_play::corner_messages`).
-        let face = face(FONT_FILES[6], plain_font(36.0, 17.0), data, images, bc_supported(formats));
+        let letters = nvf_play::vector_font::letters();
+        let raster = face(FONT_FILES[6], plain_font(36.0, 17.0), data, images, bc_supported(formats));
+        let base = line_base(&raster);
+        let face = nvf_play::vector_font::screen_face(raster, FONT_FILES[6], images);
         let mark_width = face.font.width(MARK);
-        Kit { had_data: data.is_some(), face, mark_width }
+        Kit { had_data: data.is_some(), letters, face, mark_width, base }
+    }
+
+    /// Whether lines are set in the face (the game's glyphs or the sharp font), not Bevy's
+    /// stand-in font.
+    fn set(&self) -> bool {
+        self.face.image.is_some() || self.face.vector.is_some()
     }
 }
 
@@ -135,7 +151,7 @@ pub(super) fn spawn(commands: &mut Commands, kit: &Kit, rows: &[Row], measured: 
     let Measured { values, label_column } = measured;
     let label_column = *label_column;
     let pitch = font.size;
-    let base = line_base(&kit.face);
+    let base = kit.base;
     let node = Node {
         position_type: PositionType::Absolute,
         top,
@@ -169,9 +185,10 @@ pub(super) fn spawn(commands: &mut Commands, kit: &Kit, rows: &[Row], measured: 
                     }
                 });
                 line.spawn(Node { width: u(value.width), height: u(pitch), ..default() }).with_children(|cell| {
-                    match kit.face.image {
-                        Some(_) => set_line(cell, &kit.face, value, 0.0, base, amber(VALUE)),
-                        None => stand_in(cell, kit, &row.value, 0.0, base, amber(VALUE)),
+                    if kit.set() {
+                        set_line(cell, &kit.face, value, 0.0, base, amber(VALUE));
+                    } else {
+                        stand_in(cell, kit, &row.value, 0.0, base, amber(VALUE));
                     }
                 });
             });
@@ -202,12 +219,11 @@ fn tabular(font: &Font, s: &str) -> Line {
 
 /// A line of text in a cell: the game's glyphs, or the stand-in's text.
 fn text(cell: &mut ChildSpawnerCommands, kit: &Kit, s: &str, x: f32, base: f32, color: Color) {
-    match kit.face.image {
-        Some(_) => {
-            let line = kit.face.font.lines(s, None).into_iter().next().unwrap_or_default();
-            set_line(cell, &kit.face, &line, x, base, color);
-        }
-        None => stand_in(cell, kit, s, x, base, color),
+    if kit.set() {
+        let line = kit.face.font.lines(s, None).into_iter().next().unwrap_or_default();
+        set_line(cell, &kit.face, &line, x, base, color);
+    } else {
+        stand_in(cell, kit, s, x, base, color);
     }
 }
 

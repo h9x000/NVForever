@@ -1673,6 +1673,7 @@ impl Plugin for PausePlugin {
         // (`crate::vector_font::screen_face`); a faded vector line's glow fades with it.
         app.add_systems(PreUpdate, crate::vector_font::follow_menu_font);
         app.add_systems(PostUpdate, crate::interface::glow_follows_ink.before(bevy::ui::UiSystems::Layout));
+        app.add_systems(PostUpdate, crate::vector_font::follow_sharp_texts.before(bevy::ui::UiSystems::Prepare));
         app.add_observer(draw_boxed);
         app.init_resource::<Paused>()
             .init_resource::<PageRequest>()

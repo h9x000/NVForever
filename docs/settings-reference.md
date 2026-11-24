@@ -553,9 +553,14 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   labels, the weapon and companion wheels), the dialogue, message, container and barter,
   crafting, repair, wait, character creation, level-up and tutorial menus, the loading
   screens' tips, the credits and the minigames (lockpick, blackjack, roulette, slots, Caravan,
-  poker). Each game font is drawn at the em that gives its capitals font 7's size relation
-  (31 units for font 7's 30-unit 'H'), Futura Caps (font 8) bold and in capitals; dark words
-  (black on a lit bar) get no glow. Left in the game's font: the Pip-Boy's pages and the
+  poker), and the frame rate overlay. Each game font is drawn at the em that gives its
+  capitals font 7's size relation (31 units for font 7's 30-unit 'H'), Futura Caps (font 8)
+  bold and in capitals, each line moved right by as much as the game font's letters start
+  into their pictures (their glow's margin, read from the pictures: about 6 units in font 7,
+  8 in font 8) so it starts where the game's did [owner's test, 2026-11-24]; dark words
+  (black on a lit bar) get no glow. NVForever's pieces in Bevy's own font (the sneak gauges'
+  labels, the location markers' names) follow the row too (`vector_font::SharpText`) [owner
+  2026-11-24]. Left in the game's font: the Pip-Boy's pages and the
   terminals (their letters are on a screen in the world), the menus drawn from the game's
   menu files (`[UI] TileMenus`), and the controller buttons' labels (pictures).
   [design: owner 2026-11-23, "Only menus/hud/minigames"]
