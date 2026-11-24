@@ -126,10 +126,22 @@ out-of-range and nonnumeric conversion needs a game probe. These cases are not
 qualified for native parity. The accepted generic setter's explicit invalid
 weapon-argument fallback remains unchanged pending behavioral evidence.
 
-[hypothesis] The spelling `SetCritDam` is not established by the consulted public
-function documentation or accepted catalogue. Keep its registration open pending
-an original-game command-identity capture; identity alone will not establish wire
-encoding. This note does not import FOSE opcode numbers into New Vegas.
+[observed: 2026-11-23, `GSDocMitchellHouse` (`0x00103DF9`), Fallout: New Vegas
+1.4.0.525 + xNVSE 6.4.9 with the 10 official base masters, clean-room black-box
+script probes `b3_core_02_setcritdam_alias_check` (`GetWeaponCritDamage rW` ->
+`SetCritDam 55 rW` -> `22.0 -> 55.0` on `Weap10mmPistol` `0x0000434F`) and
+`w1_2704_setcritdam_alias` (`SetCritDam 77 r10mm` -> `22 -> 77`; swapped
+`SetCritDam r10mm 77` -> `COMPILE_FAIL`; `Player.SetCritDam 88` -> `22 -> 88`;
+and with `Player.SetAV CritChance 100`, live 10mm critical shots at baseline
+`critDmg=22` -> `GetHitBaseWeaponDamage = 44.000` vs `SetCritDam 200 r10mm` ->
+`222.000`, `+178`; reproducible via `#3678` / PR `#3679`, `tools/capture/nvse/`);
+no DLL or source consulted] `SetCritDam` is a live alias for `SetWeaponCritDamage`
+with identical argument order (`[ref.]SetCritDam <int> [weapon]`). `SetCritDam` is
+registered as an unnumbered alias of `SetWeaponCritDamage` in
+`crates/fnv-script/data/encodings.json` (`compiler.aliases`, `#2704`);
+wiki-generated `schemas/script/functions.json` is left untouched. [hypothesis]
+Native wire/opcode encoding remains uncaptured; this note does not import FOSE
+opcode numbers into New Vegas.
 
 [design] Overrides retain this module's existing session lifetime: save/load
 resets them, and a weapon clone without its own override reads its source

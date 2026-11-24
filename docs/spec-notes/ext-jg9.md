@@ -51,7 +51,7 @@ sounds are UIPipBoyHolotapeStart and UIPipBoyHolotapeStop [observed: FalloutNV.e
 ## 3. Terminal menu items
 
 AddTerminalMenuItem `terminal` adds a new, empty item [documented], at the end
-[hypothesis]. RemoveTerminalMenuItem `terminal index` removes one [documented]; the items
+[observed: Fallout: New Vegas 1.4.0.525 + xNVSE 6.4.9 + JohnnyGuitarNVSE 528 with the 10 official base masters, clean-room script probe jg_33_add_remove_terminal_menu_item (AddTerminalMenuItem/RemoveTerminalMenuItem): 1,1; no DLL or source consulted]. RemoveTerminalMenuItem `terminal index` removes one [documented]; the items
 after it move up, with a script's changes to them (Set…TerminalMenuItem…, `nvse_jg3`).
 What stands at each position is kept for the session (`terminal::slots`); every reader of
 a terminal's items goes through it. An open menu holds positions, so a removal also asks
