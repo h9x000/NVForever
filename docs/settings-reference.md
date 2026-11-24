@@ -562,7 +562,8 @@ off by default, saved in `NVForever.ini` `[Settings]` [design: #3305]).
   labels, the location markers' names) follow the row too (`vector_font::SharpText`) [owner
   2026-11-24]. Left in the game's font: the Pip-Boy's pages and the
   terminals (their letters are on a screen in the world), the menus drawn from the game's
-  menu files (`[UI] TileMenus`), and the controller buttons' labels (pictures).
+  menu files (`[UI] TileMenus`) but the quantity prompt ("How many?", tile-drawn by default:
+  `tiles::draw::Target::sharp`, owner 2026-11-24), and the controller buttons' labels (pictures).
   [design: owner 2026-11-23, "Only menus/hud/minigames"]
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`

@@ -184,11 +184,22 @@ pub fn tallest_glyph(font: &Font) -> f32 {
     }
 }
 
+impl TileFonts {
+    /// Font `number`'s face for a text: the sharp one when `sharp` and made
+    /// ([`FontKit::ensure_sharp`]), else the game's.
+    fn text_face(&self, number: u8, sharp: bool) -> Option<&Face> {
+        sharp.then(|| self.sharp.get(&number)).flatten().or_else(|| self.faces.get(&number))
+    }
+}
+
 /// The game's fonts by number, read when first asked for (the renderer and the text widths
 /// written back share them).
 #[derive(Resource, Default)]
 pub struct TileFonts {
     faces: HashMap<u8, Face>,
+    /// The faces in the sharp font (`crate::vector_font::sharp_face`), made from `faces` when a
+    /// menu drawn in them is painted ([`Target::sharp`]).
+    sharp: HashMap<u8, Face>,
     /// Extended `NVSE\Plugins\xfonts\*.txt` slots discovered once when `GameData` is
     /// available [design: fonts.md §4.1].
     extra: Option<BTreeMap<u8, String>>,
@@ -260,6 +271,16 @@ impl FontKit<'_> {
 
     pub(crate) fn face(&self, font: f64) -> Option<&Face> {
         self.fonts.faces.get(&self.font_number(font))
+    }
+
+    /// Each face read so far in the sharp font too ([`TileFonts::sharp`]).
+    fn ensure_sharp(&mut self) {
+        let numbers: Vec<u8> = self.fonts.faces.keys().filter(|n| !self.fonts.sharp.contains_key(n)).copied().collect();
+        for n in numbers {
+            let path = face_slot_path(n, self.fonts.extra.as_ref()).to_string();
+            let sharp = crate::vector_font::sharp_face(self.fonts.faces[&n].clone(), &path, &self.images);
+            self.fonts.sharp.insert(n, sharp);
+        }
     }
 
     pub(crate) fn images_mut(&mut self) -> &mut Assets<Image> {
@@ -912,25 +933,34 @@ pub struct Target {
     /// HUD, whose places are written for the scaled view, and a camera's image, which keeps
     /// its size: its picture is what scales) [design: #1631].
     pub frame: Option<Vec2>,
+    /// Its texts in the sharp font (`crate::vector_font::sharp`): the quantity prompt's while
+    /// the Menu Font row says Sharp [design: owner 2026-11-24, "make the How many prompt sharp
+    /// too"]. A change paints every piece again.
+    pub sharp: bool,
 }
 
 impl Target {
     /// In the window, at `scale` logical pixels to an interface unit.
     pub fn window(scale: f32, z: i32) -> Target {
-        Target { camera: None, canvas: None, scale, image_scale: 1.0, z, frame: None }
+        Target { camera: None, canvas: None, scale, image_scale: 1.0, z, frame: None, sharp: false }
     }
 
     /// An image a camera renders: `canvas` is the part of it the pieces lie on. The image
     /// is as many logical pixels as interface units (`crate::pipboy::TARGET`), so one unit
     /// is one logical pixel whatever `image_scale` is [design: pipboy.rs, its module notes].
     pub fn image(camera: Entity, canvas: Vec2, image_scale: f32, z: i32) -> Target {
-        Target { camera: Some(camera), canvas: Some(canvas), scale: 1.0, image_scale, z, frame: None }
+        Target { camera: Some(camera), canvas: Some(canvas), scale: 1.0, image_scale, z, frame: None, sharp: false }
     }
 
     /// A menu in the window drawn at the UI scale in a frame kept at `anchor`
     /// ([`Target::frame`]).
     pub fn in_frame(self, anchor: Vec2) -> Target {
         Target { frame: Some(anchor), ..self }
+    }
+
+    /// Its texts in the sharp font when `on` ([`Target::sharp`]).
+    pub fn sharp_letters(self, on: bool) -> Target {
+        Target { sharp: on, ..self }
     }
 
     /// Whether a root made for `self` serves `other`: the same camera, area, level and frame.
@@ -1104,6 +1134,8 @@ pub fn piece_crop(piece: &Piece) -> (f64, f64) {
 /// What setting a piece out reads besides the piece.
 struct Ctx<'a> {
     fonts: &'a TileFonts,
+    /// The texts in [`TileFonts::sharp`] ([`Target::sharp`]).
+    sharp: bool,
     /// The PlayStation button pictures, drawn in a hint's place [design, #1829].
     glyphs: &'a crate::pad::PadGlyphs,
     /// Logical pixels to an interface unit.
@@ -1212,7 +1244,7 @@ fn spawn_unturned(p: &mut ChildSpawnerCommands, piece: &Piece, ctx: &Ctx<'_>, pi
         }
         Look::Model { .. } => Some(model::spawn(p, node, piece.tile, model?, colour)),
         Look::Text { string, font, wrap, alignment } => {
-            let face = ctx.fonts.faces.get(font)?;
+            let face = ctx.fonts.text_face(*font, ctx.sharp)?;
             let id = p
                 .spawn((node, Pickable::IGNORE))
                 .with_children(|t| {
@@ -1456,7 +1488,10 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
             paint(&mut commands, drawn, pieces, Target::window(scale * interface::menu_scale(), z), Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
             continue;
         }
-        paint(&mut commands, drawn, pieces, Target::window(scale * interface::menu_scale(), z).in_frame(anchor), Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
+        // The quantity prompt in the sharp font while the Menu Font row says Sharp.
+        let sharp = name == super::menus::QUANTITY_MENU && crate::vector_font::sharp();
+        let target = Target::window(scale * interface::menu_scale(), z).in_frame(anchor).sharp_letters(sharp);
+        paint(&mut commands, drawn, pieces, target, Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
     }
     *blur = blur_now;
     pipboy_pages(&mut commands, game, &mut view, &mut kit, (&mut others.stats, &mut others.inventory, &mut others.map), &mut nodes, heading, &glyphs);
@@ -2069,7 +2104,10 @@ pub(crate) fn paint(commands: &mut Commands, drawn: &mut Drawn, mut pieces: Vec<
             };
             made.push((i, picture, baked, strip, model));
         }
-        let ctx = Ctx { fonts: &kit.fonts, glyphs, scale, heading };
+        if target.sharp {
+            kit.ensure_sharp();
+        }
+        let ctx = Ctx { fonts: &kit.fonts, sharp: target.sharp, glyphs, scale, heading };
         for (i, picture, baked, strip, model) in made {
             let piece = &pieces[i];
             let key = keys[i];
@@ -3311,6 +3349,24 @@ mod tests {
 
         extra.insert(42, "textures\\fonts\\custom_42.fnt".to_string());
         assert_eq!(resolve_font_number(42.0, &extra), 42);
+    }
+
+    #[test]
+    fn the_quantity_prompt_is_painted_again_in_the_sharp_letters() {
+        // A flip of the Menu Font row is another target: every piece painted again.
+        let plain = Target::window(1.0, 5).in_frame(Vec2::new(0.5, 0.5));
+        let sharp = plain.sharp_letters(true);
+        assert!(plain != sharp && plain.same_root(&sharp), "the same root, the pieces again");
+        // Its texts take the sharp face once made, the game's until then and when off.
+        let raster = interface::Face { font: plain_font(36.0, 17.0), image: None, vector: None };
+        let mut fonts = TileFonts::default();
+        fonts.faces.insert(7, raster.clone());
+        assert!(fonts.text_face(7, true).is_some_and(|f| f.vector.is_none()), "not made yet: the game's");
+        let m = crate::vector_font::metrics().unwrap();
+        fonts.sharp.insert(7, crate::vector_font::face(m, crate::vector_font::FONT_HANDLE, 31.0, crate::vector_font::REGULAR, 36.0));
+        assert!(fonts.text_face(7, true).is_some_and(|f| f.vector.is_some()));
+        assert!(fonts.text_face(7, false).is_some_and(|f| f.vector.is_none()));
+        assert!(fonts.text_face(6, true).is_none());
     }
 
     #[test]

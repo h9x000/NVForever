@@ -127,9 +127,19 @@ const FONT7_CAP: f32 = 30.0;
 /// as its own letters are. Each line starts where the game font's letters started
 /// ([`ink_leads`]); `images` holds the game font's picture.
 pub fn screen_face(raster: crate::interface::Face, path: &str, images: &Assets<Image>) -> crate::interface::Face {
-    let on = sharp();
-    let leads = if on { raster_leads(&raster, images) } else { Vec::new() };
-    sharpened(raster, path, on, &leads)
+    if sharp() {
+        sharp_face(raster, path, images)
+    } else {
+        raster
+    }
+}
+
+/// [`screen_face`] as it is drawn while [`sharp`], whatever the switch says now: a screen that
+/// keeps both faces and picks one as it draws (the tile-drawn quantity prompt,
+/// `crate::tiles::draw`). `raster` as it is when the sharp font did not read.
+pub fn sharp_face(raster: crate::interface::Face, path: &str, images: &Assets<Image>) -> crate::interface::Face {
+    let leads = raster_leads(&raster, images);
+    sharpened(raster, path, true, &leads)
 }
 
 /// [`screen_face`] with the switch and the game font's [`ink_leads`] given: `raster` as it
