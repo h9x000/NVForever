@@ -614,7 +614,8 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
   pixel), the bars' ticks, the condition bars (their arrows cut out), the compass strip (its
   letters in Roboto Condensed), its actor ticks and its quest, place and player marks, the
   enemy bracket, the experience and radiation meters' brackets and pointers, both crosshair
-  styles and the boxed crosshair, and the prompt's divider; Original keeps the game's pictures
+  styles and the boxed crosshair, the prompt's divider and the corner message's bracket (the HP
+  and AP labels bold); Original keeps the game's pictures
   [design: owner 2026-11-27 and the test of that day, `crate::vector_hud`].
   The game's font has only its code page's 256 letters: where the chosen language's are not
   among them (Russian on an English install, whose page is Windows-1252) Original draws

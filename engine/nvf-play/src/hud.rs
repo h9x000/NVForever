@@ -993,6 +993,25 @@ struct PipRow {
     /// The row's width (interface units) and its tick count.
     width: f32,
     count: usize,
+    /// In vector: where its first tick starts and its last ends, from the row's left, and how
+    /// far over the row its ticks stand, in units ([`vector_fit`]).
+    fit: [f32; 3],
+}
+
+/// The room between a vector bar's ticks and its bracket's lines at either end, and over the
+/// enemy's line: a line's thickness (`crate::vector_hud::LINE`) at the ends, 2 units over the
+/// line as the health and action points ticks stand over theirs (`METER_GAP` less the 2 units
+/// `LINE_Y` is into the line) [design: owner's test of 2026-11-27, "make the HP/AP points fit
+/// perfectly on both sides", the enemy's "bigger space on the left and they overlay the
+/// bottom line of the decoration"].
+const FIT_GAP: f32 = crate::vector_hud::LINE;
+const ENEMY_LIFT: f32 = 2.0;
+
+/// A vector bar's ticks' span for a row standing at `row_x` of its piece between `from` and
+/// `to` (its bracket's upright or mark and its step cap or other mark), [`FIT_GAP`] in from
+/// each, lifted by `lift`.
+fn vector_fit(row_x: f32, from: f32, to: f32, lift: f32) -> [f32; 3] {
+    [from + FIT_GAP - row_x, to - FIT_GAP - row_x, lift]
 }
 
 /// A tick of a bar, `index` from the bar's left end.
@@ -1026,12 +1045,46 @@ struct ConditionRow;
 #[derive(Component)]
 struct AmmoText;
 
-/// A fixed label of the HUD ("HP", "AP"): where it is drawn, so [`relabel`] can draw it again.
-#[derive(Component)]
+/// A fixed label of the HUD ("HP", "AP"): where it is drawn, so [`relabel`] can draw it again:
+/// from `x`, or ending at `end`; in the sharp font's bold when `bold`.
+#[derive(Component, Clone, Copy)]
 struct HudLabel {
     text: &'static str,
     x: f32,
+    end: Option<f32>,
     base: f32,
+    bold: bool,
+}
+
+impl HudLabel {
+    fn at(text: &'static str, x: f32, base: f32) -> HudLabel {
+        HudLabel { text, x, end: None, base, bold: false }
+    }
+
+    /// Draw it in `face` (its bold while sharp and `bold`) [design: owner's test of
+    /// 2026-11-27, "make HP and AP bold"].
+    fn draw(&self, p: &mut ChildSpawnerCommands, face: &Face, color: Color) {
+        let face = if self.bold { bold_face(face) } else { face.clone() };
+        if let Some(line) = face.font.lines(self.text, None).into_iter().next() {
+            let x = self.end.map_or(self.x, |end| end - line.width);
+            set_line(p, &face, &line, x, self.base, color);
+        }
+    }
+}
+
+/// The bold of a sharp face (`crate::vector_font::BOLD`), measured as bold, its letters
+/// standing where the face's do; a raster face as it is.
+fn bold_face(face: &Face) -> Face {
+    match (&face.vector, crate::vector_font::metrics()) {
+        (Some(v), Some(m)) => {
+            let mut bold = crate::vector_font::face_with(m, v.font.clone(), v.em, crate::vector_font::BOLD, face.font.size, v.caps);
+            if let Some(b) = bold.vector.as_mut() {
+                b.shift = v.shift;
+            }
+            bold
+        }
+        _ => face.clone(),
+    }
 }
 
 /// The HUD's fixed labels drawn again in the new letters when they change
@@ -1050,11 +1103,7 @@ fn relabel(
     let _hud = crate::interface::hud_units();
     let face_ = face_.get_or_make(|| screen_face(FONT, plain_font(36.0, 15.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
     for (e, l) in &labels {
-        commands.entity(e).despawn_related::<Children>().with_children(|p| {
-            if let Some(line) = face_.font.lines(l.text, None).into_iter().next() {
-                set_line(p, face_, &line, l.x, l.base, amber(255.0));
-            }
-        });
+        commands.entity(e).despawn_related::<Children>().with_children(|p| l.draw(p, face_, amber(255.0)));
     }
 }
 
@@ -1071,8 +1120,9 @@ struct SneakText;
 
 /// A bar's row of ticks at `x`, `y` (`width` long); the ticks are set in it on whole
 /// pixels by [`pips`].
-fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32, count: usize, color: Color) {
-    p.spawn((PipRow { bar, color, width, count }, at(x, y, width, TICK.y)));
+#[allow(clippy::too_many_arguments)]
+fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32, count: usize, color: Color, fit: [f32; 3]) {
+    p.spawn((PipRow { bar, color, width, count, fit }, at(x, y, width, TICK.y)));
 }
 
 /// A condition bar in vector (`crate::vector_hud`), shown while Sharp in place of the plain
@@ -1119,9 +1169,9 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
     let places = Places::new(&art.font.font);
     let color = amber(255.0);
     let font = &art.font.font;
-    let label = |p: &mut ChildSpawnerCommands, text: &'static str, x: f32, base: f32| {
+    let label = |p: &mut ChildSpawnerCommands, l: HudLabel| {
         // In a holder of its own, drawn again when the letters change ([`relabel`]).
-        p.spawn((HudLabel { text, x, base }, at(0.0, 0.0, 0.0, 0.0))).with_children(|p| set_line(p, &art.font, &font.lines(text, None).remove(0), x, base, color));
+        p.spawn((l, at(0.0, 0.0, 0.0, 0.0))).with_children(|p| l.draw(p, &art.font, color));
     };
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     commands.spawn((HudRoot, screen.clone(), Visibility::Hidden, Pickable::IGNORE)).with_children(|root| {
@@ -1130,8 +1180,9 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         root.spawn((screen.clone(), Pickable::IGNORE, crate::hud_readability::HudSize(crate::hud_readability::Part::Health))).with_children(|wrapper| {
           wrapper.spawn((HpPiece, piece.clone(), DrawnByTiles)).with_children(|p| {
             spawn_bracket(p, &art.left_bracket, 0.0, &[LEFT_UPRIGHT], color, Decoration::LeftBracket);
-            label(p, HP, places.hp_label, UPPER_BASE);
-            spawn_row(p, Bar::Health, places.hp_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS));
+            label(p, HudLabel { bold: true, ..HudLabel::at(HP, places.hp_label, UPPER_BASE) });
+            let fit = vector_fit(places.hp_meter, crate::vector_hud::CORNER_UPRIGHT_INNER, crate::vector_hud::CORNER_CAP, 0.0);
+            spawn_row(p, Bar::Health, places.hp_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), fit);
           });
         });
         // The compass is a sibling so changing health size cannot resize its marks.
@@ -1183,10 +1234,13 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         root.spawn((screen.clone(), Pickable::IGNORE, crate::hud_readability::HudSize(crate::hud_readability::Part::ActionPoints))).with_children(|wrapper| {
           wrapper.spawn((ApPiece, piece, DrawnByTiles)).with_children(|p| {
             spawn_bracket(p, &art.right_bracket, RIGHT_BRACKET_X, &[RIGHT_UPRIGHT, DIVIDER], color, Decoration::RightBracket);
-            spawn_row(p, Bar::ActionPoints, places.ap_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS));
-            label(p, AP, places.ap_label, UPPER_BASE);
+            // The right bracket is the left turned over within `CORNER_TURN`.
+            let turned = |x: f32| RIGHT_BRACKET_X + crate::vector_hud::CORNER_TURN - x;
+            let fit = vector_fit(places.ap_meter, turned(crate::vector_hud::CORNER_CAP), turned(crate::vector_hud::CORNER_UPRIGHT_INNER), 0.0);
+            spawn_row(p, Bar::ActionPoints, places.ap_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), fit);
+            label(p, HudLabel { end: Some(AP_LABEL_END), bold: true, ..HudLabel::at(AP, places.ap_label, UPPER_BASE) });
             p.spawn((ConditionRow, at(0.0, 0.0, DIVIDER, AP_PANEL.y), Visibility::Inherited)).with_children(|row| {
-                label(row, CND, places.cnd_label, LOWER_BASE);
+                label(row, HudLabel::at(CND, places.cnd_label, LOWER_BASE));
                 row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS)), OriginalOnly));
                 let fill = row.spawn((ConditionBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS)), OriginalOnly)).id();
                 sharp_bar(row, &places, fill);
@@ -1208,7 +1262,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
                 }
             });
             p.spawn((ArmorRow, at(0.0, ARMOR_DROP, DIVIDER, AP_PANEL.y), Visibility::Hidden)).with_children(|row| {
-                label(row, ARM, places.cnd_label, LOWER_BASE);
+                label(row, HudLabel::at(ARM, places.cnd_label, LOWER_BASE));
                 row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS)), OriginalOnly));
                 let fill = row.spawn((ArmorBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS)), OriginalOnly)).id();
                 sharp_bar(row, &places, fill);
@@ -1246,7 +1300,9 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
                 }
             }
             let (from, to) = (bx + ENEMY_MARKS.0, bx + ENEMY_MARKS.1);
-            spawn_row(p, Bar::Enemy, from, by + ENEMY_LINE_Y - ENEMY_METER_GAP - TICK.y, to - from, ENEMY_PIPS, red);
+            let marks = crate::vector_hud::ENEMY_MARK_SIDES;
+            let fit = vector_fit(from, bx + marks.0, bx + marks.1, ENEMY_LIFT);
+            spawn_row(p, Bar::Enemy, from, by + ENEMY_LINE_Y - ENEMY_METER_GAP - TICK.y, to - from, ENEMY_PIPS, red, fit);
             p.spawn((EnemyName, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
             p.spawn((EnemyStats, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
         });
@@ -1261,10 +1317,6 @@ struct StripOriginal(Option<StripTexels>);
 /// The compass strip's letters while Sharp, over the vector rail: moved with the strip.
 #[derive(Component)]
 struct StripLetters;
-
-/// A letter of the strip while Sharp: its middle in the doubled strip, in units.
-#[derive(Component, Clone, Copy)]
-struct StripLetter(f32);
 
 /// The eight directions' letters [hypothesis: the strip's letters; the game's own words for
 /// them are not in its settings].
@@ -1287,9 +1339,9 @@ fn letter_halves(face: Option<&Face>) -> [f32; 8] {
 
 /// **The compass strip in vector while Sharp** (`crate::vector_hud`): the window baked from
 /// the vector rail drawn at the view's pixels ([`crate::vector_hud::compass_rail`]) instead
-/// of the game's strip, its right end faded as ever (`crate::compass_strip`), and the
-/// letters in the sharp font over it, moved with the strip and each as strong as the fade
-/// at its middle; the game's strip again while Original. Only a strip baked from the
+/// of the game's strip, not faded at its right end [design: owner's test of 2026-11-27,
+/// "disable the fade at the end of the compass"], and the letters in the sharp font over
+/// it, moved with the strip; the game's strip again while Original. Only a strip baked from the
 /// game's texels changes (without them the strip is the moving one, `StripNode::Moving`).
 #[allow(clippy::type_complexity, clippy::too_many_arguments)]
 fn sharp_strip(
@@ -1300,7 +1352,6 @@ fn sharp_strip(
     mut images: ResMut<Assets<Image>>,
     mut strips: Query<(&mut Strip, &mut ImageNode, &mut Node, &ChildOf), Without<StripLetters>>,
     mut holders: Query<(Entity, &mut Node), (With<StripLetters>, Without<Strip>)>,
-    mut letters: Query<(&StripLetter, &mut TextColor)>,
     mut drawn: Local<Option<(bool, u32)>>,
 ) {
     let _hud = crate::interface::hud_units();
@@ -1326,6 +1377,8 @@ fn sharp_strip(
                 original.0.clone()
             };
             let Some(baked) = texels.and_then(|t| StripWindow::new(t, COMPASS.x, view.heading, &mut images)) else { continue };
+            // The vector strip runs whole to the window's end.
+            let baked = if sharp { baked.unfaded(&mut images) } else { baked };
             info!("compass: the strip drawn {} ({} x {} texels)", if sharp { "in vector" } else { "from the game's picture" }, baked.texels().0, baked.texels().1);
             image.image = baked.image();
             let size = baked.size();
@@ -1339,8 +1392,7 @@ fn sharp_strip(
                         let name = DIRECTIONS[i % 8];
                         let middle = (i % 8) as f32 * STRIP.x / 8.0 + crate::vector_hud::LETTER_OFFSET + (i / 8) as f32 * STRIP.x;
                         let Some(line) = face.font.lines(name, None).into_iter().next() else { continue };
-                        let colour = amber(255.0).with_alpha(crate::compass_strip::fade(strip_left(view.heading) + middle));
-                        crate::interface::set_marked(s, face, &line, middle - line.width / 2.0, crate::vector_hud::LETTER_BASE, colour, StripLetter(middle));
+                        crate::interface::set_marked(s, face, &line, middle - line.width / 2.0, crate::vector_hud::LETTER_BASE, amber(255.0), ());
                     }
                 });
             });
@@ -1353,12 +1405,6 @@ fn sharp_strip(
     for (_, mut node) in &mut holders {
         if node.left != u(left) {
             node.left = u(left);
-        }
-    }
-    for (letter, mut colour) in &mut letters {
-        let alpha = crate::compass_strip::fade(left + letter.0);
-        if (colour.0.alpha() - alpha).abs() > 1e-3 {
-            colour.0.set_alpha(alpha);
         }
     }
 }
@@ -1508,7 +1554,15 @@ fn pips(
             vector_ticks.clear();
         }
         for (e, row) in &rows {
-            let (first, lefts, width) = row_ticks(row.bar, row.width * height / 960.0, step, width, row.count, sharp);
+            // In vector the ticks fill their span between the bracket's lines exactly, first
+            // tick to last ([`vector_fit`]).
+            let (first, lefts, width) = if sharp {
+                let [from, to, _] = row.fit;
+                let (lefts, width) = tick_lefts(((to - from) * scale).round(), width, row.count);
+                ((from * scale).round(), lefts, width)
+            } else {
+                row_ticks(row.bar, row.width * height / 960.0, step, width, row.count, false)
+            };
             let shape = sharp.then(|| {
                 vector_ticks
                     .entry([width.to_bits(), row_px.to_bits(), margin.to_bits(), scale.to_bits()])
@@ -1519,7 +1573,8 @@ fn pips(
                 for (index, left) in lefts.iter().enumerate() {
                     let pip = Pip { bar: row.bar, index };
                     if let Some(shape) = &shape {
-                        let node = Node { position_type: PositionType::Absolute, left: px(first + left - margin), top: px(-margin), width: px(width + 2.0 * margin), height: px(row_px + 2.0 * margin), ..default() };
+                        let top = -margin - (row.fit[2] * scale).round();
+                        let node = Node { position_type: PositionType::Absolute, left: px(first + left - margin), top: px(top), width: px(width + 2.0 * margin), height: px(row_px + 2.0 * margin), ..default() };
                         r.spawn((pip, node, ImageNode { color: row.color, ..ImageNode::new(shape.clone()) }));
                         continue;
                     }
@@ -1997,6 +2052,29 @@ mod tests {
         // 1229-1232 with the upright at 1234).
         let (first, lefts, w) = row_ticks(Bar::ActionPoints, 222.0, 6.0, 5.0, PIPS, false);
         assert_eq!((first, lefts[1], lefts[PIPS - 1] + w), (0.0, 6.0, 221.0));
+    }
+
+    /// In vector a bar's ticks stand a line's thickness from its bracket's lines at both ends,
+    /// the action points' as the health's turned over.
+    #[test]
+    fn in_vector_the_ticks_fit_between_the_brackets_lines() {
+        let places = Places::new(&plain_font(36.0, 15.0));
+        let hp = vector_fit(places.hp_meter, crate::vector_hud::CORNER_UPRIGHT_INNER, crate::vector_hud::CORNER_CAP, 0.0);
+        let turned = |x: f32| RIGHT_BRACKET_X + crate::vector_hud::CORNER_TURN - x;
+        let ap = vector_fit(places.ap_meter, turned(crate::vector_hud::CORNER_CAP), turned(crate::vector_hud::CORNER_UPRIGHT_INNER), 0.0);
+        // The same span, the gaps alike at both ends.
+        assert!(((hp[1] - hp[0]) - (ap[1] - ap[0])).abs() < 1e-3);
+        assert_eq!(places.hp_meter + hp[0] - crate::vector_hud::CORNER_UPRIGHT_INNER, FIT_GAP);
+        assert_eq!(crate::vector_hud::CORNER_CAP - (places.hp_meter + hp[1]), FIT_GAP);
+        assert!((places.ap_meter + ap[0] - turned(crate::vector_hud::CORNER_CAP) - FIT_GAP).abs() < 1e-3);
+        // At any size the first tick starts and the last ends on the span's ends.
+        for lines in [720.0, 1080.0, 1215.0, 2160.0] {
+            let s = lines / 960.0;
+            let (_, width) = tick_pixels(lines);
+            let (lefts, w) = tick_lefts(((hp[1] - hp[0]) * s).round(), width, PIPS);
+            assert_eq!(lefts[0], 0.0);
+            assert_eq!(lefts[PIPS - 1] + w, ((hp[1] - hp[0]) * s).round());
+        }
     }
 
     /// In vector the action points' row is the health row's mirror: its first tick a clear

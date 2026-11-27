@@ -238,7 +238,9 @@ fn spawn_area(commands: &mut Commands, note: &Note, kit: &mut Kit, data: Option<
         let [x, y, w, h] = BRACKET;
         match bracket {
             Some(p) => {
-                a.spawn((at(x, y, w, h), picture(p, faint), Part(BRACKET_STRENGTH)));
+                // In vector while Sharp (`crate::vector_hud`) [design: owner's test of
+                // 2026-11-27, "the top item notification decoration is still not vector"].
+                a.spawn((at(x, y, w, h), picture(p, faint), Part(BRACKET_STRENGTH), crate::vector_hud::Decor::new(crate::vector_hud::Decoration::MessageBracket)));
             }
             // Without the game's picture: a line across and a shorter one down.
             None => {

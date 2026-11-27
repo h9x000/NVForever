@@ -84,8 +84,14 @@ impl StripTexels {
 /// The window's `columns` texels of `strip` from its texel `offset`, wrapping at the
 /// strip's end, each column's alpha times the fade at its middle.
 pub fn bake(strip: &StripTexels, offset: usize, columns: usize) -> Vec<u8> {
+    bake_faded(strip, offset, columns, true)
+}
+
+/// [`bake`], its right end faded only when `faded` (the vector strip is not,
+/// `crate::hud`'s `sharp_strip`).
+pub fn bake_faded(strip: &StripTexels, offset: usize, columns: usize, faded: bool) -> Vec<u8> {
     let per = strip.per_unit();
-    let alpha: Vec<f32> = (0..columns).map(|x| fade((x as f32 + 0.5) / per)).collect();
+    let alpha: Vec<f32> = (0..columns).map(|x| if faded { fade((x as f32 + 0.5) / per) } else { 1.0 }).collect();
     let mut out = Vec::with_capacity(columns * strip.height * 4);
     for y in 0..strip.height {
         let row = y * strip.width;
@@ -107,6 +113,9 @@ pub struct StripWindow {
     /// A SetUIAlphaMap mask over the window, its alpha times each baked texel's
     /// (`tiles::texmod::strip`, #1833).
     mask: Option<std::sync::Arc<crate::tiles::texmod::Texels>>,
+    /// Its right end faded ([`fade`]); not the vector strip's [design: owner's test of
+    /// 2026-11-27, "disable the fade at the end of the compass"].
+    faded: bool,
 }
 
 impl StripWindow {
@@ -125,7 +134,17 @@ impl StripWindow {
         let mut image = Image::new(size, TextureDimension::D2, bake(&strip, offset, columns), TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
         // Linear across the stretched texels, as `crate::repeat`'s [design].
         image.sampler = ImageSampler::linear();
-        Some(StripWindow { strip, columns, offset, image: images.add(image), mask: None })
+        Some(StripWindow { strip, columns, offset, image: images.add(image), mask: None, faded: true })
+    }
+
+    /// The window without its right end's fade, baked again in place.
+    pub fn unfaded(mut self, images: &mut Assets<Image>) -> StripWindow {
+        self.faded = false;
+        let texels = self.texels_at(self.offset);
+        if let Some(mut image) = images.get_mut(&self.image) {
+            image.data = Some(texels);
+        }
+        self
     }
 
     /// The window under `mask` (none: as it is), stretched over its texels and kept for
@@ -158,7 +177,7 @@ impl StripWindow {
 
     /// The window's texels from the strip's texel `offset`, under the mask when it has one.
     fn texels_at(&self, offset: usize) -> Vec<u8> {
-        let mut texels = bake(&self.strip, offset, self.columns);
+        let mut texels = bake_faded(&self.strip, offset, self.columns, self.faded);
         if let Some(m) = &self.mask {
             crate::tiles::texmod::masked(&mut texels, self.columns, &m.rgba, m.width);
         }
@@ -251,6 +270,14 @@ mod tests {
         assert_eq!((fade(0.0), fade(273.0), fade(307.0), fade(341.0), fade(400.0)), (1.0, 1.0, 0.5, 0.0, 0.0));
         // The second row is faded the same.
         assert_eq!(column(&baked, COMPASS.x as usize + 307).1, alpha(307));
+    }
+
+    #[test]
+    fn an_unfaded_window_is_whole_to_its_end() {
+        let mut images = Assets::<Image>::default();
+        let window = StripWindow::new(strip(), COMPASS.x, 0.0, &mut images).unwrap().unfaded(&mut images);
+        let data = images.get(&window.image()).and_then(|i| i.data.clone()).unwrap();
+        assert!((0..COMPASS.x as usize).all(|x| column(&data, x).1 == 255));
     }
 
     #[test]

@@ -539,10 +539,13 @@ pub enum Decoration {
     /// The prompt's line across with its stem (`glow_hud_bottom_info_seperator_divider`,
     /// 512 x 128).
     PromptDivider,
+    /// The corner message's bracket (`glow_messages_seperator_left.dds`, 512 x 256 over
+    /// 470 x 192, `crate::corner_messages`): a line across its top and one down its left.
+    MessageBracket,
 }
 
 impl Decoration {
-    pub const ALL: [Decoration; 22] = [
+    pub const ALL: [Decoration; 23] = [
         Decoration::LeftBracket,
         Decoration::RightBracket,
         Decoration::EnemyBracket,
@@ -565,6 +568,7 @@ impl Decoration {
         Decoration::GunLeft,
         Decoration::GunRight,
         Decoration::PromptDivider,
+        Decoration::MessageBracket,
     ];
 
     /// The shape, in its picture's box.
@@ -592,9 +596,12 @@ impl Decoration {
             Decoration::CrossLeft => Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]),
             Decoration::CrossRight => Shape { flip_x: Some(32.0), ..Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]) },
             Decoration::CrossFilled => {
-                // The box's left side, its arms stopping short of the middle, and the left
-                // chevron; the right half the left's mirror.
-                let parts = vec![rect(14.5, 20.5, 14.5 + LINE, 41.5), rect(14.5, 20.5, 28.0, 20.5 + LINE), rect(14.5, 41.5 - LINE, 28.0, 41.5), chevron()];
+                // The box's left side, its arms stopping short of the middle, a line's
+                // thickness clear of the chevron all round, and the left chevron; the right
+                // half the left's mirror [design: owner's test of 2026-11-27, "make sure they
+                // do not touch the crosshair"].
+                let (x0, top, bottom) = (13.0, 18.9, 44.1);
+                let parts = vec![rect(x0, top, x0 + LINE, bottom), rect(x0, top, 27.0, top + LINE), rect(x0, bottom - LINE, 27.0, bottom), chevron()];
                 Shape { mirror_x: Some(32.0), ..Shape::new(Vec2::splat(64.0), parts) }
             }
             // The bar's middle line 2.5 units in, its inner end at the picture's edge toward
@@ -604,6 +611,12 @@ impl Decoration {
             Decoration::GunLeft => Shape::new(Vec2::new(32.0, 8.0), vec![rect(12.0, 1.0, 32.0, 1.0 + LINE)]),
             Decoration::GunRight => Shape { flip_x: Some(32.0), ..Decoration::GunLeft.shape() },
             Decoration::PromptDivider => prompt_divider(),
+            // [observed: the picture's line rows 14-17 from x 33 and its upright x 33-36 down to
+            // row 178, both faded at their far ends; here ending sharply where they fade]
+            Decoration::MessageBracket => {
+                let (x, y) = (33.0 * 470.0 / 512.0, 14.0 * 0.75);
+                Shape::new(Vec2::new(470.0, 192.0), vec![rect(x, y, 430.0, y + LINE), rect(x, y, x + LINE, 130.0)])
+            }
         }
     }
 }
@@ -616,11 +629,22 @@ const QUEST: [(f32, f32); 8] = [(19.5, 7.5), (31.0, 21.0), (31.0, 44.0), (28.0, 
 /// A place's triangle [observed: `glow_hud_compass_landmark(_discovered).dds`, rows 8-20].
 const PLACE: [(f32, f32); 3] = [(19.5, 7.5), (30.5, 21.0), (8.5, 21.0)];
 
-/// The crosshair's left arrow, pointing in to its tip 2.5 units left of the middle
-/// [observed: `glow_crosshair.dds`, rows 26-36, the tip at texel 30].
+/// The crosshair's left arrow, pointing in [observed: `glow_crosshair.dds`, rows 26-36],
+/// standing as far from the right one as it is wide (its tip 4.4 units left of the middle,
+/// [`CHEVRON_TIP`]) [design: owner's test of 2026-11-27, "the crosshair should have some
+/// space between them by default - make the space the same as it the width of the arrow";
+/// the picture's tips are 2 units either side of the middle].
 fn chevron() -> Part {
-    polyline(&[(24.0, 26.0), (29.5, 31.5), (24.0, 37.0)], LINE)
+    let a = CHEVRON_LEFT;
+    polyline(&[(a, 26.0), (a + 5.5, 31.5), (a, 37.0)], LINE)
 }
+
+/// The chevron's left points: its ends' outer corners stand `LINE / 2 / sqrt 2` left of them
+/// and its tip's outer point `5.5 + LINE / sqrt 2` right, so it is 8.7 units wide and
+/// stands 8.7 from its mirror at 20.
+const CHEVRON_LEFT: f32 = 20.0;
+/// How far the chevron's tip stands from the crosshair's middle, in units.
+pub const CHEVRON_TIP: f32 = 32.0 - (CHEVRON_LEFT + 5.5 + LINE * std::f32::consts::FRAC_1_SQRT_2);
 
 /// The width the right bracket is turned over in: its upright's outer side at 380 - 13.5 =
 /// 366.5 units into its picture, 4 in from its piece's edge (`crate::hud`'s
@@ -635,6 +659,14 @@ pub const CORNER_TURN: f32 = 380.0;
 /// from its cap and upright as the health bar from its own [design: owner 2026-11-27, "make
 /// sure the decoration on the right/left are identical"]; in place of the notch, its divider
 /// at 204 (here 176) with the lower line broken beside it [observed].
+/// The left corner bracket's upright's inner side and its step cap's upright side, in its
+/// picture's units ([`corner`]); the right bracket's are these turned over within
+/// [`CORNER_TURN`].
+pub const CORNER_UPRIGHT_INNER: f32 = 13.5 + LINE;
+pub const CORNER_CAP: f32 = 316.0;
+/// The enemy bracket's two marks' upright sides, in its picture's units ([`enemy_bracket`]).
+pub const ENEMY_MARK_SIDES: (f32, f32) = (55.0 * 500.0 / 512.0, 307.0 * 500.0 / 512.0);
+
 fn corner(right: bool) -> Shape {
     let (u0, top, bottom, end) = (13.5, 64.0, 69.0, 358.0);
     let mut parts = vec![
@@ -996,6 +1028,32 @@ mod tests {
             }
             let (top, bottom) = (ink(&Decoration::GunTop.shape(), s), ink(&Decoration::GunBottom.shape(), s));
             assert!((0..top.height).all(|y| row(&top, y) == row(&bottom, top.height - 1 - y)), "scale {s}: the gun bars");
+        }
+    }
+
+    #[test]
+    fn the_crosshairs_arrows_stand_their_width_apart_and_clear_of_the_box() {
+        let s = 2.0;
+        let left = ink(&Decoration::CrossLeft.shape(), s);
+        let row = (31.5 * s) as usize;
+        let l = &left;
+        let lit: Vec<usize> = (0..l.height).flat_map(|y| (0..l.width).filter(move |&x| l.at(x, y) > 0.0)).collect();
+        let (lo, hi) = (*lit.iter().min().unwrap() as f32, *lit.iter().max().unwrap() as f32 + 1.0);
+        // The gap to the mirror (twice the tip's room to the middle) is the arrow's width.
+        let gap = 2.0 * (left.width as f32 - hi);
+        assert!((gap - (hi - lo)).abs() <= 2.0, "gap {gap} width {}", hi - lo);
+        assert!(left.at(left.width - 1, row) == 0.0);
+        // The boxed crosshair: no pixel of the box touches the arrow (a clear pixel between).
+        let b = ink(&Decoration::CrossFilled.shape(), s);
+        let arrow = ink(&Shape::new(Vec2::splat(64.0), vec![chevron()]), s);
+        for y in 1..b.height - 1 {
+            for x in 1..b.width / 2 {
+                if arrow.at(x, y) > 0.0 {
+                    continue;
+                }
+                let near = (y - 1..=y + 1).any(|v| (x - 1..=x + 1).any(|u| arrow.at(u, v) > 0.0));
+                assert!(!(near && b.at(x, y) > 0.0), "the box touches the arrow at {x}, {y}");
+            }
         }
     }
 

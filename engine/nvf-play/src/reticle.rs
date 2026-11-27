@@ -126,9 +126,24 @@ const FIGURE_GAP: f32 = 8.0;
 /// (`sInventoryWeightUpper`, `sInventoryValue`), as the Pip-Boy's cards read them: the load
 /// order's text, else NVForever's own label (`fnv_ui::strings::BUILT_IN`) [design, #4495:
 /// in place of the abbreviations read from the original's screen].
-fn weight_word() -> &'static str {
-    crate::pipboy::labels::built_in_label("sInventoryWeightUpper")
+/// The weight's word in the prompt only its first letter a capital, as the value's word
+/// ("Weight", not the card's "WEIGHT") [design: owner's test of 2026-11-27, "WEIGHT is all
+/// caps but it should have only first letter as capital in this prompt"].
+fn weight_word() -> String {
+    first_capital(crate::pipboy::labels::built_in_label("sInventoryWeightUpper"))
 }
+
+/// `word` with its first letter a capital and the rest small.
+fn first_capital(word: &str) -> String {
+    let mut chars = word.chars();
+    chars.next().map_or_else(String::new, |c| c.to_uppercase().chain(chars.flat_map(char::to_lowercase)).collect())
+}
+
+/// How far the divider and the figures under it stand nearer the name while the letters are
+/// sharp, in units: the sharp letters stand higher in their line than the game font's, which
+/// left a wide gap over the divider [design: owner's test of 2026-11-27, "the space between
+/// the decoration and drinking glass/item name text is too big"].
+const SHARP_RAISE: f32 = 8.0;
 
 fn value_word() -> &'static str {
     crate::pipboy::labels::built_in_label("sInventoryValue")
@@ -298,7 +313,7 @@ pub(crate) fn layout_inked(p: &Prompt, font: &Font, ink: &Ink) -> Layout {
     let divider = p.figures.as_ref().map(|[weight, value]| {
         let top = name_base + DIVIDER_BELOW;
         let base = top + FIGURES_BELOW;
-        let (weight, value, wg, val) = (line(weight), line(value), line(weight_word()), line(value_word()));
+        let (weight, value, wg, val) = (line(weight), line(value), line(&weight_word()), line(value_word()));
         // The weight ends against the stem; its word starts at its place, or further left
         // when the two would meet. The value's word starts by the stem; the value ends at
         // its place, or further right after its word.
@@ -695,7 +710,17 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
 fn spawn_texts(p: &mut ChildSpawnerCommands, kit: &Kit, prompt: &Prompt) {
     let color = if prompt.crime { crime_colour() } else { amber(255.0) };
     let color = if prompt.grey { color.with_alpha(GREY) } else { color };
-    let l = layout_inked(prompt, &kit.face.font, &kit.ink);
+    let mut l = layout_inked(prompt, &kit.face.font, &kit.ink);
+    // The sharp letters: the divider and its figures (the last four texts) nearer the name.
+    if kit.face.vector.is_some() {
+        if let Some(corner) = l.divider.as_mut() {
+            corner.y -= SHARP_RAISE;
+            let n = l.texts.len();
+            for set in &mut l.texts[n.saturating_sub(4)..] {
+                set.base -= SHARP_RAISE;
+            }
+        }
+    }
     if let (Some(corner), Some(picture)) = (l.divider, kit.divider.clone()) {
         p.spawn((at(corner.x, corner.y, DIVIDER_SIZE.x, DIVIDER_SIZE.y), picture_node(picture, color), Decor::new(Decoration::PromptDivider)));
     }
@@ -866,7 +891,9 @@ fn draw(
             place(&mut node, bar_rect(b.dir, gap));
         }
     }
-    let shift = (*spread - TIP).max(0.0);
+    // The vector arrows' tips stand further from the middle (`crate::vector_hud::CHEVRON_TIP`).
+    let tip = if crate::vector_font::sharp() { crate::vector_hud::CHEVRON_TIP } else { TIP };
+    let shift = (*spread - tip).max(0.0);
     for (c, mut v, mut node, image) in &mut crosses {
         v.set_if_neq(show(!view_hidden && !locks.movement && c.filled == aimed && (c.filled || !cross)));
         if let Some(mut image) = image.filter(|i| i.color != colour) {
@@ -1016,7 +1043,7 @@ mod tests {
         assert_eq!(value.x + value.line.width, STEM_X + VALUE_END);
         // The words are the item stats display's settings: NVForever's labels with no plugin's.
         let width = |s: &str| font().lines(s, None)[0].width;
-        assert_eq!((wg.line.width, val.line.width), (width("WEIGHT"), width("Value")));
+        assert_eq!((wg.line.width, val.line.width), (width("Weight"), width("Value")));
     }
 
     #[test]
