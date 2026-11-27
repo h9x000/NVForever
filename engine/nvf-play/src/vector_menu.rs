@@ -65,11 +65,30 @@ pub enum Dir {
 pub struct Drawing {
     pub size: Vec2,
     pub parts: Vec<Part>,
+    /// The box's backing ([`Drawing::fill`]), baked on the lines' own pixels.
+    pub fills: Vec<Rect>,
 }
 
 impl Drawing {
     pub fn new(w: f32, h: f32) -> Drawing {
-        Drawing { size: Vec2::new(w, h), parts: Vec::new() }
+        Drawing { size: Vec2::new(w, h), parts: Vec::new(), fills: Vec::new() }
+    }
+
+    /// The box's backing from `(x0, y0)` to `(x1, y1)`: plain black at the Box Background
+    /// row's darkness, drawn under the lines on the same pixels, so it ends where they end
+    /// [design: owner 2026-11-27, "the box background is aligned correctly to the end of the
+    /// line on one end of box but ends before the line ends on the other end - fix for all
+    /// boxes, background always ends with the lines"; a backing node of its own was rounded
+    /// to the pixel apart from the lines' picture].
+    /// The drawing without its backing (drawn before, [`spawn_backing`]).
+    pub fn without_fills(mut self) -> Drawing {
+        self.fills.clear();
+        self
+    }
+
+    pub fn fill(mut self, x0: f32, y0: f32, x1: f32, y1: f32) -> Drawing {
+        self.fills.push(Rect::new(x0, y0, x1, y1));
+        self
     }
 
     /// A line across from `x0` to `x1`, its top edge on `y`.
@@ -176,12 +195,69 @@ pub fn picture(d: &Drawing, images: &mut Assets<Image>) -> Handle<Image> {
     map.entry(key).or_insert_with(|| images.add(vector_hud::image(&d.shape(margin), scale))).clone()
 }
 
+/// `d`'s backing ([`Drawing::fill`]) baked white where it covers, on the pixels `d`'s lines
+/// take ([`vector_hud::Snap`]: an edge where a line ends is that line's pixel).
+pub fn backing_picture(d: &Drawing, images: &mut Assets<Image>) -> Handle<Image> {
+    use bevy::asset::RenderAssetUsages;
+    use bevy::image::ImageSampler;
+    use bevy::render::render_resource::{Extent3d, TextureDimension, TextureFormat};
+    let scale = px_per_unit();
+    let margin = vector_hud::glow_reach();
+    let key = format!("fill|{:?}|{}", d, scale.to_bits());
+    let mut kept = BAKED.lock().unwrap_or_else(|e| e.into_inner());
+    let map = kept.get_or_insert_with(HashMap::new);
+    if map.len() > KEPT {
+        map.clear();
+    }
+    map.entry(key)
+        .or_insert_with(|| {
+            let shape = d.shape(margin);
+            let snap = vector_hud::Snap::new(&shape, scale);
+            let (w, h) = vector_hud::pixels(&shape, scale);
+            let mut rgba = vec![0u8; w * h * 4];
+            for r in &d.fills {
+                let (x0, x1) = (snap.edge(0, r.min.x + margin).max(0.0) as usize, (snap.edge(0, r.max.x + margin).max(0.0) as usize).min(w));
+                let (y0, y1) = (snap.edge(1, r.min.y + margin).max(0.0) as usize, (snap.edge(1, r.max.y + margin).max(0.0) as usize).min(h));
+                for y in y0..y1 {
+                    for x in x0..x1 {
+                        rgba[(y * w + x) * 4..(y * w + x) * 4 + 4].copy_from_slice(&[255, 255, 255, 255]);
+                    }
+                }
+            }
+            let size = Extent3d { width: w as u32, height: h as u32, depth_or_array_layers: 1 };
+            let mut image = Image::new(size, TextureDimension::D2, rgba, TextureFormat::Rgba8UnormSrgb, RenderAssetUsages::default());
+            image.sampler = ImageSampler::nearest();
+            images.add(image)
+        })
+        .clone()
+}
+
 /// Draw `d` with its top left at `x, y` (interface units, from the parent's top left),
-/// tinted `color`: its picture over a box the glow's reach larger on every side.
+/// tinted `color`: its picture over a box the glow's reach larger on every side, its
+/// backing ([`Drawing::fill`]) under it on the same box.
 pub fn spawn(p: &mut ChildSpawnerCommands, d: &Drawing, x: f32, y: f32, color: Color, images: &mut Assets<Image>) -> Entity {
     let m = vector_hud::glow_reach();
+    let node = at(x - m, y - m, d.size.x + 2.0 * m, d.size.y + 2.0 * m);
+    if !d.fills.is_empty() {
+        let back = backing_picture(d, images);
+        p.spawn((node.clone(), backing_node(back), Pickable::IGNORE));
+    }
     let image = picture(d, images);
-    p.spawn((at(x - m, y - m, d.size.x + 2.0 * m, d.size.y + 2.0 * m), ImageNode { color, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, Pickable::IGNORE)).id()
+    p.spawn((node, ImageNode { color, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, Pickable::IGNORE)).id()
+}
+
+/// `d`'s backing alone ([`Drawing::fill`]) at `x, y`, on the pixels `d`'s lines take: for a
+/// box whose words are set before its lines are drawn (the lines then drawn with
+/// [`Drawing::without_fills`]).
+pub fn spawn_backing(p: &mut ChildSpawnerCommands, d: &Drawing, x: f32, y: f32, images: &mut Assets<Image>) -> Entity {
+    let m = vector_hud::glow_reach();
+    let back = backing_picture(d, images);
+    p.spawn((at(x - m, y - m, d.size.x + 2.0 * m, d.size.y + 2.0 * m), backing_node(back), Pickable::IGNORE)).id()
+}
+
+/// The backing's picture node: black at the Box Background row's darkness.
+fn backing_node(image: Handle<Image>) -> ImageNode {
+    ImageNode { color: box_shade(), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }
 }
 
 /// A box's backing: plain black at the Box Background row's darkness, sharp-edged, over the
@@ -262,6 +338,22 @@ mod tests {
         let thick_h = (0..mask.height).filter(|&y| lit(mask.width / 2, y)).count();
         let thick_v = (0..mask.width).filter(|&x| lit(x, mid_y)).count();
         assert_eq!(thick_h, thick_v, "top + bottom as thick as left + right");
+    }
+
+    #[test]
+    fn a_boxs_backing_ends_on_its_lines_pixels() {
+        // At 1.125 pixels a unit, the frame's outer edges and the backing's are one pixel.
+        let d = Drawing::new(210.0, 100.0).frame(4.0, 4.0, 204.3, 94.7).fill(4.0, 4.0, 204.3, 94.7);
+        let m = vector_hud::glow_reach();
+        let shape = d.shape(m);
+        let snap = vector_hud::Snap::new(&shape, 1.125);
+        let mask = vector_hud::ink(&shape, 1.125);
+        let row = mask.height / 2;
+        let last_lit = (0..mask.width).rev().find(|&x| mask.at(x, row) >= 0.5).unwrap();
+        assert_eq!(snap.edge(0, 204.3 + m) as usize, last_lit + 1, "the backing's right edge is the line's");
+        let col = mask.width / 2;
+        let last_lit = (0..mask.height).rev().find(|&y| mask.at(col, y) >= 0.5).unwrap();
+        assert_eq!(snap.edge(1, 94.7 + m) as usize, last_lit + 1, "the backing's foot is the line's");
     }
 
     #[test]

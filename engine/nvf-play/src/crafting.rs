@@ -119,6 +119,8 @@ const TITLE_ARROW_X: f32 = 30.0;
 /// the arrows"].
 const ARROW_GAP: f32 = 6.0;
 const LINE_GAP: f32 = 5.0;
+/// The room the recipe box's top line leaves each side of its first heading's ink.
+const HEADING_GAP: f32 = 10.0;
 
 /// The recipe box's words: the headings in the titles' font at `HEADING_X`; under each its
 /// entries (where it is made, the skill, the ingredients), all in the rows' font, from
@@ -937,13 +939,13 @@ fn bracket_drawing(w: f32, h: f32, open: (f32, f32)) -> Drawing {
     if to < w {
         d = d.hline(to, w, 0.0);
     }
-    d.vline(0.0, 0.0, vector_menu::STUB).vline_left(w, 0.0, vector_menu::STUB).bracket_up(0.0, w, foot)
+    d.vline(0.0, 0.0, vector_menu::STUB).vline_left(w, 0.0, vector_menu::STUB).bracket_up(0.0, w, foot).fill(0.0, 0.0, w, foot)
 }
 
 /// A card's lines (the weight and value under the list): a line along its top, `w` long,
 /// and a short side `side` down at its right, the corner joined.
 fn card_drawing(w: f32, side: f32) -> Drawing {
-    Drawing::new(w, side).hline(0.0, w, 0.0).vline_left(w, 0.0, side)
+    Drawing::new(w, side.max(CARD_H)).hline(0.0, w, 0.0).vline_left(w, 0.0, side).fill(0.0, 0.0, w, CARD_H)
 }
 
 /// The highlight box round a row `w` by `h`, in the kit's lines.
@@ -959,8 +961,19 @@ struct TitlePlace {
     /// The arrows' left edges.
     left: f32,
     right: f32,
-    /// The arrows' top.
+    /// The arrows' top, from the box's top line.
     arrow_top: f32,
+    /// The title's top for `text`, from the title's node (`TITLE_ABOVE` over the top line).
+    text_top: f32,
+}
+
+/// Where a box's title stands for `text`, from its node `TITLE_ABOVE` over the box's top
+/// line: its capitals' middle on the line's middle, as the message boxes' titles stand in
+/// theirs [design: owner 2026-11-27, "fix the crafting at alignment"; the titles stood on the
+/// line, their foot under it].
+fn title_top(face: &Face) -> f32 {
+    let s = face.scale;
+    crate::chargen::draw::cap_base(face, TITLE_ABOVE + thick() / 2.0, s) - face.font.size * 0.8 * s
 }
 
 /// The list's title and its arrows: the left arrow `TITLE_ARROW_X` in, the title's ink
@@ -973,10 +986,9 @@ fn title_place(face: &Face, title: &str) -> TitlePlace {
     let line = face.font.lines(title, None).into_iter().next().unwrap_or_default();
     let (l, r) = crate::chargen::draw::ink_span(face, &line);
     let text_x = TITLE_ARROW_X + vector_menu::ARROW.x + ARROW_GAP - l * s;
-    // `text` stands the line `size × 0.8` under its top.
-    let base = -TITLE_ABOVE + face.font.size * 0.8 * s;
-    let mid = crate::chargen::draw::cap_mid(face, base, s);
-    TitlePlace { text_x, left: TITLE_ARROW_X, right: text_x + r * s + ARROW_GAP, arrow_top: mid - vector_menu::ARROW.y / 2.0 }
+    // The capitals' middle on the top line's middle (`title_top`), the arrows' with it.
+    let mid = thick() / 2.0;
+    TitlePlace { text_x, left: TITLE_ARROW_X, right: text_x + r * s + ARROW_GAP, arrow_top: mid - vector_menu::ARROW.y / 2.0, text_top: title_top(face) }
 }
 
 /// The recipe box's sections from its top: each heading's top and its entries' tops, the
@@ -1045,11 +1057,14 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
         root.spawn(left).with_children(|m| {
             let bright = color(Shade::Bright);
             let sharp = vector_menu::on();
-            // The boxes' backings first, under everything else (the sheet's note above).
-            vector_menu::backing(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, 480.0 + thick());
-            vector_menu::backing(m, RIGHT_AT.x, RIGHT_AT.y, BOX_WIDTH, 515.0 + thick());
-            for k in 0..2 {
-                vector_menu::backing(m, CARDS_X + k as f32 * CARD_STEP, CARDS_Y, CARD_W, CARD_H);
+            // The boxes' backings first, under everything else (the sheet's note above); in
+            // vector baked with each box's lines instead, so they end where the lines end.
+            if !sharp {
+                vector_menu::backing(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, 480.0 + thick());
+                vector_menu::backing(m, RIGHT_AT.x, RIGHT_AT.y, BOX_WIDTH, 515.0 + thick());
+                for k in 0..2 {
+                    vector_menu::backing(m, CARDS_X + k as f32 * CARD_STEP, CARDS_Y, CARD_W, CARD_H);
+                }
             }
             // The list's box: "◀ RECIPES ▶" in the top line.
             let tw = look.title.width(&v.title);
@@ -1057,7 +1072,7 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             let arrow = vector_menu::ARROW;
             brackets(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, ITEMS_AT.y + 480.0, (place.left - LINE_GAP, place.right + arrow.x + LINE_GAP), images);
             // Spawn the title hit zone first so left/right arrow buttons sit above it in UiStack.
-            m.spawn((Button, RecipeButton::Title, at(ITEMS_AT.x + place.text_x, ITEMS_AT.y - TITLE_ABOVE, (tw + 4.0).max(80.0), 56.0))).with_children(|t| text(t, &look.title, &v.title, 0.0, 0.0, bright));
+            m.spawn((Button, RecipeButton::Title, at(ITEMS_AT.x + place.text_x, ITEMS_AT.y - TITLE_ABOVE, (tw + 4.0).max(80.0), 56.0))).with_children(|t| text(t, &look.title, &v.title, 0.0, place.text_top, bright));
             // The arrows: the kit's triangles with the sharp letters, else the game's pictures.
             if sharp || look.arrows.is_some() {
                 let hit_w = 52.0;
@@ -1170,8 +1185,11 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             // from the original's screen].
             let [made_at, skill_needed, ingredients] =
                 ["sMadeAt", "sSkillRequirement", "sIngredients"].map(crate::pipboy::labels::built_in_label);
-            let mw = look.title.width(made_at);
-            brackets(m, rx, RIGHT_AT.y, BOX_WIDTH, RIGHT_AT.y + 515.0, (25.0, HEADING_X + mw + 20.0), images);
+            // The top line open round the first heading by its ink, as much room each side.
+            let first = look.title.font.lines(made_at, None).into_iter().next().unwrap_or_default();
+            let (il, ir) = crate::chargen::draw::ink_span(&look.title, &first);
+            let ts = look.title.scale;
+            brackets(m, rx, RIGHT_AT.y, BOX_WIDTH, RIGHT_AT.y + 515.0, (HEADING_X + il * ts - HEADING_GAP, HEADING_X + ir * ts + HEADING_GAP), images);
             // The headings and their entries (`sections`): every entry in the rows' font from
             // the same left edge.
             let dim = amber(NOT_READY);
@@ -1197,7 +1215,9 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             let ingredients_at = parts.len() - 1;
             m.spawn(at(rx, RIGHT_AT.y - TITLE_ABOVE, BOX_WIDTH, 600.0)).with_children(|b| {
                 for (k, ((heading, entries), (top, tops))) in parts.iter().zip(&places).enumerate() {
-                    text(b, &look.title, heading, HEADING_X, *top, bright);
+                    // The first heading in the top line, centred on it (`title_top`).
+                    let top = if k == 0 { title_top(&look.title) } else { *top };
+                    text(b, &look.title, heading, HEADING_X, top, bright);
                     for (idx, ((s, c), y)) in entries.iter().zip(tops).enumerate() {
                         if let Some(img) = icons.get(idx).filter(|_| k == ingredients_at).cloned().flatten() {
                             // On the first line's capitals, as the text.
@@ -1548,10 +1568,11 @@ mod tests {
             let right_gap = p.right - ink_r;
             assert!((left_gap - ARROW_GAP).abs() < 1e-4 && (right_gap - ARROW_GAP).abs() < 1e-4, "{left_gap} {right_gap}");
             assert_eq!(p.left, TITLE_ARROW_X, "the left arrow stays");
-            // The arrows' middle on the capitals' middle.
-            let base = -TITLE_ABOVE + f.font.size * 0.8 * f.scale;
+            // The capitals' middle on the top line's middle, the arrows' with it.
+            let base = p.text_top + f.font.size * 0.8 * f.scale - TITLE_ABOVE;
             let mid = crate::chargen::draw::cap_mid(&f, base, f.scale);
-            assert!((p.arrow_top + vector_menu::ARROW.y / 2.0 - mid).abs() < 1e-4);
+            assert!((mid - thick() / 2.0).abs() < 1e-3, "{mid}");
+            assert!((p.arrow_top + vector_menu::ARROW.y / 2.0 - mid).abs() < 1e-3);
         }
     }
 

@@ -334,8 +334,7 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockVi
                 if crate::vector_menu::on() {
                     // Sharp: the bracket's two lines joined in the corner, ending square,
                     // over the boxes' backing (`crate::vector_menu`).
-                    crate::vector_menu::backing(b, 0.0, 0.0, INFO.x, INFO.y);
-                    crate::vector_menu::spawn(b, &info_lines(), 0.0, 0.0, bright, c.images);
+                    crate::vector_menu::spawn(b, &info_lines().fill(0.0, 0.0, INFO.x, INFO.y), 0.0, 0.0, bright, c.images);
                 } else {
                     c.image(b, "interface\\shared\\line\\fade_to_top.dds", at(0.0, 0.0, THICK, FADE), bright);
                     c.image(b, "interface\\shared\\line\\solid.dds", at(0.0, FADE - THICK, THICK, INFO.y - FADE), bright);

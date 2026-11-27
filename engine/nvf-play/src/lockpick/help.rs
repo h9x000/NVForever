@@ -376,7 +376,11 @@ pub fn spawn_clear(r: &mut ChildSpawnerCommands, c: &mut Ctx, help: &Help, view_
         let up = "interface\\shared\\line\\fade_to_top.dds";
         let bottom = h - TOP;
         if sharp {
-            crate::vector_menu::backing(b, SIDE, TOP, w - 2.0 * SIDE, bottom - TOP);
+            // The backing first, under the words, on the frame's own pixels (its outer lines
+            // do not move with the title's room) [owner 2026-11-27, "background always ends with
+            // the lines"].
+            let probe = frame_drawing(w, h, (SIDE + CORNER, SIDE + CORNER), (SIDE + CORNER, SIDE + CORNER)).fill(SIDE, TOP, w - SIDE, bottom);
+            crate::vector_menu::spawn_backing(b, &probe, 0.0, 0.0, c.images);
         }
         // The top: corners, title, the line on to the right corner.
         let title_x = SIDE + CORNER + BUFFER;

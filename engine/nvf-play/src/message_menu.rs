@@ -299,8 +299,9 @@ fn outline(b: &mut ChildSpawnerCommands, faces: &Faces, l: &Layout, bright: Colo
         for &(x, len) in &l.top {
             d = d.hline(x, x + len, 0.0);
         }
-        d = d.vline(0.0, 0.0, CORNER).vline_left(l.width, 0.0, CORNER).vline(0.0, h - CORNER, h).vline_left(l.width, h - CORNER, h);
-        b.spawn((frame, BackgroundColor(crate::interface::box_shade()), Pickable::IGNORE)).with_children(|f| {
+        // The backing baked with the lines, on their pixels.
+        d = d.vline(0.0, 0.0, CORNER).vline_left(l.width, 0.0, CORNER).vline(0.0, h - CORNER, h).vline_left(l.width, h - CORNER, h).fill(0.0, 0.0, l.width, h);
+        b.spawn((frame, Pickable::IGNORE)).with_children(|f| {
             crate::vector_menu::spawn(f, &d, 0.0, 0.0, bright, images);
         });
         return;

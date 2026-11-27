@@ -655,12 +655,14 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
 
 - On the page: Where the subtitles and the dialogue's words stand: 0% the bottom of the
   screen, 50% the middle, 100% the top.
-- A slider: 0% to 100% in steps of 1%; 25% by default. The middle of the HUD's subtitles
+- A slider: 0% to 100% in steps of 1%; 20% by default. The middle of the HUD's subtitles
   (their first line's capitals to their last line's foot) and of the dialogue menu's line
   or choices stands that part of the view's height up from its foot, the whole block kept
   15 units (the safe zone) inside the view; the speaker's name stays [design: owner
   2026-11-27, "make it 1-100% while 50% is the exact middle of the screen, 0 is bottom 100
-  is top spanning the whole height of the screen - set 25% as the default"].
+  is top spanning the whole height of the screen"; then "subtitle position 20 should be the
+  new default"]. The dialogue's spoken line is centred on the band, line by line, as the HUD's
+  subtitles are.
 - Registered in `engine/nvf-play/src/interface.rs` (`box_rows`)
 
 ### `sneak-gauges`: Light and noise gauges while sneaking
