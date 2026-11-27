@@ -401,6 +401,8 @@ mod shared_table_tests {
         ("pipboy-blue", "Interface"),
         ("language", "Interface"),
         ("menu-font", "Interface"),
+        ("box-background", "Interface"),
+        ("subtitle-position", "Interface"),
         ("location-load-screens", "Interface"),
         ("head-tracking", "World"),
         ("foot-ik", "World"),

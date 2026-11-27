@@ -97,8 +97,6 @@ const DOWN_MIDDLE: f32 = 35.0;
 const TRACK_TOP: f32 = 60.0;
 const TRACK_BOTTOM: f32 = 52.0;
 const MARKER: f32 = 40.0;
-/// How dark the band makes what is behind it.
-const SHADE: f32 = 0.87;
 /// Between a check's tag and the line.
 pub const TAG_GAP: &str = "  ";
 
@@ -243,8 +241,14 @@ fn text_height(lines: usize) -> f32 {
 /// Where a block `height` high starts: centred on the centring line, but not lower than
 /// the room the safe zone leaves under it.
 fn centred(height: f32, extra: f32) -> f32 {
+    centred_lifted(height, extra, crate::interface::subtitle_lift())
+}
+
+/// [`centred`], `lift` units higher (the Subtitle Position row, `crate::interface::subtitle_lift`;
+/// lower for less than 0), never above the safe zone's top nor lower than its foot allows.
+fn centred_lifted(height: f32, extra: f32, lift: f32) -> f32 {
     let inside = 960.0 - 2.0 * CROP_Y;
-    (inside * CENTRE - height / 2.0).min(inside - height - BOTTOM_ROOM - extra)
+    (inside * CENTRE - height / 2.0 - lift).min(inside - height - BOTTOM_ROOM - extra).max(0.0)
 }
 
 /// One past the last of the whole choices from `from` that fit in `room`, at least one.
@@ -435,7 +439,6 @@ const NAME_FONT: &str = "textures\\fonts\\baked-in_monofonto_large.fnt";
 pub(crate) struct Kit {
     pub(crate) body: Face,
     pub(crate) name: Face,
-    band: Option<Picture>,
     fade_down: Option<Picture>,
     fade_up: Option<Picture>,
     arrow_up: Option<Picture>,
@@ -446,7 +449,6 @@ pub(crate) struct Kit {
 pub(crate) fn load_kit(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Kit {
     let mut pictures = Pictures::load(data);
     let mut picture = |path: &str| pictures.picture(path, data, images, bc);
-    let band = picture("interface\\shared\\background\\solid_black.dds");
     let fade_down = picture("interface\\shared\\line\\fade_to_bottom.dds");
     let fade_up = picture("interface\\shared\\line\\fade_to_top.dds");
     let arrow_up = picture("interface\\shared\\scrollbar\\arrow_up.dds");
@@ -455,7 +457,6 @@ pub(crate) fn load_kit(data: Option<&GameData>, images: &mut Assets<Image>, bc: 
     Kit {
         body: crate::interface::screen_face(BODY_FONT, plain_font(34.0, 17.0), data, images, bc),
         name: crate::interface::screen_face(NAME_FONT, plain_font(36.0, 16.0), data, images, bc),
-        band,
         fade_down,
         fade_up,
         arrow_up,
@@ -530,22 +531,17 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
     if touch {root.insert((TouchNativeRoot,crate::dialogue_touch::PaletteRoot));} else {root.insert(MenuRoot);}
     if let Some(camera)=camera {root.insert(UiTargetCamera(camera));}
     root.with_children(|s| {
+        // The band plain and sharp-edged, as dark as the Box Background row, as Quick Loot's
+        // [design: owner 2026-11-27, "conversation prompts also need the same background as
+        // quickloot"; the game's soft dark picture read as blurred].
         if let Some([x, y, w, h]) = l.band {
-            let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-            match image(kit.band.as_ref(), shade) {
-                Some(i) => s.spawn((at(x, y, w, h), i)),
-                None => s.spawn((at(x, y, w, h), BackgroundColor(shade))),
-            };
+            s.spawn((at(x, y, w, h), BackgroundColor(crate::interface::box_shade())));
         }
         if let Some(n) = &l.name {
             set_line(s, &kit.name, &n.line, n.x, n.base, bright);
         }
         if let Some([x, y, w, h]) = l.hint_back {
-            let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-            match image(kit.band.as_ref(), shade) {
-                Some(i) => s.spawn((at(x, y, w, h), i)),
-                None => s.spawn((at(x, y, w, h), BackgroundColor(shade))),
-            };
+            s.spawn((at(x, y, w, h), BackgroundColor(crate::interface::box_shade())));
         }
         if let Some(hint) = &l.hint {
             crate::pad::set_hint(s, &kit.body, &goodbye_hint(), hint.x, hint.base, bright, glyphs);
@@ -612,14 +608,9 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
                     let h = ch - 1.0;
                     let (line, fill) = if row.short { (short_line(), Color::srgba_u8(62, 0, 0, 82)) } else { (amber(200.0), amber(128.0).with_alpha(0.1)) };
                     let shown = if c.index == selected { Visibility::Inherited } else { Visibility::Hidden };
-                    r.spawn((Frame(c.index), at(0.0, 0.0, cw, h), shown, BackgroundColor(fill))).with_children(|f| {
-                        for fy in [0.0, h - THICK] {
-                            f.spawn((at(0.0, fy, cw, THICK), BackgroundColor(line)));
-                        }
-                        for fx in [0.0, cw - THICK] {
-                            f.spawn((at(fx, THICK, THICK, h - 2.0 * THICK), BackgroundColor(line)));
-                        }
-                    });
+                    // Its lines whole pixels thick, each from its own edge, so all four match
+                    // (`crate::message_menu::box_lines`).
+                    r.spawn((Frame(c.index), at(0.0, 0.0, cw, h), shown, BackgroundColor(fill))).with_children(|f| crate::message_menu::box_lines(f, line));
                     // Said before: as bright as the interface's disabled text (128 of 255).
                     let color = if row.darkened { amber(128.0) } else { bright };
                     for t in &c.lines {
@@ -634,10 +625,12 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
 
 /// What the drawn menu was made from: the menu's view, the first choice shown, the width
 /// in units, the "Goodbye hint" switch, the button labels and the current font revision.
-type MenuKey = (MenuView, usize, u32, bool, crate::pad::Labels, u32);
+type MenuKey = (MenuView, usize, u32, bool, crate::pad::Labels, u32, [u32; 3]);
 
 fn menu_key(view: Option<&MenuView>, creating: bool, first: usize, width: f32, hint: bool) -> Option<MenuKey> {
-    view.filter(|_| !creating).map(|v| (v.clone(), first, width.round() as u32, hint, crate::pad::labels(), crate::cjk_font::revision()))
+    // The letters (the Menu Font row), the box's darkness and the subtitles' place too.
+    let look = [crate::vector_font::letters(), (crate::interface::box_backing() * 100.0).round() as u32, (crate::interface::subtitle_place() * 1000.0).round() as u32];
+    view.filter(|_| !creating).map(|v| (v.clone(), first, width.round() as u32, hint, crate::pad::labels(), crate::cjk_font::revision(), look))
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -691,7 +684,7 @@ fn draw(
         for e in &roots {
             commands.entity(e).despawn();
         }
-        if let Some((view, first, _, hint_on, _, _)) = &key {
+        if let Some((view, first, _, hint_on, _, _, _)) = &key {
             let l = layout(view, *first, selected, width, *hint_on, &kit.body.font, &kit.name.font, &glyphs);
             // One line when the hint appears, or when the switch holds it back.
             let was = shown.as_ref().and_then(|s| s.0.goodbye.then_some(s.3));
@@ -918,6 +911,14 @@ mod tests {
         assert!((s.get)(world));
         (s.set)(world, false);
         assert!(!world.resource::<GoodbyeHint>().0 && !(s.get)(world));
+    }
+
+    #[test]
+    fn the_subtitle_position_lifts_the_block_within_the_safe_zone() {
+        assert_eq!(centred_lifted(76.0, 0.0, 0.0), 706.0, "the original's place");
+        assert_eq!(centred_lifted(76.0, 0.0, 100.0), 606.0, "a hundred units up");
+        assert_eq!(centred_lifted(76.0, 0.0, -200.0), 960.0 - 30.0 - 76.0 - 40.0, "down to the foot's room, no further");
+        assert_eq!(centred_lifted(76.0, 0.0, 2000.0), 0.0, "never above the top");
     }
 
     #[test]

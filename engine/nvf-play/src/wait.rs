@@ -941,11 +941,15 @@ struct SliderTrack;
 #[derive(Component, Clone, Copy)]
 struct WaitButton(Command);
 
-/// The HUD's colour (`crate::interface::AMBER`) [documented: `&hudmain;`]. The first
-/// colour, the slider's line in the screenshot (179, 140, 65), was the HUD colour dimmed
-/// by the screenshot's own brightness [observed: the HP bar of the owner's screenshots is
-/// (255, 182, 66)].
-const AMBER: Color = Color::srgb(crate::interface::AMBER[0], crate::interface::AMBER[1], crate::interface::AMBER[2]);
+/// The HUD's colour [documented: `&hudmain;`]: the one the settings give it
+/// (`crate::interface::amber`), as the other menus draw in. The first colour, the slider's
+/// line in the screenshot (179, 140, 65), was the HUD colour dimmed by the screenshot's own
+/// brightness [observed: the HP bar of the owner's screenshots is (255, 182, 66)]. It was the
+/// default amber itself (`crate::interface::AMBER`), so the menu stayed amber with the HUD
+/// in another colour [observed: the owner's shot of 2026-11-27, the HUD white].
+fn hud() -> Color {
+    crate::interface::amber(255.0)
+}
 /// The fonts by the number the menu file gives them [documented: Fallout_default.ini].
 const TITLE_FONT: usize = 1;
 const HOURS_FONT: usize = 6;
@@ -978,6 +982,11 @@ const MARKER_GAP: f32 = 17.0;
 
 /// A button's width: room for its label, which ends at its right [design].
 const BUTTON_WIDTH: f32 = 200.0;
+/// How far in from the box's right edge the buttons' labels end: the 10 of the interface's
+/// 960 units the other menus' buttons keep from their frame (the recipe menu's Accept and
+/// Exit, `crate::crafting`), in this menu's 720 [design: owner 2026-11-27, "button prompts
+/// are not aligned correctly"; they stood 5 outside the box].
+const BUTTON_RIGHT: f32 = 10.0 * 720.0 / 960.0;
 
 /// A length of the screenshot (720 pixels high) as a part of the view's height, at the UI
 /// scale (`crate::interface::unit_scale`, #1631; at 100% `px / 7.2` exactly).
@@ -986,7 +995,7 @@ fn u(px: f32) -> Val {
 }
 
 fn shade(part: f32) -> Color {
-    AMBER.with_alpha(part)
+    hud().with_alpha(part)
 }
 
 /// The menu's fonts, read when it is first drawn.
@@ -1039,7 +1048,7 @@ fn spawn_menu(commands: &mut Commands) {
             // The outline: a line along the top and the bottom, and at each corner a
             // short side that fades out.
             for y in [0.0, BOX.y - 1.5] {
-                b.spawn((at(0.0, y, BOX.x, 1.5), BackgroundColor(AMBER)));
+                b.spawn((at(0.0, y, BOX.x, 1.5), BackgroundColor(hud())));
             }
             for x in [0.0, BOX.x - 1.5] {
                 for (i, part) in [0.85, 0.55, 0.25].into_iter().enumerate() {
@@ -1050,21 +1059,21 @@ fn spawn_menu(commands: &mut Commands) {
             }
             b.spawn((TitleText, Glyphs::new(TITLE_FONT, false), line(61.0)));
             // The slider: the line, the hour marks on it and the two end marks.
-            b.spawn((at(65.0, LINE_Y, 516.0, 3.0), BackgroundColor(AMBER)));
+            b.spawn((at(65.0, LINE_Y, 516.0, 3.0), BackgroundColor(hud())));
             for k in 1..=MAX_HOURS {
-                b.spawn((at(MARK_X0 + MARK_STEP * k as f32 - 1.0, LINE_Y - 6.0, 2.0, 6.0), BackgroundColor(AMBER)));
+                b.spawn((at(MARK_X0 + MARK_STEP * k as f32 - 1.0, LINE_Y - 6.0, 2.0, 6.0), BackgroundColor(hud())));
             }
             let last = MARK_X0 + MARK_STEP * (MAX_HOURS + 1) as f32;
             for (x, foot) in [(MARK_X0, -7.0), (last, 2.5)] {
-                b.spawn((at(x - 1.25, LINE_Y - 12.0, 2.5, 12.0), BackgroundColor(AMBER)));
-                b.spawn((at(x + foot - 1.25, LINE_Y - 4.0, 7.0, 4.0), BackgroundColor(AMBER)));
+                b.spawn((at(x - 1.25, LINE_Y - 12.0, 2.5, 12.0), BackgroundColor(hud())));
+                b.spawn((at(x + foot - 1.25, LINE_Y - 4.0, 7.0, 4.0), BackgroundColor(hud())));
             }
             // The marker: the lower half of a square standing on its corner.
             let side = MARKER.x / std::f32::consts::SQRT_2;
             b.spawn((Marker, Node { overflow: Overflow::clip(), ..at(0.0, LINE_Y - MARKER_GAP - MARKER.y, MARKER.x, MARKER.y) })).with_children(|m| {
                 m.spawn((
                     at((MARKER.x - side) / 2.0, -side / 2.0, side, side),
-                    BackgroundColor(AMBER),
+                    BackgroundColor(hud()),
                     UiTransform::from_rotation(Rot2::degrees(45.0)),
                 ));
             });
@@ -1073,9 +1082,9 @@ fn spawn_menu(commands: &mut Commands) {
             b.spawn((SliderTrack, Button, RelativeCursorPosition::default(), at(MARK_X0, LINE_Y - 34.0, MARK_STEP * (MAX_HOURS + 1) as f32, 46.0)));
             b.spawn((HoursText, Glyphs::new(HOURS_FONT, false), line(168.0)));
             b.spawn((DateText, Glyphs::new(TIME_FONT, false), line(243.0)));
-            // The two buttons, their right ends a little outside the box's.
+            // The two buttons, their right ends inside the box's as the other menus' are.
             for (y, cmd) in [(205.0, Command::Accept), (243.0, Command::Cancel)] {
-                let node = Node { position_type: PositionType::Absolute, right: u(-5.0), top: u(y - 15.0), width: u(BUTTON_WIDTH), height: u(30.0), ..default() };
+                let node = Node { position_type: PositionType::Absolute, right: u(BUTTON_RIGHT), top: u(y - 15.0), width: u(BUTTON_WIDTH), height: u(30.0), ..default() };
                 b.spawn((Button, WaitButton(cmd), node, Glyphs { color: shade(NORMAL), ..Glyphs::new(BUTTON_FONT, true) }));
             }
         });
@@ -1204,9 +1213,12 @@ fn set_glyphs(
         let mut entity = commands.entity(e);
         entity.despawn_related::<Children>();
         let width = crate::pad::hint_width(face, &g.text, &glyphs);
-        let x = if g.right { w - width } else { (w - width) / 2.0 };
-        // The glyphs stand on a line a little below the middle [design].
-        let base = h / 2.0 + face.font.size * 0.3;
+        // A centred line by its letters' ink, not its advances (`crate::chargen::draw::ink_centre_x`).
+        let x = if g.right { w - width } else { crate::chargen::draw::ink_centre_x(face, &crate::chargen::draw::first_line(&face.font, &g.text), w / 2.0, 1.0) };
+        // The capitals' ink in the line's middle (`crate::chargen::draw::cap_base`), not the
+        // game font's glow nor its size, so in the sharp font too [design]; the date and
+        // Cancel, in one font on one line, share a baseline.
+        let base = crate::chargen::draw::cap_base(face, h / 2.0, 1.0);
         entity.with_children(|p| { crate::pad::set_hint(p, face, &g.text, x, base, now.1, &glyphs); });
         g.drawn = Some(now);
     }
@@ -1269,6 +1281,16 @@ mod tests {
         f = fade_step(f, false, FADE_SECONDS / 4.0);
         assert!((f - 0.75).abs() < 1e-6);
         assert_eq!(fade_step(f, false, 10.0), 0.0);
+    }
+
+    #[test]
+    fn the_menu_takes_the_hud_colour_and_its_buttons_stay_in_the_box() {
+        let _colours = crate::interface::colours_at([255, 255, 255], [26, 255, 128]);
+        assert_eq!(shade(1.0), Color::srgb(1.0, 1.0, 1.0));
+        assert_eq!(shade(NORMAL), Color::srgb(1.0, 1.0, 1.0).with_alpha(NORMAL));
+        // The labels end inside the box's right edge, as far in as the other menus'.
+        assert!((BUTTON_RIGHT * 960.0 / 720.0 - 10.0).abs() < 1e-4);
+        const { assert!(BUTTON_RIGHT > 0.0 && BUTTON_WIDTH + BUTTON_RIGHT < BOX.x) };
     }
 
     #[test]

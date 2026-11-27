@@ -385,8 +385,9 @@ fn draw(
     if panel.view != p || panel.showing != showing {
         panel.show(p, showing);
     }
-    let revision = crate::cjk_font::revision();
-    // A CJK letter's picture made, or new letters (`crate::vector_font::screen_face`).
+    // A CJK letter's picture made, the Subtitle Position row moved (its value in the high
+    // bits), or new letters (`crate::vector_font::screen_face`).
+    let revision = crate::cjk_font::revision().wrapping_add(((crate::interface::subtitle_place() * 1000.0).round() as u32) << 20);
     let font_changed = (std::mem::replace(&mut *font_revision, revision) != revision) | font.stale();
     if subs != *shown || font_changed {
         if let Some(line) = subs.log_change(&shown) {
@@ -396,10 +397,14 @@ fn draw(
             let _hud = crate::interface::hud_units();
             let face = font.get_or_make(|| crate::interface::screen_face(SUBTITLE_FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let lines = subtitle_layout(&subs.on_screen, &face.font);
+            // Centred by their ink (the sharp lines' start shift is for words set from their
+            // start), as high as the Subtitle Position row lifts them.
+            let shift = face.vector.as_ref().map_or(0.0, |v| v.shift);
+            let top = SUBTITLE_BASE - crate::interface::subtitle_lift();
             for area in &areas {
                 commands.entity(area).despawn_related::<Children>().with_children(|a| {
                     for (line, x, base) in &lines {
-                        set_line(a, face, line, *x, SUBTITLE_BASE + *base, amber(255.0));
+                        set_line(a, face, line, *x - shift, top + *base, amber(255.0));
                     }
                 });
             }

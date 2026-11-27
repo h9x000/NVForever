@@ -360,6 +360,128 @@ pub fn font_units(units: f32) -> FontSize {
     FontSize::Vh(units * unit_scale() / 9.6)
 }
 
+/// The view's height in physical pixels and the physical pixels to a logical one, the bits
+/// of two `f32`s, kept by [`follow_view`] for [`line`].
+static VIEW_PX: AtomicU32 = AtomicU32::new(0);
+static VIEW_SCALE: AtomicU32 = AtomicU32::new(0x3F80_0000);
+
+/// Keep the view's size for [`line`].
+pub fn follow_view(windows: Query<&Window, With<bevy::window::PrimaryWindow>>) {
+    if let Ok(w) = windows.single() {
+        VIEW_PX.store((w.physical_height() as f32).to_bits(), Ordering::Relaxed);
+        VIEW_SCALE.store(w.scale_factor().max(0.01).to_bits(), Ordering::Relaxed);
+    }
+}
+
+/// A line's thickness of `units` as [`u`] makes it, but a whole number of the screen's
+/// pixels (at least one): a line 2 units thick is 2.25 pixels at 50% on a 4K view, and the
+/// layout's rounding made one side of a frame 2 pixels and the other 3, its corners a pixel
+/// apart [observed: the owner's screenshots, 2026-11-27]. With a whole width a line's two
+/// edges round alike wherever it stands.
+pub fn line(units: f32) -> Val {
+    let (h, sf) = (f32::from_bits(VIEW_PX.load(Ordering::Relaxed)), f32::from_bits(VIEW_SCALE.load(Ordering::Relaxed)));
+    if h <= 0.0 {
+        return u(units);
+    }
+    Val::Px(line_pixels(units, unit_scale(), h) / sf)
+}
+
+/// [`line`]'s physical pixels for `units` at `scale` on a view `view_px` high.
+pub fn line_pixels(units: f32, scale: f32, view_px: f32) -> f32 {
+    (units * scale / 960.0 * view_px).round().max(1.0)
+}
+
+/// How dark the boxes behind the message boxes and the dialogue are (the Box Background
+/// row, 0 to 1), the bits of an `f32`: 0.7 by default, as Quick Loot's
+/// (`crate::quick_loot::backing`) [design: owner 2026-11-27, "the grey background is same as
+/// for our quickloot menu"].
+static BOX_BACKING: AtomicU32 = AtomicU32::new(0x3F33_3333);
+
+/// The boxes' darkness, 0 to 1 ([`BOX_BACKING`]).
+pub fn box_backing() -> f32 {
+    f32::from_bits(BOX_BACKING.load(Ordering::Relaxed)).clamp(0.0, 1.0)
+}
+
+/// Set [`box_backing`].
+pub fn set_box_backing(v: f32) {
+    BOX_BACKING.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+/// A box's backing: plain black at [`box_backing`], its edges sharp, as Quick Loot's.
+pub fn box_shade() -> Color {
+    Color::BLACK.with_alpha(box_backing())
+}
+
+/// Where the subtitles stand (the Subtitle Position row, 0 to 1, the bits of an `f32`): 0.5,
+/// the original's place, by default [design: owner 2026-11-27, "so players can move
+/// subtitles more up/down"].
+static SUBTITLE_PLACE: AtomicU32 = AtomicU32::new(0x3F00_0000);
+
+/// How far a whole slider of Subtitle Position moves them, in interface units each way.
+pub const SUBTITLE_TRAVEL: f32 = 200.0;
+
+/// The Subtitle Position row, 0 to 1.
+pub fn subtitle_place() -> f32 {
+    f32::from_bits(SUBTITLE_PLACE.load(Ordering::Relaxed)).clamp(0.0, 1.0)
+}
+
+/// Set [`subtitle_place`].
+pub fn set_subtitle_place(v: f32) {
+    SUBTITLE_PLACE.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
+}
+
+/// How far above their place the subtitles (the HUD's and the dialogue's line and choices)
+/// stand, in interface units; below for less than 0.
+pub fn subtitle_lift() -> f32 {
+    subtitle_lift_of(subtitle_place())
+}
+
+/// [`subtitle_lift`] for a row value.
+pub fn subtitle_lift_of(place: f32) -> f32 {
+    (place.clamp(0.0, 1.0) - 0.5) * 2.0 * SUBTITLE_TRAVEL
+}
+
+/// The Subtitle Position row's value as shown: the lift as a part of the view's height,
+/// "+5%" up, "-5%" down.
+pub fn subtitle_place_text(place: f32) -> String {
+    let p = subtitle_lift_of(place) / 960.0 * 100.0;
+    if p.abs() < 0.5 {
+        "0%".to_string()
+    } else {
+        format!("{p:+.0}%")
+    }
+}
+
+/// The settings page's rows of [`box_backing`] and [`subtitle_place`], in `group`.
+pub fn box_rows(app: &mut App, group: &'static str) {
+    crate::settings::add_setting(
+        app,
+        crate::settings::Setting {
+            key: "box-background",
+            group,
+            label: "Box background",
+            note: "How dark the box behind message boxes and the dialogue is. Quick Loot has its own.",
+            switches: "",
+            get: |_| false,
+            set: |_, _| {},
+            slider: Some(crate::settings::Slider { get: |_| box_backing(), set: |_, v| set_box_backing(v), min: 0.0, step: 0.05, shown: None }),
+        },
+    );
+    crate::settings::add_setting(
+        app,
+        crate::settings::Setting {
+            key: "subtitle-position",
+            group,
+            label: "Subtitle position",
+            note: "Moves the subtitles and the dialogue's words up or down the screen. 0% is the original's place.",
+            switches: "",
+            get: |_| false,
+            set: |_, _| {},
+            slider: Some(crate::settings::Slider { get: |_| subtitle_place(), set: |_, v| set_subtitle_place(v), min: 0.0, step: 0.025, shown: Some(subtitle_place_text) }),
+        },
+    );
+}
+
 /// Where a frame 960 units high (the original's view) stands from the view's top for its
 /// pieces to keep their distance from the view's top (`anchor` 0), middle (0.5) or bottom
 /// (1) at the scale [`u`] applies: `anchor × (100% − 960 units)`, 0 at the original's

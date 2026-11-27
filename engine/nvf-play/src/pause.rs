@@ -1853,6 +1853,8 @@ impl Plugin for PausePlugin {
             },
             crate::settings::ChoiceList { names: |_| MENU_FONTS.iter().map(|n| (*n).to_string()).collect(), chosen: menu_font_chosen, pick: take_menu_font, save: menu_font_chosen, load: take_menu_font, ask_keep: false },
         );
+        // Box Background and Subtitle Position, under Menu Font (`crate::interface::box_rows`).
+        crate::interface::box_rows(app, "Interface");
         app.init_resource::<MenuFont>();
         app.init_resource::<SettingsMenuScale>();
         #[cfg(target_os = "android")]
@@ -1883,6 +1885,7 @@ impl Plugin for PausePlugin {
         // The HUD, the other menus and the minigames follow the row too
         // (`crate::vector_font::screen_face`); a faded vector line's glow fades with it.
         app.add_systems(PreUpdate, crate::vector_font::follow_menu_font);
+        app.add_systems(PreUpdate, crate::interface::follow_view);
         app.add_systems(PostUpdate, crate::interface::glow_follows_ink.before(bevy::ui::UiSystems::Layout));
         app.add_systems(PostUpdate, crate::vector_font::follow_sharp_texts.before(bevy::ui::UiSystems::Prepare));
         app.add_observer(draw_boxed);

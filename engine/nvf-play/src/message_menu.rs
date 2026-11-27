@@ -168,6 +168,15 @@ pub struct Layout {
     pub icon: Option<Vec2>,
 }
 
+/// How far a font's capitals rise over the line they stand on: its 'H' (the glow of the
+/// game's pictures included), else three fifths of its size (a stand-in has no glyphs).
+fn rise(font: &Font) -> f32 {
+    match font.glyph(b'H').ascent {
+        a if a > 0.0 => a,
+        _ => font.size * 0.6,
+    }
+}
+
 /// The height of a text of `lines` lines.
 fn text_height(font: &Font, lines: usize) -> f32 {
     match lines {
@@ -216,7 +225,12 @@ pub fn layout(view: &PanelView, body: &Font, title_font: &Font) -> Layout {
     let mut rows = Vec::new();
     for b in &buttons {
         let height = text_height(body, b.len()) + BUTTON_PAD;
-        let sets = b.iter().enumerate().map(|(i, l)| Set { line: l.clone(), x: middle - l.width / 2.0, base: y + BUTTON_PAD + TEXT_BASE + pitch * i as f32 }).collect();
+        // The words' capitals in the middle of the frame (one unit short of the row), in
+        // either font [design: owner 2026-11-27, "align the text into the confirm prompts
+        // correctly in both fonts"]; the file's own place stood them low in the sharp font.
+        let block = rise(body) + pitch * b.len().saturating_sub(1) as f32;
+        let first = y + (height - 1.0 - block) / 2.0 + rise(body);
+        let sets = b.iter().enumerate().map(|(i, l)| Set { line: l.clone(), x: middle - l.width / 2.0, base: first + pitch * i as f32 }).collect();
         rows.push(ButtonRow { y, height, lines: sets });
         y += height;
     }
@@ -234,7 +248,6 @@ struct Faces {
     title: Face,
     fade_down: Option<Handle<Image>>,
     fade_up: Option<Handle<Image>>,
-    shade: Option<Handle<Image>>,
 }
 
 const BODY_FONT: &str = "textures\\fonts\\monofonto_large.fnt";
@@ -242,17 +255,56 @@ const TITLE_FONT: &str = "textures\\fonts\\glow_monofonto_vl_dialogs.fnt";
 
 fn load_faces(data: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> Faces {
     let mut line = |name: &str| data.and_then(|d| texture(&format!("textures\\interface\\shared\\{name}.dds"), d, images, bc)).map(|t| t.0);
-    let (fade_down, fade_up, shade) = (line("line\\fade_to_bottom"), line("line\\fade_to_top"), line("background\\solid_black"));
+    let (fade_down, fade_up) = (line("line\\fade_to_bottom"), line("line\\fade_to_top"));
     Faces {
         body: crate::interface::screen_face(BODY_FONT, plain_font(31.0, 12.0), data, images, bc),
         title: crate::interface::screen_face(TITLE_FONT, plain_font(34.0, 14.0), data, images, bc),
         fade_down,
         fade_up,
-        shade,
     }
 }
 
 // ---- drawing ---------------------------------------------------------------------------
+
+/// A line along a box's edge, set from the edges named (`Val::Auto` for the others).
+fn edge(left: Val, top: Val, right: Val, bottom: Val, width: Val, height: Val) -> Node {
+    Node { position_type: PositionType::Absolute, left, top, right, bottom, width, height, ..default() }
+}
+
+/// The four lines round the box `f` fills, each a whole number of pixels thick
+/// (`crate::interface::line`) and set from its own edge, so all four are as thick and meet.
+pub(crate) fn box_lines(f: &mut ChildSpawnerCommands, colour: Color) {
+    let (t, auto, zero, full) = (crate::interface::line(THICK), Val::Auto, Val::Px(0.0), Val::Percent(100.0));
+    for node in [
+        edge(zero, zero, auto, auto, full, t),
+        edge(zero, auto, auto, zero, full, t),
+        edge(zero, zero, auto, auto, t, full),
+        edge(auto, zero, zero, auto, t, full),
+    ] {
+        f.spawn((node, BackgroundColor(colour), Pickable::IGNORE));
+    }
+}
+
+/// The box's backing and outline: the top line round the title, the bottom line, and at
+/// each corner a short line that fades out, all set from the edges of one node over the
+/// frame (down to the bottom line's foot).
+fn outline(b: &mut ChildSpawnerCommands, faces: &Faces, l: &Layout, bright: Color) {
+    let (t, auto, zero, full) = (crate::interface::line(THICK), Val::Auto, Val::Px(0.0), Val::Percent(100.0));
+    let frame = Node { position_type: PositionType::Absolute, left: zero, top: zero, width: u(l.width), height: u(l.height + THICK), ..default() };
+    b.spawn((frame, BackgroundColor(crate::interface::box_shade()), Pickable::IGNORE)).with_children(|f| {
+        for &(x, len) in &l.top {
+            f.spawn((edge(u(x), zero, auto, auto, u(len), t), BackgroundColor(bright)));
+        }
+        f.spawn((edge(zero, auto, auto, zero, full, t), BackgroundColor(bright)));
+        for (left, right) in [(zero, auto), (auto, zero)] {
+            for (image, top, bottom) in [(&faces.fade_down, zero, auto), (&faces.fade_up, auto, zero)] {
+                if let Some(image) = image {
+                    f.spawn((edge(left, top, right, bottom, t, u(CORNER)), ImageNode { color: bright, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
+                }
+            }
+        }
+    });
+}
 
 pub struct MessageMenuPlugin;
 
@@ -300,27 +352,13 @@ fn spawn_box(
     let bright = amber(255.0);
     commands.spawn((BoxRoot, screen, GlobalZIndex(108))).with_children(|root| {
         root.spawn(Node { width: u(l.width), height: u(l.height), ..default() }).with_children(|b| {
-            // [documented] The dark picture behind: a tenth wider and three tenths taller
-            // than the box, a little up and left of it.
-            let (w, h) = (l.width * 1.1, l.height * 1.3);
-            let behind = at(-0.04 * w, -0.1 * h, w, h);
-            match &faces.shade {
-                Some(image) => b.spawn((behind, ImageNode { color: Color::srgba(0.0, 0.0, 0.0, SHADE), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })),
-                None => b.spawn((behind, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, SHADE)))),
-            };
-            // The outline: the top line around the title, the bottom line, and at each
-            // corner a short line that fades out.
-            for &(x, len) in &l.top {
-                b.spawn((at(x, 0.0, len, THICK), BackgroundColor(bright)));
-            }
-            b.spawn((at(0.0, l.height, l.width, THICK), BackgroundColor(bright)));
-            for x in [0.0, l.width - THICK] {
-                for (image, y) in [(&faces.fade_down, 0.0), (&faces.fade_up, l.height + THICK - CORNER)] {
-                    if let Some(image) = image {
-                        b.spawn((at(x, y, THICK, CORNER), ImageNode { color: bright, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
-                    }
-                }
-            }
+            // The backing and the outline in one box over the frame, each line a whole number
+            // of pixels thick and set against the box's own edges, so the corners meet
+            // (`crate::interface::line`): the backing plain and sharp-edged as Quick Loot's,
+            // as dark as the Box Background row [design: owner 2026-11-27, "the grey
+            // background is same as for our quickloot menu"; the game's soft dark picture,
+            // wider than the box, read as blurred and out of place].
+            outline(b, faces, &l, bright);
             if let Some(t) = &l.title {
                 set_text(b, &faces.title, t, Vec2::ZERO, bright, ());
             }
@@ -337,19 +375,14 @@ fn spawn_box(
                     // a faint fill and a line around it.
                     let h = row.height - 1.0;
                     let shown = if i == selected { Visibility::Inherited } else { Visibility::Hidden };
-                    r.spawn((Frame(i), at(0.0, 0.0, frame_w, h), shown)).with_children(|f| {
-                        // 40 of 255, as dark as it reads where the game mixes it in.
-                        f.spawn((at(0.0, 0.0, frame_w, h), BackgroundColor(amber(128.0).with_alpha((40.0f32 / 255.0).powf(2.2)))));
-                        let line = amber(200.0);
-                        for y in [0.0, h - THICK] {
-                            f.spawn((at(0.0, y, frame_w, THICK), BackgroundColor(line)));
-                        }
-                        for x in [0.0, frame_w - THICK] {
-                            f.spawn((at(x, THICK, THICK, h - 2.0 * THICK), BackgroundColor(line)));
-                        }
-                    });
+                    // 40 of 255, as dark as it reads where the game mixes it in.
+                    let fill = BackgroundColor(amber(128.0).with_alpha((40.0f32 / 255.0).powf(2.2)));
+                    r.spawn((Frame(i), at(0.0, 0.0, frame_w, h), fill, shown)).with_children(|f| box_lines(f, amber(200.0)));
+                    // Centred on the frame by their ink: the sharp lines' start shift
+                    // (`VectorFace::shift`) is for words set from their start.
+                    let shift = faces.body.vector.as_ref().map_or(0.0, |v| v.shift);
                     for t in &row.lines {
-                        set_text(r, &faces.body, t, Vec2::new(frame_x, row.y), bright, ());
+                        set_text(r, &faces.body, t, Vec2::new(frame_x + shift, row.y), bright, ());
                     }
                 });
             }
@@ -459,9 +492,12 @@ People like you.", &["Ok"]);
         assert_eq!(l.text.len(), 13);
         // The first line stands 58 under the top line, the next 35 lower.
         assert_eq!((l.text[0].x, l.text[0].base, l.text[1].base), (40.0, 58.0, 93.0));
-        // The button's row starts 514 down and is 51 high; its text stands at 549.
+        // The button's row starts 514 down and is 51 high; its text's capitals stand in the
+        // middle of its frame (a stand-in's rise is three fifths of its size).
         let b = &l.buttons[0];
-        assert_eq!((b.y, b.height, b.lines[0].base), (514.0, 51.0, 549.0));
+        assert_eq!((b.y, b.height), (514.0, 51.0));
+        let cap = 31.0 * 0.6;
+        assert!((b.lines[0].base - (514.0 + (50.0 - cap) / 2.0 + cap)).abs() < 1e-3, "{}", b.lines[0].base);
         assert_eq!(l.height, 585.0);
         // The title, and the top line around it.
         let t = l.title.as_ref().unwrap();

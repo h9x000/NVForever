@@ -27,8 +27,16 @@ use std::collections::{HashMap, VecDeque};
 
 // ---- measured on the owner's screenshots [observed, §4] --------------------------------
 
-/// Where the text starts, from the view's left edge, in the interface's units.
+/// Where the text starts in the original, from the view's left edge, in the interface's
+/// units: `QuestReminder`'s x (hud.md §14), where the tile-drawn copies stand
+/// (`crate::tiles::notices`).
 pub(crate) const TEXT_X: f32 = 45.0;
+/// Where the hand-built lines start: where the health piece's "HP" starts, so they start
+/// where it does in either font and the objectives' boxes stand where its bracket's upright
+/// does [design: playtest of 2026-11-27, the quest lines stood nearer the view's edge than
+/// the health piece; observed: at [`TEXT_X`] the boxes' squares stood 18 units left of the
+/// upright and the letters level with it, on the playtest's screenshot].
+pub(crate) const LINE_X: f32 = crate::hud::MARGIN_X + crate::hud::HP_LABEL_X;
 /// The name's letters carry more glow before them: it starts this much further left.
 pub(crate) const TITLE_X: f32 = -1.5;
 /// The line "New quest" stands on, and the quest's name.
@@ -285,7 +293,7 @@ pub fn layout(n: &QuestNotice, label_font: &Font, title_font: &Font) -> Vec<Piec
     match n {
         QuestNotice::Added(name) | QuestNotice::Completed(name) | QuestNotice::Failed(name) | QuestNotice::Discovered(name) => {
             if let Some(line) = label_font.lines(label(n).unwrap_or_default(), None).into_iter().next() {
-                out.push(Piece::Text { set: Set { line, x: TEXT_X, base: LABEL_BASE }, title: false, from: 0.0 });
+                out.push(Piece::Text { set: Set { line, x: LINE_X, base: LABEL_BASE }, title: false, from: 0.0 });
             }
             // The name in capitals (the font has no small letters), set letter by letter
             // so that each can come at its own time.
@@ -293,7 +301,7 @@ pub fn layout(n: &QuestNotice, label_font: &Font, title_font: &Font) -> Vec<Piec
             let width = line.width.max(1.0);
             for p in &line.glyphs {
                 let one = Line { glyphs: vec![Placed { x: 0.0, ..*p }], width: title_font.bitmap_glyph(p).advance() };
-                out.push(Piece::Text { set: Set { line: one, x: TEXT_X + TITLE_X + p.x, base: TITLE_BASE }, title: true, from: SWEEP * p.x / width });
+                out.push(Piece::Text { set: Set { line: one, x: LINE_X + TITLE_X + p.x, base: TITLE_BASE }, title: true, from: SWEEP * p.x / width });
             }
         }
         QuestNotice::Objectives(list) => {
@@ -301,9 +309,9 @@ pub fn layout(n: &QuestNotice, label_font: &Font, title_font: &Font) -> Vec<Piec
             let mut base = LIST_BASE;
             for o in list {
                 let [x, y, w, h] = BOX;
-                out.push(Piece::Box { completed: o.completed, rect: [TEXT_X + x, base + y, w, h] });
+                out.push(Piece::Box { completed: o.completed, rect: [LINE_X + x, base + y, w, h] });
                 for line in label_font.lines(&objective_text(o), Some(WRAP)) {
-                    out.push(Piece::Text { set: Set { line, x: TEXT_X, base }, title: false, from: 0.0 });
+                    out.push(Piece::Text { set: Set { line, x: LINE_X, base }, title: false, from: 0.0 });
                     base += pitch;
                 }
             }
@@ -547,7 +555,7 @@ mod tests {
         let (l, t) = fonts();
         let p = layout(&QuestNotice::Added("Come Fly With Me".into()), &l, &t);
         let Piece::Text { set, title: false, from } = &p[0] else { panic!("{p:?}") };
-        assert_eq!((set.line.glyphs.len(), set.x, set.base, *from), (8, TEXT_X, LABEL_BASE, 0.0));
+        assert_eq!((set.line.glyphs.len(), set.x, set.base, *from), (8, LINE_X, LABEL_BASE, 0.0));
         // One piece a letter, coming from left to right.
         assert_eq!(p.len(), 1 + 13);
         let letters: Vec<(u8, f32, f32)> = p[1..]
@@ -557,9 +565,9 @@ mod tests {
                 _ => panic!("{q:?}"),
             })
             .collect();
-        assert_eq!(letters[0], (b'C', TEXT_X + TITLE_X, 0.0));
+        assert_eq!(letters[0], (b'C', LINE_X + TITLE_X, 0.0));
         assert_eq!(letters[1].0, b'O');
-        assert_eq!((letters[12].0, letters[12].1), (b'E', TEXT_X + TITLE_X + 15.0 * 22.0));
+        assert_eq!((letters[12].0, letters[12].1), (b'E', LINE_X + TITLE_X + 15.0 * 22.0));
         assert!((letters[12].2 - SWEEP * 15.0 / 16.0).abs() < 1e-6);
     }
 
@@ -569,7 +577,7 @@ mod tests {
         let p = layout(&objectives(&[("Talk to Sunny Smiles in the Prospector Saloon.", true), ("Meet Sunny.", false)]), &l, &t);
         // "COMPLETED: " and the text, broken at the wrap width: 40 letters fit a line.
         let pitch = 36.0 + LEADING;
-        assert_eq!(p[0], Piece::Box { completed: true, rect: [TEXT_X - 16.0, LIST_BASE - 21.0, 26.0, 26.0] });
+        assert_eq!(p[0], Piece::Box { completed: true, rect: [LINE_X - 16.0, LIST_BASE - 21.0, 26.0, 26.0] });
         // Each line as its letters (spaces are not set) and the line it stands on.
         let texts: Vec<(String, f32)> = p
             .iter()
@@ -586,7 +594,7 @@ mod tests {
                 ("MeetSunny.".to_string(), LIST_BASE + 2.0 * pitch),
             ]
         );
-        assert_eq!(p[3], Piece::Box { completed: false, rect: [TEXT_X - 16.0, LIST_BASE + 2.0 * pitch - 21.0, 26.0, 26.0] });
+        assert_eq!(p[3], Piece::Box { completed: false, rect: [LINE_X - 16.0, LIST_BASE + 2.0 * pitch - 21.0, 26.0, 26.0] });
     }
 
     #[test]

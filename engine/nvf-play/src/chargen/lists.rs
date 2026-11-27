@@ -634,8 +634,10 @@ fn buttons(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
         if v.hover == Some(b) && on {
             c.outline(p, BUTTONS.x - bw, y, bw, bh, amber(200.0));
         }
-        c.text(p, Which::Body, label, BUTTONS.x - BUTTON_PAD, y + BUTTON_PAD, Align::Right, color);
-        c.text(p, Which::Body, &hint, BUTTONS.x + HINT_X, y + BUTTON_PAD, Align::Left, color);
+        // The words' capitals in the middle of the box, in either font (`draw::cap_base`).
+        let top = crate::chargen::draw::cap_base(c.face(Which::Body), y + bh / 2.0, 1.0) - crate::chargen::draw::BODY_BASE;
+        c.text(p, Which::Body, label, BUTTONS.x - BUTTON_PAD, top, Align::Right, color);
+        c.text(p, Which::Body, &hint, BUTTONS.x + HINT_X, top, Align::Left, color);
         p.spawn((Button, b, at(BUTTONS.x - bw, y, bw + 40.0, bh)));
     }
 }

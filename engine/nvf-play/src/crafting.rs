@@ -865,10 +865,30 @@ fn brackets(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, bottom: f32, t
     rule(p, x + w - LINE, bottom - 40.0, LINE, 40.0);
 }
 
+/// How wide a recipe row's name may run before it wraps.
+const ROW_WRAP: f32 = BOX_WIDTH - 15.0 - ROWS_BAR_W - 52.0;
+
+fn recipe_row_lines(face: &Face, label: &str) -> usize {
+    face.font.lines(label, Some(ROW_WRAP / face.scale)).len().max(1)
+}
+
 fn recipe_row_height(face:&Face,label:&str)->f32 {
-    let wrap=(BOX_WIDTH-15.0-ROWS_BAR_W-52.0)/face.scale;
-    let lines=face.font.lines(label,Some(wrap)).len().max(1);
+    let lines=recipe_row_lines(face,label);
     ((ROW.max(face.font.size*0.9*lines as f32+12.0))*face.scale).max(ROW)
+}
+
+/// Where a recipe row's name starts (the `top` [`wrapped`] takes) so that its ink stands in
+/// the middle of the row's highlight box, `height` high: from the first line's capitals to
+/// the last line's baseline, by the letters' ink, not the game font's glow
+/// (`crate::chargen::draw::cap_base`), so in the game's font and the sharp one alike [owner
+/// 2026-11-27: "align the hover box correctly"; it started 6 down, which left the words
+/// high in the box]. The row's children stand inside its border ([`LINE`]), so for them the
+/// box's middle is that much higher.
+fn row_text_top(face: &Face, label: &str, height: f32) -> f32 {
+    let pitch = face.font.size * 0.9 * face.scale;
+    let below = (recipe_row_lines(face, label) - 1) as f32 * pitch;
+    let base = crate::chargen::draw::cap_base(face, height / 2.0 - LINE - below / 2.0, face.scale);
+    base - face.font.size * 0.8 * face.scale
 }
 fn recipe_window(look:&RecipeLook,v:&View,follow:bool)->std::ops::Range<usize> {
     let heights:Vec<_>=v.rows.iter().map(|r|recipe_row_height(&look.row,&r.label)).collect();
@@ -927,10 +947,13 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
                         data.and_then(|d| crate::interface::texture(&full, d, images, bc)).map(|x| x.0)
                     });
                 list.spawn((Button, RecipeButton::Row(i), node, BorderColor::all(if chosen { line } else { Color::NONE }), BackgroundColor(if chosen { fill } else { Color::NONE }))).with_children(|row| {
+                    let top = row_text_top(&look.row, &r.label, height);
                     if let Some(img) = row_icon {
-                        row.spawn((at(10.0, 14.0*look.row.scale, 24.0, 24.0), ImageNode { color: tint, ..ImageNode::new(img) }));
+                        // On the first line's capitals, as the text.
+                        let base = top + look.row.font.size * 0.8 * look.row.scale;
+                        row.spawn((at(10.0, crate::chargen::draw::cap_mid(&look.row, base, look.row.scale) - 12.0, 24.0, 24.0), ImageNode { color: tint, ..ImageNode::new(img) }));
                     }
-                    wrapped(row, &look.row, &r.label, 40.0, 6.0*look.row.scale, BOX_WIDTH-15.0-ROWS_BAR_W-52.0, tint);
+                    wrapped(row, &look.row, &r.label, 40.0, top, ROW_WRAP, tint);
                 });
                 y+=height;
             }
@@ -1252,6 +1275,33 @@ mod tests {
         assert_eq!(times_possible(&r, have), 3);
         assert_eq!(times_possible(&r, |_| 0), 0);
         assert_eq!(times_possible(&RecipeDef::default(), |_| 0), 1);
+    }
+
+    #[test]
+    fn a_rows_name_stands_in_the_middle_of_its_box() {
+        // A face of font 2's size whose H is a picture `ascent` over the line and `height`
+        // high: the game font's (2 of glow round 22 of ink) and a sharp face's table (22).
+        let face = |ascent: f32, height: f32, scale: f32| {
+            let mut font = plain_font(31.0, 12.0);
+            font.glyphs[usize::from(b'H')] = fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 14.0, height, before: 0.0, after: 0.0, ascent };
+            let mut f = Face::from(crate::interface::Face { font, image: None, vector: None });
+            f.scale = scale;
+            f
+        };
+        for f in [face(24.0, 26.0, 1.0), face(22.0, 22.0, 1.0), face(22.0, 22.0, 1.5)] {
+            let height = recipe_row_height(&f, ".308 Round");
+            let base = row_text_top(&f, ".308 Round", height) + f.font.size * 0.8 * f.scale;
+            // The capitals' middle on the box's, inside its border.
+            assert!((base - 11.0 * f.scale - (height / 2.0 - LINE)).abs() < 1e-4, "{base} in {height}");
+        }
+        // Two lines: the first's capitals and the second's baseline about the middle.
+        let f = face(22.0, 22.0, 1.0);
+        let long = "Breakdown Breakdown Breakdown Breakdown Breakdown";
+        assert_eq!(recipe_row_lines(&f, long), 2);
+        let height = recipe_row_height(&f, long);
+        let base = row_text_top(&f, long, height) + f.font.size * 0.8;
+        let (top, bottom) = (base - 22.0, base + f.font.size * 0.9);
+        assert!(((top + bottom) / 2.0 - (height / 2.0 - LINE)).abs() < 1e-4);
     }
 
     #[test]

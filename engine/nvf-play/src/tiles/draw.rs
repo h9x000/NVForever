@@ -1473,6 +1473,17 @@ pub fn menu_anchor(dialog: bool) -> Vec2 {
     }
 }
 
+/// Whether the window menu `name` drawn from tiles sets its texts in the sharp font
+/// ([`Target::sharp`]) while the Menu Font row says Sharp (`sharp`): the quantity prompt
+/// [design: owner 2026-11-24] and the VATS target screen, its chances, part names, queue and
+/// key hints [design: owner 2026-11-27, "vats is still in the old font"]. The text is still
+/// measured in the game's font for the layout; drawn in the sharp one in the same boxes, a
+/// right-aligned or centred text keeps its box's edge or middle ([`text_lines`]). The
+/// Pip-Boy's pages are painted elsewhere and keep the game's font (in-world screens).
+fn sharp_menu(name: &str, sharp: bool) -> bool {
+    sharp && (name == super::menus::QUANTITY_MENU || name == super::vats_menu::VATS_MENU)
+}
+
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: View, mut kit: FontKit, (mut drawn, mut others): (Local<Drawn>, Local<MenusDrawn>), mut nodes: Nodes, mut blur: ResMut<super::menus::TileMenuBlur>, glyphs: Res<crate::pad::PadGlyphs>) {
     let scale = view.windows.single().map_or(1.0, |w| w.height() / 960.0);
@@ -1557,11 +1568,11 @@ pub(crate) fn draw(mut commands: Commands, script: Res<ScriptState>, mut view: V
             // queue out for a view 960 units high, and in a lower one they run into each
             // other (seen at 150 %).
             let _units = interface::units_at(interface::menu_scale());
-            paint(&mut commands, drawn, pieces, Target::window(scale * interface::menu_scale(), z), Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
+            let target = Target::window(scale * interface::menu_scale(), z).sharp_letters(sharp_menu(name, crate::vector_font::sharp()));
+            paint(&mut commands, drawn, pieces, target, Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
             continue;
         }
-        // The quantity prompt in the sharp font while the Menu Font row says Sharp.
-        let sharp = name == super::menus::QUANTITY_MENU && crate::vector_font::sharp();
+        let sharp = sharp_menu(name, crate::vector_font::sharp());
         let target = Target::window(scale * interface::menu_scale(), z).in_frame(anchor).text_sized(text_scale).sharp_letters(sharp);
         paint(&mut commands, drawn, pieces, target, Brightness::File, heading, ui, &mut kit, &mut nodes, &glyphs);
     }
@@ -3470,6 +3481,29 @@ mod tests {
         assert!(fonts.text_face(7, true).is_some_and(|f| f.vector.is_some()));
         assert!(fonts.text_face(7, false).is_some_and(|f| f.vector.is_none()));
         assert!(fonts.text_face(6, true).is_none());
+    }
+
+    #[test]
+    fn the_vats_screen_and_the_prompt_follow_the_menu_font_row() {
+        use super::super::{dialog_menu, inventory_menu, map_menu, menus, stats_menu, vats_menu};
+        for name in [vats_menu::VATS_MENU, menus::QUANTITY_MENU] {
+            assert!(sharp_menu(name, true), "{name} in the sharp font while the row says Sharp");
+            assert!(!sharp_menu(name, false), "{name} in the game's font while it says Original");
+        }
+        // Not opted in: the Pip-Boy's pages (in-world screens) and the menus not asked for.
+        for name in [stats_menu::STATS_MENU, inventory_menu::INVENTORY_MENU, map_menu::MAP_MENU, menus::MESSAGE_MENU, dialog_menu::DIALOG_MENU, HUD_MENU] {
+            assert!(!sharp_menu(name, true), "{name} keeps the game's font");
+        }
+        // A right-aligned text (the key hints' button words) drawn in the sharp face still
+        // ends on its box's right edge, a centred one (a part's name) on its middle.
+        let m = crate::vector_font::metrics().unwrap();
+        let sharp = crate::vector_font::face(m, crate::vector_font::FONT_HANDLE, 31.0, crate::vector_font::REGULAR, 36.0);
+        let raster = plain_font(36.0, 17.0);
+        let box_width = f64::from(raster.lines("Return", None)[0].width);
+        let right = text_lines(&sharp.font, 7, "Return", None, Alignment::Right, box_width);
+        assert!((right[0].1 + right[0].0.width - box_width as f32).abs() < 1e-3);
+        let centre = text_lines(&sharp.font, 7, "Torso", None, Alignment::Center, 100.0);
+        assert!((centre[0].1 * 2.0 + centre[0].0.width - 100.0).abs() < 1e-3);
     }
 
     #[test]

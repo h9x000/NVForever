@@ -173,7 +173,7 @@ pub const SECTIONS: &[Section] = &[
     section("Display", Some("Frame Rate"), &["display-sync", "frame-cap", "physics-rate"]),
     section("Display", Some("Upscaling and Anti-Aliasing"), &["upscaler", "upscaler-quality", "dlss-model", "fsr-library", "anti-aliasing", "sharpen"]),
     section("Display", Some("Frame Generation and Latency"), &["frame-generation", "frame-generation-frames", "latency-reduction"]),
-    section("Display", Some("Interface"), &["language", "menu-font", "sneak-gauges", "caravan-tips", "dynamic-crosshair", "crosshair-style", "location-load-screens", "ui-scale", "menu-scale"]),
+    section("Display", Some("Interface"), &["language", "menu-font", "box-background", "subtitle-position", "sneak-gauges", "caravan-tips", "dynamic-crosshair", "crosshair-style", "location-load-screens", "ui-scale", "menu-scale"]),
     section("Display", Some("Colours"), &["hud-colour", "hud-red", "hud-green", "hud-blue", "pipboy-colour", "pipboy-red", "pipboy-green", "pipboy-blue"]),
     section(
         "Display",

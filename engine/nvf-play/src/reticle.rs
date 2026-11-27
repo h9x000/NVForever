@@ -87,17 +87,22 @@ const STEM_IN_PICTURE: f32 = 160.5;
 // ---- measured on the owner's screenshots [observed, §3] --------------------------------
 // In the interface's units (960 to the view's height) from the view's middle.
 
-/// The action's middle and the name's, across: not the same, on both screenshots.
-const ACTION_X: f32 = -3.0;
-const NAME_X: f32 = 1.0;
+/// The key and the action's line and the name's are centred, by their ink, on the view's
+/// middle line, the crosshair's and the divider's stem's [design: playtest of 2026-11-27,
+/// both lines to follow the middle line in either font; observed before: the original's
+/// action middle 3 units left of the middle, the name's 1 right, the key left of the
+/// centred action].
+const MIDDLE: f32 = 0.0;
 /// The action's line, and the name's under it.
 const ACTION_BASE: f32 = 326.5;
 const LINE_PITCH: f32 = 40.0;
 /// From the key's end to the action's start.
 const KEY_GAP: f32 = 11.0;
-/// The divider picture's top under the name's line; its stem's middle, across.
+/// The divider picture's top under the name's line; its stem's middle, across, on the
+/// middle line with the texts over it ([`MIDDLE`]; observed: 4 units left of it on the
+/// original's screenshots).
 const DIVIDER_BELOW: f32 = 8.5;
-const STEM_X: f32 = -4.0;
+const STEM_X: f32 = MIDDLE;
 /// The item's figures: their line under the divider picture's top; from the stem, where
 /// "WG" starts and the weight ends (left of it) and where "VAL" starts and the value ends
 /// (right of it).
@@ -241,7 +246,13 @@ pub struct Layout {
     pub glyph: Option<(crate::pad::Glyph, Vec2, f32)>,
 }
 
+/// [`layout_inked`] with the letters taken to fill their pictures (no [`Ink`] read).
 pub fn layout(p: &Prompt, font: &Font) -> Layout {
+    layout_inked(p, font, &Ink::default())
+}
+
+/// The prompt set out in `font`, its lines centred by where `ink` says their letters are.
+pub(crate) fn layout_inked(p: &Prompt, font: &Font, ink: &Ink) -> Layout {
     let line = |s: &str| font.lines(s, None).into_iter().next().unwrap_or_default();
     let set = |line: Line, x: f32, base: f32| Set { line, x, base };
     let action = line(&p.action);
@@ -250,22 +261,25 @@ pub fn layout(p: &Prompt, font: &Font) -> Layout {
     let glyph = p.key_text().strip_suffix(')').and_then(crate::pad::Glyph::named).filter(|g| g.is_face()).filter(|_| !p.action.is_empty());
     let key = line(if glyph.is_some() { ")" } else { p.key_text() });
     let name = line(&p.name);
-    let action_x = ACTION_X - action.width / 2.0;
+    let side = font.size * GLYPH_SHARE;
+    // The key's row as one line from the key's start: the glyph (or the key's first letter)
+    // to the action's last letter, centred on the middle line.
+    let action_at = key.width + KEY_GAP;
+    let left = if glyph.is_some() { -GLYPH_GAP - side } else { ink.span(font, &key).map_or(0.0, |s| s.0) };
+    let right = action_at + ink.span(font, &action).map_or(action.width, |s| s.1);
+    let key_x = MIDDLE - (left + right) / 2.0;
     let name_base = ACTION_BASE + LINE_PITCH;
+    let centred = |l: &Line| ink.centred(font, l, MIDDLE);
     // No action (an actor shown by name only, `Action::Name`): the name alone, on its
     // own line [hypothesis: the line stays where it is with an action].
     let mut texts = if p.action.is_empty() {
-        vec![set(name.clone(), NAME_X - name.width / 2.0, name_base)]
+        vec![set(name.clone(), centred(&name), name_base)]
     } else {
-        vec![
-            set(key.clone(), action_x - KEY_GAP - key.width, ACTION_BASE),
-            set(action, action_x, ACTION_BASE),
-            set(name.clone(), NAME_X - name.width / 2.0, name_base),
-        ]
+        vec![set(key, key_x, ACTION_BASE), set(action, key_x + action_at, ACTION_BASE), set(name.clone(), centred(&name), name_base)]
     };
     // The note on its own line under the name, centred as the name is [design].
     if let Some(note) = p.note.as_deref().map(line) {
-        texts.push(set(note.clone(), NAME_X - note.width / 2.0, name_base + LINE_PITCH));
+        texts.push(set(note.clone(), centred(&note), name_base + LINE_PITCH));
     }
     let divider = p.figures.as_ref().map(|[weight, value]| {
         let top = name_base + DIVIDER_BELOW;
@@ -277,11 +291,7 @@ pub fn layout(p: &Prompt, font: &Font) -> Layout {
         texts.push(set(value.clone(), STEM_X + VALUE_END - value.width, base));
         Vec2::new(STEM_X - STEM_IN_PICTURE, top)
     });
-    let glyph = glyph.map(|g| {
-        let side = font.size * GLYPH_SHARE;
-        let x = action_x - KEY_GAP - key.width - GLYPH_GAP - side;
-        (g, Vec2::new(x, ACTION_BASE - side * GLYPH_RISE), side)
-    });
+    let glyph = glyph.map(|g| (g, Vec2::new(key_x - GLYPH_GAP - side, ACTION_BASE - side * GLYPH_RISE), side));
     Layout { texts, divider, glyph }
 }
 
@@ -300,6 +310,135 @@ const GLYPH_PIXELS: u32 = 64;
 /// Fallout_default.ini [observed; hypothesis: that it is the crime colour].
 pub fn crime_colour() -> Color {
     Color::srgb_u8(255, 67, 42)
+}
+
+// ---- where the letters' ink is ----------------------------------------------------------
+
+/// Where a face's letters are inked, each from its place in a line (`Placed::x`): a line
+/// centred or ended by the room it measures (`Line::width`) has its ink off to one side.
+/// The game font's pictures hold a margin for the glow: in font 7 the ink starts 6 units
+/// after a letter's place and ends 4 past its room, 5 right of the room's middle; in font 8
+/// it starts 8 in and ends 6 past [observed: `baked-in_monofonto_large` and
+/// `glow_futura_caps_large` of Fallout - Textures2.bsa, read 2026-11-27]. A sharp face's
+/// lines are drawn `VectorFace::shift` right so their ink starts where the game font's did
+/// (`crate::vector_font::screen_face`), its letters inside their advances by the font's side
+/// bearings ([`sharp_right_edges`]). Placed by its ink a line looks the same in both fonts.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(crate) enum Ink {
+    /// Not read: each letter's picture box (`Glyph::before`, `width`) holds its ink.
+    #[default]
+    Boxes,
+    /// The game font's picture read: each code's ink start and end from its place, `None`
+    /// where it has none.
+    Picture(Vec<Option<(f32, f32)>>),
+    /// The sharp font (`crate::interface::VectorFace`): its lines' shift, size, weight and
+    /// capitals.
+    Sharp { shift: f32, em: f32, weight: u16, caps: bool },
+}
+
+/// A texel of the game font's picture that is its letters', not their glow: half bright and
+/// half opaque at least (as `crate::vector_font::ink_leads` measures).
+fn inked(p: &[u8]) -> bool {
+    (u32::from(p[0]) + u32::from(p[1]) + u32::from(p[2])) * u32::from(p[3]) >= 128 * 3 * 255
+}
+
+impl Ink {
+    /// The ink of `face`, whose game font's picture (a `.tex`, plain texels) is in `images`.
+    pub fn of(face: &Face, images: &Assets<Image>) -> Ink {
+        use bevy::render::render_resource::TextureFormat;
+        if let Some(v) = &face.vector {
+            return Ink::Sharp { shift: v.shift, em: v.em, weight: v.weight, caps: v.caps };
+        }
+        let Some(image) = face.image.as_ref().and_then(|(h, _)| images.get(h)) else { return Ink::Boxes };
+        if !matches!(image.texture_descriptor.format, TextureFormat::Rgba8Unorm | TextureFormat::Rgba8UnormSrgb) {
+            return Ink::Boxes;
+        }
+        image.data.as_deref().map_or(Ink::Boxes, |rgba| Ink::read(&face.font, rgba, image.width(), image.height()))
+    }
+
+    /// Each code's ink in a font's picture of `tex_w` by `tex_h` texels, four bytes each.
+    pub fn read(font: &Font, rgba: &[u8], tex_w: u32, tex_h: u32) -> Ink {
+        let (w, h) = (tex_w as usize, tex_h as usize);
+        let column = |x: usize, rows: std::ops::Range<usize>| rows.clone().any(|y| rgba.get(4 * (y * w + x)..4 * (y * w + x) + 4).is_some_and(inked));
+        let one = |g: &fnv_font::Glyph| {
+            if !g.drawn() {
+                return None;
+            }
+            let (x0, y0) = ((g.uv[0] * tex_w as f32).round() as usize, (g.uv[1] * tex_h as f32).round() as usize);
+            let (x1, y1) = (((g.uv[2] * tex_w as f32).round() as usize).min(w), ((g.uv[3] * tex_h as f32).round() as usize).min(h));
+            let per_unit = x1.saturating_sub(x0) as f32 / g.width;
+            let first = (x0..x1).find(|&x| column(x, y0..y1))?;
+            let last = (x0..x1).rev().find(|&x| column(x, y0..y1))?;
+            Some((g.before + (first - x0) as f32 / per_unit, g.before + (last + 1 - x0) as f32 / per_unit))
+        };
+        Ink::Picture(font.glyphs.iter().map(one).collect())
+    }
+
+    /// Where the letter `p` of a line in `font` is inked, from its place.
+    fn letter(&self, font: &Font, p: &fnv_font::Placed) -> Option<(f32, f32)> {
+        let g = font.bitmap_glyph(p);
+        let boxed = g.drawn().then_some((g.before, g.before + g.width));
+        match self {
+            Ink::Boxes => boxed,
+            Ink::Picture(codes) => codes.get(usize::from(p.code)).copied().flatten().or(boxed),
+            Ink::Sharp { shift, em, weight, caps } => {
+                let c = if *caps { p.ch.to_uppercase().next().unwrap_or(p.ch) } else { p.ch };
+                let m = crate::vector_font::metrics().filter(|m| m.has(c));
+                let Some(m) = m else { return boxed.map(|(a, b)| (a + shift, b + shift)) };
+                // The room after the outline at the font's default weight, kept at this one.
+                let right = sharp_right_edges().get(usize::from(m.glyph(c))).map_or(m.advance(c), |&x| f32::from(x) / m.units_per_em);
+                let after = m.advance(c) - right;
+                Some((shift + m.lead(c) * em, shift + (m.advance_at(c, *weight) - after) * em))
+            }
+        }
+    }
+
+    /// Where `line`'s ink starts and ends from the line's start; `None` with nothing inked.
+    pub fn span(&self, font: &Font, line: &Line) -> Option<(f32, f32)> {
+        line.glyphs.iter().filter_map(|p| self.letter(font, p).map(|(a, b)| (p.x + a, p.x + b))).reduce(|a, b| (a.0.min(b.0), a.1.max(b.1)))
+    }
+
+    /// The start that puts `line`'s ink's middle on `middle` (its room's without ink).
+    pub fn centred(&self, font: &Font, line: &Line, middle: f32) -> f32 {
+        self.span(font, line).map_or(middle - line.width / 2.0, |(a, b)| middle - (a + b) / 2.0)
+    }
+
+    /// The start that ends `line`'s ink at `end` (its room without ink).
+    pub fn ended(&self, font: &Font, line: &Line, end: f32) -> f32 {
+        self.span(font, line).map_or(end - line.width, |(_, b)| end - b)
+    }
+
+    /// The start that starts `line`'s ink at `start` (its room's start without ink).
+    pub fn started(&self, font: &Font, line: &Line, start: f32) -> f32 {
+        self.span(font, line).map_or(start, |(a, _)| start - a)
+    }
+}
+
+/// Each glyph's right edge (the `glyf` header's xMax) in the sharp font's units at its
+/// default weight, by glyph; empty if the file does not read [documented: OpenType 1.9,
+/// the table directory, `head` indexToLocFormat at byte 50, `maxp` numGlyphs at 4, `loca`,
+/// the `glyf` header's xMax at byte 6]. `crate::vector_font::Metrics` has the room before
+/// each outline, not after it; Roboto Condensed's "1" has 0.18 of the em after its outline
+/// and 0.08 before [observed: the font file].
+fn sharp_right_edges() -> &'static [i16] {
+    static READ: std::sync::OnceLock<Vec<i16>> = std::sync::OnceLock::new();
+    READ.get_or_init(|| right_edges(crate::vector_font::FONT_BYTES).unwrap_or_default())
+}
+
+fn right_edges(b: &[u8]) -> Option<Vec<i16>> {
+    let u16_at = |at: usize| b.get(at..at + 2).map(|s| u16::from_be_bytes([s[0], s[1]]));
+    let u32_at = |at: usize| b.get(at..at + 4).map(|s| u32::from_be_bytes([s[0], s[1], s[2], s[3]]) as usize);
+    let tables = usize::from(u16_at(4)?);
+    let find = |tag: &[u8]| (0..tables).map(|i| 12 + 16 * i).find(|&r| b.get(r..r + 4) == Some(tag)).and_then(|r| u32_at(r + 8));
+    let (head, maxp, loca, glyf) = (find(b"head")?, find(b"maxp")?, find(b"loca")?, find(b"glyf")?);
+    let long = u16_at(head + 50)? != 0;
+    let at = |g: usize| if long { u32_at(loca + 4 * g) } else { u16_at(loca + 2 * g).map(|o| 2 * usize::from(o)) };
+    (0..usize::from(u16_at(maxp + 4)?))
+        .map(|g| {
+            let (start, end) = (at(g)?, at(g + 1)?);
+            Some(if end > start { u16_at(glyf + start + 6)? as i16 } else { 0 })
+        })
+        .collect()
 }
 
 // ---- drawing ----------------------------------------------------------------------------
@@ -411,6 +550,8 @@ struct Kit {
     bars: Option<[Picture; 4]>,
     /// NVForever's PlayStation face button glyphs, in [`crate::pad::Glyph::FACES`]'s order.
     glyphs: Vec<Handle<Image>>,
+    /// Where the face's letters are inked: the lines are centred by it.
+    ink: Ink,
 }
 
 impl Kit {
@@ -421,7 +562,9 @@ impl Kit {
         let bars: Vec<Picture> = BARS.iter().filter_map(|(path, _)| picture(path)).collect();
         let bars = bars.try_into().ok();
         let glyphs = crate::pad::Glyph::FACES.iter().map(|g| images.add(g.image(GLYPH_PIXELS))).collect();
-        Kit { face: crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data, images, bc), plain, filled, divider, bars, glyphs }
+        let face = crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data, images, bc);
+        let ink = Ink::of(&face, images);
+        Kit { face, plain, filled, divider, bars, glyphs, ink }
     }
 }
 
@@ -530,7 +673,7 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
 fn spawn_texts(p: &mut ChildSpawnerCommands, kit: &Kit, prompt: &Prompt) {
     let color = if prompt.crime { crime_colour() } else { amber(255.0) };
     let color = if prompt.grey { color.with_alpha(GREY) } else { color };
-    let l = layout(prompt, &kit.face.font);
+    let l = layout_inked(prompt, &kit.face.font, &kit.ink);
     if let (Some(corner), Some(picture)) = (l.divider, kit.divider.clone()) {
         p.spawn((at(corner.x, corner.y, DIVIDER_SIZE.x, DIVIDER_SIZE.y), picture_node(picture, color)));
     }
@@ -611,6 +754,7 @@ fn draw(
         // the prompt drawn again.
         if let Some(k) = kit.as_mut() {
             k.face = crate::interface::screen_face(FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+            k.ink = Ink::of(&k.face, &images);
         }
         *shown = None;
     }
@@ -764,7 +908,7 @@ mod tests {
         let p = Prompt { note: Some(EMPTY.into()), ..prompt("Open", "Footlocker", None) };
         let l = layout(&p, &font());
         let [_, _, name, note] = &l.texts[..] else { panic!("{:?}", l.texts) };
-        assert_eq!((note.x + note.line.width / 2.0, note.base), (NAME_X, name.base + LINE_PITCH));
+        assert_eq!((note.x + note.line.width / 2.0, note.base), (MIDDLE, name.base + LINE_PITCH));
         assert_eq!(layout(&prompt("Open", "Footlocker", None), &font()).texts.len(), 3);
         assert_eq!(layout(&prompt("Open", "Footlocker", None), &font()).glyph, None);
         // A PlayStation face button: its glyph left of a lone ")" (#1452).
@@ -786,10 +930,51 @@ mod tests {
         let [key, action, name] = &l.texts[..] else { panic!("{:?}", l.texts) };
         // The key's end is the gap before the action, whatever the name's width.
         assert_eq!((key.x + key.line.width, key.base), (action.x - KEY_GAP, ACTION_BASE));
-        assert_eq!(action.x + action.line.width / 2.0, ACTION_X);
-        assert_eq!((name.x + name.line.width / 2.0, name.base), (NAME_X, ACTION_BASE + LINE_PITCH));
+        // The key to the action's end centred on the middle line, and the name.
+        assert_eq!((key.x + action.x + action.line.width) / 2.0, MIDDLE);
+        assert_eq!((name.x + name.line.width / 2.0, name.base), (MIDDLE, ACTION_BASE + LINE_PITCH));
         let wider = layout(&prompt("Open", "A Much Longer Name", None), &font());
         assert_eq!(wider.texts[0], l.texts[0]);
+    }
+
+    /// The game font's ink, as font 7's: from 6 units into each letter's room to 4 past it.
+    fn font7_ink() -> Ink {
+        Ink::Picture(vec![Some((6.0, 21.0)); 256])
+    }
+
+    #[test]
+    fn the_lines_are_centred_by_their_ink() {
+        let ink = font7_ink();
+        let l = layout_inked(&prompt("Take", "Antivenom", Some(["0.5", "25"])), &font(), &ink);
+        let [key, action, name, ..] = &l.texts[..] else { panic!("{:?}", l.texts) };
+        // The row from the key's ink to the action's, and the name's ink, on the middle line.
+        assert_eq!(((key.x + 6.0) + (action.x + action.line.width + 4.0)) / 2.0, MIDDLE);
+        assert_eq!(((name.x + 6.0) + (name.x + name.line.width + 4.0)) / 2.0, MIDDLE);
+        assert_eq!(action.x - (key.x + key.line.width), KEY_GAP);
+        // The stem on the same line.
+        assert_eq!(l.divider.unwrap().x + STEM_IN_PICTURE, MIDDLE);
+        // A glyph in the key's place: the row from the glyph to the action's ink.
+        let ps = Prompt { key: "Cross)".into(), ..prompt("Take", "Antivenom", None) };
+        let l = layout_inked(&ps, &font(), &ink);
+        let (_, corner, _) = l.glyph.unwrap();
+        let action = &l.texts[1];
+        assert!((corner.x + action.x + action.line.width + 4.0).abs() < 1e-4, "{corner:?} {action:?}");
+    }
+
+    #[test]
+    fn a_sharp_lines_ink_is_its_shift_and_side_bearings_in() {
+        let Some(m) = crate::vector_font::metrics() else { return };
+        let em = 31.0;
+        let font = crate::vector_font::metric_table(m, em, 36.0, crate::vector_font::REGULAR);
+        let ink = Ink::Sharp { shift: 5.0, em, weight: crate::vector_font::REGULAR, caps: false };
+        let one = font.lines("1", None).remove(0);
+        let (start, end) = ink.span(&font, &one).unwrap();
+        // Roboto Condensed's "1": 0.08 of the em before its outline, 0.18 after.
+        assert!((start - (5.0 + 0.079 * em)).abs() < 0.1, "{start}");
+        assert!((end - (5.0 + one.width - 0.179 * em)).abs() < 0.1, "{end} of {}", one.width);
+        assert_eq!(ink.ended(&font, &one, 70.0) + end, 70.0);
+        // Without the font's own measures the letters fill their advances, shifted.
+        assert_eq!(Ink::Boxes.span(&font, &one), Some((0.0, one.width)));
     }
 
     #[test]

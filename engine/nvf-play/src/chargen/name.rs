@@ -235,7 +235,9 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &NameMenu, c: &mut Ctx) {
         if m.hover_ok && m.can_finish() {
             c.outline(p, ok_x, ok_y, ok_w, ok_h, amber(200.0));
         }
-        c.text(p, Which::Body, &m.ok, ok_x + ok_w - BUTTON_PAD, ok_y + BUTTON_PAD, Align::Right, color);
+        // The word's capitals in the middle of the box, in either font (`draw::cap_base`).
+        let ok_top = crate::chargen::draw::cap_base(c.face(Which::Body), ok_y + ok_h / 2.0, 1.0) - crate::chargen::draw::BODY_BASE;
+        c.text(p, Which::Body, &m.ok, ok_x + ok_w - BUTTON_PAD, ok_top, Align::Right, color);
         p.spawn((Button, OkButton, at(ok_x, ok_y, ok_w, ok_h)));
     });
 }

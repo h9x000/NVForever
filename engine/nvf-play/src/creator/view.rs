@@ -352,6 +352,16 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
     // The letters stand on a line three quarters of the font's size down [design: as
     // the menus' body text, chargen::draw::BODY_BASE for 31].
     let base = top + face.font.size * 0.75 * scale;
+    text_on(p, face, &line, s, x, base, scale, color);
+    w
+}
+
+/// `line` (the first line of `s`) `scale` times the font's size, starting at `x` and standing
+/// on `base`.
+#[allow(clippy::too_many_arguments)]
+fn text_on(p: &mut ChildSpawnerCommands, face: &Face, line: &Line, s: &str, x: f32, base: f32, scale: f32, color: Color) {
+    let line = line.clone();
+    let top = base - face.font.size * 0.75 * scale;
     let Some((image, size)) = &face.image else {
         // The sharp font (`crate::vector_font::screen_face`) and CJK letters: the line drawn as
         // the other screens draw it, scaled about its start on the baseline.
@@ -367,11 +377,11 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
                 n.spawn((Text::new(s.to_string()), TextFont { font_size: crate::interface::font_units(face.font.size * 0.75 * scale), ..default() }, TextColor(color)));
             });
         }
-        return w;
+        return;
     };
     if needs_cjk_line(face, &line) {
         set_scaled_bitmap_line(p, face, &line, x, base, scale, color, ());
-        return w;
+        return;
     }
     p.spawn(line_anchor(base)).with_children(|p| {
         for placed in &line.glyphs {
@@ -387,18 +397,28 @@ pub fn text(p: &mut ChildSpawnerCommands, face: &Face, s: &str, x: f32, top: f32
             ));
         }
     });
-    w
+}
+
+/// A button's title `scale` times the font's size, its ink in the middle of the box
+/// (`x`, `y`, `w`, `h`) across and its capitals' middle on the box's, in either font
+/// [design: owner 2026-11-27, "the text is not in the middle" of the creator's buttons; the
+/// title stood with its top 8 under the box's, its capitals about 6 units high].
+#[allow(clippy::too_many_arguments)]
+fn button_title(p: &mut ChildSpawnerCommands, face: &Face, s: &str, [x, y, w, h]: [f32; 4], scale: f32, color: Color) {
+    let line = first_line(face, s);
+    let start = crate::chargen::draw::ink_centre_x(face, &line, x + w / 2.0, scale);
+    let base = crate::chargen::draw::cap_base(face, y + h / 2.0, scale);
+    text_on(p, face, &line, s, start, base, scale, color);
 }
 
 pub fn fill(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, color: Color) {
     p.spawn((at(x, y, w, h), BackgroundColor(color)));
 }
 
+/// A box's four sides in one bordered node, so they always close
+/// (`crate::chargen::draw::outline`).
 fn outline(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, t: f32, color: Color) {
-    fill(p, x, y, w, t, color);
-    fill(p, x, y + h - t, w, t, color);
-    fill(p, x, y + t, t, h - 2.0 * t, color);
-    fill(p, x + w - t, y + t, t, h - 2.0 * t, color);
+    crate::chargen::draw::outline(p, x, y, w, h, t, color);
 }
 
 /// A piece of the game's, tinted `color` and stretched, or a plain fill without it.
@@ -681,7 +701,7 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layou
             fill(p, x, layout.actions_y, bw, 48.0, highlight());
         }
         outline(p, x, layout.actions_y, bw, 48.0, 2.0, if done || on { accent(1.0) } else { bone(0.35) });
-        text(p, &kit.head, a.title(), x + bw / 2.0, layout.actions_y + 8.0, 0.7, Align::Centre, bone(if on || done { 1.0 } else { 0.8 }));
+        button_title(p, &kit.head, a.title(), [x, layout.actions_y, bw, 48.0], 0.7, bone(if on || done { 1.0 } else { 0.8 }));
         text(p, &kit.body, a.hint(), x + bw / 2.0, layout.actions_y + 54.0, 0.5, Align::Centre, bone(FAINT));
         hits.push(Hit { rect: [x, layout.actions_y, bw, 48.0], what: HitWhat::Action(i) });
     }

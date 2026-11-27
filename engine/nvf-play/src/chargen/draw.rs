@@ -3,7 +3,7 @@
 //! at the corners, the highlight box, text set left, right or centred). Lengths are in
 //! the interface's units (960 to the view's height), from the parent node's top left.
 
-use crate::interface::{amber, at, plain_font, set_line, Face, Picture, Pictures};
+use crate::interface::{amber, at, plain_font, set_line, u, Face, Picture, Pictures};
 use bevy::prelude::*;
 use fnv_font::{Font, Line};
 use nvf_assets::GameData;
@@ -66,6 +66,53 @@ pub enum Align {
 /// The first line of a text in a font (all of it when it has no line breaks).
 pub fn first_line(font: &Font, s: &str) -> Line {
     font.lines(s, None).into_iter().next().unwrap_or_default()
+}
+
+/// A rectangle's four sides, `thick` wide, as one box with a border. Four lines of their own
+/// each took their place and their length to the pixel on their own, so at some sizes a side
+/// came out a pixel short of the line it should meet or a pixel past its end [observed: the
+/// owner's shots of the creator's buttons at 50% menu scale on a 4K screen, 2026-11-27]; a
+/// border is laid out with its box and always closes.
+pub fn outline(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, thick: f32, color: Color) {
+    p.spawn((Node { border: UiRect::all(u(thick)), ..at(x, y, w, h) }, BorderColor::all(color)));
+}
+
+/// The baseline that puts a line's capitals (their ink: the game font's pictures hold a glow
+/// round the letter, as much over it as under the line) with their middle on `mid`, for a
+/// face drawn `scale` times its size [design; observed: the middle of the pictures of H, D,
+/// E, O and 0 is that of their ink within half a unit in fonts 1, 2, 6 and 8].
+pub fn cap_base(face: &Face, mid: f32, scale: f32) -> f32 {
+    mid + crate::quick_loot::cap(face) * scale / 2.0
+}
+
+/// The other way round: the middle of the capitals of a line standing on `base`.
+pub fn cap_mid(face: &Face, base: f32, scale: f32) -> f32 {
+    base - crate::quick_loot::cap(face) * scale / 2.0
+}
+
+/// Where a line's ink runs from its start, left and right, in the face's units: from the
+/// first picture's left edge to the last one's right (the glow round a game font's letters
+/// is as wide on both sides, so their middle is the ink's), not its advances, which end with
+/// the room after the last letter. A sharp line is drawn `shift` right of its place
+/// (`crate::interface::VectorFace`) and its pictures are its advances.
+pub fn ink_span(face: &Face, line: &Line) -> (f32, f32) {
+    if let Some(v) = &face.vector {
+        return (v.shift, v.shift + line.width);
+    }
+    line.glyphs
+        .iter()
+        .filter_map(|placed| {
+            let g = face.font.glyph(placed.code);
+            g.drawn().then_some((placed.x + g.before, placed.x + g.before + g.width))
+        })
+        .reduce(|(l, r), (a, b)| (l.min(a), r.max(b)))
+        .unwrap_or((0.0, line.width))
+}
+
+/// Where a line drawn `scale` times its size starts so that its ink's middle is on `mid`.
+pub fn ink_centre_x(face: &Face, line: &Line, mid: f32, scale: f32) -> f32 {
+    let (l, r) = ink_span(face, line);
+    mid - (l + r) / 2.0 * scale
 }
 
 pub struct Ctx<'a> {
@@ -132,12 +179,7 @@ impl Ctx<'_> {
 
     /// A rectangle's four sides.
     pub fn outline(&mut self, p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, color: Color) {
-        for yy in [y, y + h - THICK] {
-            self.line(p, x, yy, w, THICK, color);
-        }
-        for xx in [x, x + w - THICK] {
-            self.line(p, xx, y + THICK, THICK, h - 2.0 * THICK, color);
-        }
+        outline(p, x, y, w, h, THICK, color);
     }
 
     pub fn face(&self, which: Which) -> &Face {
@@ -174,5 +216,55 @@ impl Ctx<'_> {
 
     pub fn width(&self, which: Which, s: &str) -> f32 {
         first_line(&self.face(which).font, s).width
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// A face of 31 whose letters are pictures 10 wide, `ascent` over the line and `height`
+    /// high, with `before` and `after` room round them.
+    fn face(ascent: f32, height: f32, before: f32, after: f32) -> Face {
+        let mut font = plain_font(31.0, 12.0);
+        for c in b'A'..=b'Z' {
+            font.glyphs[usize::from(c)] = fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 10.0, height, before, after, ascent };
+        }
+        Face { font, image: None, vector: None }
+    }
+
+    #[test]
+    fn a_line_is_centred_by_its_ink() {
+        // The game font's way: 2 of glow round 22 of ink, the last picture 3 past its advance.
+        let raster = face(24.0, 26.0, 0.0, -3.0);
+        let line = first_line(&raster.font, "DONE");
+        assert_eq!(line.width, 4.0 * 7.0);
+        assert_eq!(ink_span(&raster, &line), (0.0, 31.0));
+        assert_eq!(ink_centre_x(&raster, &line, 100.0, 1.0), 100.0 - 15.5);
+        assert_eq!(ink_centre_x(&raster, &line, 100.0, 0.5), 100.0 - 7.75);
+        // Capitals 22 high, glow or not: their middle 11 over the line.
+        assert_eq!(cap_base(&raster, 50.0, 1.0), 61.0);
+        assert_eq!(cap_mid(&raster, 61.0, 1.0), 50.0);
+        let mut sharp = face(22.0, 22.0, 0.0, 0.0);
+        assert_eq!(cap_base(&sharp, 50.0, 0.5), 55.5);
+        // A sharp line is drawn `shift` right: its ink runs from there.
+        sharp.vector = Some(crate::interface::VectorFace { font: Handle::default(), em: 31.0, weight: 400, base: 24.0, caps: false, shift: 3.0 });
+        let line = first_line(&sharp.font, "DONE");
+        assert_eq!(ink_span(&sharp, &line), (3.0, 43.0));
+        // Nothing drawn (the figures have no pictures here): the advances.
+        assert_eq!(ink_span(&raster, &first_line(&raster.font, "12")), (0.0, 24.0));
+    }
+
+    #[test]
+    fn an_outline_is_one_bordered_box() {
+        let mut world = World::new();
+        let root = world.spawn_empty().id();
+        world.commands().entity(root).with_children(|p| outline(p, 10.0, 20.0, 100.0, 48.0, THICK, Color::WHITE));
+        world.flush();
+        let mut q = world.query::<(&Node, &BorderColor)>();
+        let all: Vec<_> = q.iter(&world).collect();
+        assert_eq!(all.len(), 1, "one node, not four lines");
+        assert_eq!(all[0].0.border, UiRect::all(u(THICK)));
+        assert_eq!(*all[0].1, BorderColor::all(Color::WHITE));
     }
 }

@@ -633,6 +633,26 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
   [design: owner 2026-11-23, "Only menus/hud/minigames"]
 - Registered in `engine/nvf-play/src/pause.rs` (`MenuFont`), the font in
   `engine/nvf-play/src/vector_font.rs`
+### `box-background`: Box background
+
+- On the page: How dark the box behind message boxes and the dialogue is. Quick Loot has its own.
+- A slider: 0% to 100% in steps of 5%; 70% by default, as Quick Loot's. The message boxes'
+  and the dialogue's backing is plain black at this darkness with sharp edges, set over the
+  frame only (it was the game's soft dark picture, wider than the box) [design: owner
+  2026-11-27].
+- Registered in `engine/nvf-play/src/interface.rs` (`box_rows`)
+
+### `subtitle-position`: Subtitle position
+
+- On the page: Moves the subtitles and the dialogue's words up or down the screen. 0% is the
+  original's place.
+- A slider: 200 interface units (about 21% of the view's height) up or down, in steps of 10
+  units, shown as a part of the view's height ("+5%" up); the original's place by default.
+  It moves the HUD's subtitles and the dialogue menu's line or choices with its band (the
+  speaker's name stays), never above the safe zone's top nor lower than the menu's room at
+  the foot [design: owner 2026-11-27].
+- Registered in `engine/nvf-play/src/interface.rs` (`box_rows`)
+
 ### `sneak-gauges`: Light and noise gauges while sneaking
 
 - On the page: On: two bars under the sneak word show how lit you are and how much noise you

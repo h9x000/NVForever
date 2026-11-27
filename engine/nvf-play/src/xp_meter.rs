@@ -21,6 +21,7 @@
 
 use crate::hud::HudView;
 use crate::interface::{amber, at, bc_supported, letters_changed, plain_font, screen_face, set_text, texture, u, Face, Set};
+use crate::reticle::Ink;
 use crate::script::{with_world, ScriptState};
 use crate::sfx::{PlaySound, Sfx};
 use crate::sim::SimState;
@@ -46,10 +47,8 @@ const POINTER_PATH: &str = "textures\\interface\\hud\\glow_xp_bar_pointer.dds";
 const POINTER_X: (f32, f32) = (55.0, 270.0);
 /// `XPLastLevel` ends at x 70 (right-justified), `XPNextLevel` starts at 315, both in the
 /// menus' default font 1; `XPAmount` ends at 315 in font 8, `XPLabel` ("XP") at 350 in
-/// font 7, `XPLevelUp` ("LEVEL UP") at 360 in font 8.
-const LAST_LEVEL_END: f32 = 70.0;
-const NEXT_LEVEL_X: f32 = 315.0;
-const AMOUNT_END: f32 = 315.0;
+/// font 7, `XPLevelUp` ("LEVEL UP") at 360 in font 8. The texts are placed by their ink
+/// (below), at these places as the game's fonts ink them.
 const LABEL_END: f32 = 350.0;
 const LEVEL_UP_END: f32 = 360.0;
 const LEVEL_FONT: &str = "textures\\fonts\\glow_monofonto_large.fnt";
@@ -75,6 +74,27 @@ const POINTER_Y: f32 = 46.0 - 39.0;
 const LEVEL_BASE: f32 = 49.0;
 const AMOUNT_BASE: f32 = 118.0;
 const LABEL_BASE: f32 = 103.0;
+
+// Where the texts' ink stands (`crate::reticle::Ink`), so the meter looks the same in the
+// game's fonts and the sharp one, whose letters stand elsewhere in their room (Roboto
+// Condensed's "1" ends 0.18 of the em before its room's end, a few units left of the game
+// font's) [design: playtest of 2026-11-27, the meter's texts out of line]:
+// - the last level's ink ends, and the next level's starts, `LEVEL_GAP` from the middle of
+//   the bar's end tick, the same on both sides [design; observed: the file's places in font
+//   1, whose figures are inked from 2-3 units into their room to 0-1 before its end, put
+//   them 17.5 and 14.5 from the ticks];
+// - "XP"'s ink ends where font 7's does at the file's place, 4 past it, and the amount's
+//   `AMOUNT_GAP` before "XP"'s starts, as at the file's places in fonts 8 and 7; "LEVEL UP"'s
+//   ends where font 8's "P" does, 8 past its place [observed: the fonts' pictures in
+//   Fallout - Textures2.bsa, read 2026-11-27].
+
+/// The bar's first and last ticks' middles (above).
+const FIRST_TICK: f32 = 86.5;
+const LAST_TICK: f32 = 302.5;
+const LEVEL_GAP: f32 = 16.0;
+const LABEL_INK_END: f32 = LABEL_END + 4.0;
+const AMOUNT_GAP: f32 = 5.0;
+const LEVEL_UP_INK_END: f32 = LEVEL_UP_END + 8.0;
 /// "LEVEL UP" stands 16 above the amount's line [observed: hud_compare xp_levelup_menu at
 /// 1280 x 720, the original's LEVEL UP from y 535 pixels, this HUD's from 547 on the
 /// amount's line (xp_level_up); documented: hud_main_menu.xml puts `XPLevelUp` at y 70,
@@ -511,27 +531,51 @@ struct FadedFill;
 struct Kit {
     bracket: Option<Handle<Image>>,
     pointer: Option<Handle<Image>>,
-    level: Face,
-    label: Face,
-    amount: Face,
+    /// The level's, the label's and the amount's faces, and where their letters are inked.
+    faces: [(Face, Ink); 3],
 }
 
-/// The level's, the label's and the amount's faces.
-fn faces(d: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> [Face; 3] {
-    [
-        screen_face(LEVEL_FONT, plain_font(36.0, 15.0), d, images, bc),
-        screen_face(LABEL_FONT, plain_font(36.0, 15.0), d, images, bc),
-        screen_face(AMOUNT_FONT, plain_font(52.0, 22.0), d, images, bc),
-    ]
+/// The level's, the label's and the amount's faces, and their ink.
+fn faces(d: Option<&GameData>, images: &mut Assets<Image>, bc: bool) -> [(Face, Ink); 3] {
+    [(LEVEL_FONT, plain_font(36.0, 15.0)), (LABEL_FONT, plain_font(36.0, 15.0)), (AMOUNT_FONT, plain_font(52.0, 22.0))].map(|(path, stand_in)| {
+        let face = screen_face(path, stand_in, d, images, bc);
+        let ink = Ink::of(&face, images);
+        (face, ink)
+    })
 }
 
-/// Where the amount, or "LEVEL UP" in its place, ends and the line it stands on.
-fn third_line(level_up: bool) -> (f32, f32) {
-    if level_up {
-        (LEVEL_UP_END, LEVEL_UP_BASE)
-    } else {
-        (AMOUNT_END, AMOUNT_BASE)
+/// Which of the meter's faces a text is drawn in.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+enum In {
+    Level = 0,
+    Label = 1,
+    Amount = 2,
+}
+
+/// The texts set out in the meter, each with its face (`fonts` in [`In`]'s order): the last
+/// and the next level over the bar's ends, the amount and "XP" under its right end; or
+/// "LEVEL UP" alone in the amount's face (`third`).
+fn set_out(fonts: [(&Font, &Ink); 3], (last, next, third): (&str, &str, &str)) -> Vec<(In, Set)> {
+    let line = |w: In, t: &str| fonts[w as usize].0.lines(t, None).into_iter().next();
+    let [(level_font, level_ink), (label_font, label_ink), (amount_font, amount_ink)] = fonts;
+    if third == LEVEL_UP_WORD {
+        return line(In::Amount, third).map(|l| (In::Amount, Set { x: amount_ink.ended(amount_font, &l, LEVEL_UP_INK_END), line: l, base: LEVEL_UP_BASE })).into_iter().collect();
     }
+    let mut out = Vec::new();
+    if let Some(l) = line(In::Level, last) {
+        out.push((In::Level, Set { x: level_ink.ended(level_font, &l, FIRST_TICK - LEVEL_GAP), line: l, base: LEVEL_BASE }));
+    }
+    if let Some(l) = line(In::Level, next) {
+        out.push((In::Level, Set { x: level_ink.started(level_font, &l, LAST_TICK + LEVEL_GAP), line: l, base: LEVEL_BASE }));
+    }
+    // "XP" first: the amount ends its gap before "XP"'s ink starts.
+    let label = line(In::Label, XP_WORD).map(|l| Set { x: label_ink.ended(label_font, &l, LABEL_INK_END), line: l, base: LABEL_BASE });
+    let label_start = label.as_ref().map_or(LABEL_INK_END, |s| s.x + label_ink.span(label_font, &s.line).map_or(0.0, |i| i.0));
+    if let Some(l) = line(In::Amount, third) {
+        out.push((In::Amount, Set { x: amount_ink.ended(amount_font, &l, label_start - AMOUNT_GAP), line: l, base: AMOUNT_BASE }));
+    }
+    out.extend(label.map(|s| (In::Label, s)));
+    out
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -560,7 +604,7 @@ fn draw(
         // New letters (`crate::vector_font::screen_face`): the faces made again, the words
         // drawn again.
         if let Some(k) = kit.as_mut() {
-            [k.level, k.label, k.amount] = faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()));
+            k.faces = faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()));
         }
         *shown_texts = None;
     }
@@ -572,14 +616,7 @@ fn draw(
         let d = data.as_deref();
         let mut read = |path: &str| d.and_then(|d| texture(path, d, &mut images, bc)).map(|t| t.0);
         let (bracket, pointer) = (read(BRACKET_PATH), read(POINTER_PATH));
-        let [level, label, amount] = faces(d, &mut images, bc);
-        let loaded = Kit {
-            bracket,
-            pointer,
-            level,
-            label,
-            amount,
-        };
+        let loaded = Kit { bracket, pointer, faces: faces(d, &mut images, bc) };
         spawn(&mut commands, &loaded);
         *kit = Some(loaded);
         *shown_texts = None;
@@ -600,28 +637,9 @@ fn draw(
     if *shown_texts != now {
         if let (Ok(e), Some((last, next, third))) = (texts.single(), &now) {
             commands.entity(e).despawn_related::<Children>().with_children(|p| {
-                let line = |f: &Font, t: &str| f.lines(t, None).into_iter().next();
-                if let Some(l) = line(&kit.level.font, last).filter(|_| third != LEVEL_UP_WORD) {
-                    let x = LAST_LEVEL_END - l.width;
-                    set_text(p, &kit.level, &Set { line: l, x, base: LEVEL_BASE }, Vec2::ZERO, colour, Faded);
-                }
-                if let Some(l) = line(&kit.level.font, next).filter(|_| third != LEVEL_UP_WORD) {
-                    set_text(p, &kit.level, &Set { line: l, x: NEXT_LEVEL_X, base: LEVEL_BASE }, Vec2::ZERO, colour, Faded);
-                }
-                if third == LEVEL_UP_WORD {
-                    if let Some(l) = line(&kit.amount.font, third) {
-                        let (end, base) = third_line(true);
-                        set_text(p, &kit.amount, &Set { x: end - l.width, line: l, base }, Vec2::ZERO, colour, Faded);
-                    }
-                } else {
-                    if let Some(l) = line(&kit.amount.font, third) {
-                        let (end, base) = third_line(false);
-                        set_text(p, &kit.amount, &Set { x: end - l.width, line: l, base }, Vec2::ZERO, colour, Faded);
-                    }
-                    if let Some(l) = line(&kit.label.font, XP_WORD) {
-                        let x = LABEL_END - l.width;
-                        set_text(p, &kit.label, &Set { line: l, x, base: LABEL_BASE }, Vec2::ZERO, colour, Faded);
-                    }
+                let fonts = kit.faces.each_ref().map(|(f, i)| (&f.font, i));
+                for (w, set) in set_out(fonts, (last, next, third)) {
+                    set_text(p, &kit.faces[w as usize].0, &set, Vec2::ZERO, colour, Faded);
                 }
             });
         }
@@ -737,12 +755,52 @@ mod tests {
         assert_eq!(alternate_level_sound(10, (5, ""), (0, "UIB")), None);
     }
 
+    /// Fonts of 36 and 52 lines, every letter 15 and 22 wide, inked as the game's fonts 1, 7
+    /// and 8 ink theirs: from 2, 6 and 8 units into their room to 1 before, 4 and 6 past it.
+    fn inked() -> ([Font; 3], [Ink; 3]) {
+        let ink = |a: f32, b: f32| Ink::Picture(vec![Some((a, b)); 256]);
+        ([plain_font(36.0, 15.0), plain_font(36.0, 15.0), plain_font(52.0, 22.0)], [ink(2.0, 14.0), ink(6.0, 19.0), ink(8.0, 28.0)])
+    }
+
     /// T12e: "LEVEL UP" stands 16 above the amount's line (the original's 12 pixels higher
-    /// at 720 lines), ending at its own x.
+    /// at 720 lines), alone, its ink ending at its own place.
     #[test]
     fn level_up_stands_above_the_amounts_line() {
-        assert_eq!(third_line(false), (AMOUNT_END, AMOUNT_BASE));
-        assert_eq!(third_line(true), (LEVEL_UP_END, AMOUNT_BASE - 16.0));
+        let (fonts, inks) = inked();
+        let fonts = [(&fonts[0], &inks[0]), (&fonts[1], &inks[1]), (&fonts[2], &inks[2])];
+        let out = set_out(fonts, ("1", "2", LEVEL_UP_WORD));
+        let [(In::Amount, s)] = &out[..] else { panic!("{out:?}") };
+        assert_eq!(s.base, AMOUNT_BASE - 16.0);
+        assert_eq!(s.x + inks[2].span(fonts[2].0, &s.line).unwrap().1, LEVEL_UP_END + 8.0);
+    }
+
+    /// The levels the same way off their end ticks, by their ink; "XP" ending where font 7's
+    /// does at the file's place and the amount its gap before it, under the bar's right end.
+    #[test]
+    fn the_meters_texts_stand_by_their_ink() {
+        let (fonts, inks) = inked();
+        let fonts = [(&fonts[0], &inks[0]), (&fonts[1], &inks[1]), (&fonts[2], &inks[2])];
+        let span = |w: In, s: &Set| {
+            let (a, b) = inks[w as usize].span(fonts[w as usize].0, &s.line).unwrap();
+            (s.x + a, s.x + b)
+        };
+        for (last, next) in [("1", "2"), ("9", "10"), ("29", "30")] {
+            let out = set_out(fonts, (last, next, "+10"));
+            let [(In::Level, l), (In::Level, n), (In::Amount, a), (In::Label, xp)] = &out[..] else { panic!("{out:?}") };
+            assert_eq!((l.base, n.base, a.base, xp.base), (LEVEL_BASE, LEVEL_BASE, AMOUNT_BASE, LABEL_BASE));
+            assert_eq!(FIRST_TICK - span(In::Level, l).1, span(In::Level, n).0 - LAST_TICK);
+            assert_eq!(span(In::Level, n).0 - LAST_TICK, LEVEL_GAP);
+            assert_eq!(span(In::Label, xp).1, LABEL_END + 4.0);
+            assert_eq!(span(In::Label, xp).0 - span(In::Amount, a).1, AMOUNT_GAP);
+            // Inked as the game's fonts are, "XP" and the amount end at the file's places.
+            assert_eq!((xp.x + xp.line.width, a.x + a.line.width), (LABEL_END, 315.0));
+        }
+        // Without the game's pictures: the rooms as they are.
+        let boxes = Ink::Boxes;
+        let plain = [(fonts[0].0, &boxes), (fonts[1].0, &boxes), (fonts[2].0, &boxes)];
+        let out = set_out(plain, ("1", "2", "+10"));
+        assert_eq!(out[0].1.x + out[0].1.line.width, FIRST_TICK - LEVEL_GAP);
+        assert_eq!(out[1].1.x, LAST_TICK + LEVEL_GAP);
     }
 
     #[test]

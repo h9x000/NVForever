@@ -45,6 +45,11 @@ const SCROLL_STEP: f32 = 26.0;
 /// end at 403.
 const MARK_AT: f32 = 15.0;
 const MARK: f32 = 25.0;
+/// The mark as drawn: three quarters of the file's 25, in the middle of the file's square
+/// across, and with its middle on the first line's capitals ([`mark_box`]) [owner
+/// 2026-11-27: "fix the box alignment in selected items make the boxes a bit smaller"; the
+/// file's square at 15 down stood over the letters' middle in the sharp font].
+const MARK_DRAWN: f32 = MARK * 0.75;
 const NAME_X: f32 = 40.0;
 const TEXT_Y: f32 = 20.0;
 const PRICE_RIGHT: f32 = 403.0;
@@ -273,6 +278,16 @@ fn row_lines(m: &MenuModel, side: Side, kit: &Kit) -> (Vec<Vec<Line>>, Vec<f32>)
     let texts: Vec<Vec<Line>> = rows.iter().map(|r| kit.body.font.lines(&row_text(r), Some(wrap/kit.text_size))).collect();
     let heights = texts.iter().map(|t| (row_height(t.len())*kit.text_size).max(ROW_H)).collect();
     (texts, heights)
+}
+
+/// Where a row's mark stands in the row: left, top, side. [`MARK_DRAWN`] square, in the
+/// middle of the file's square across, its middle on the middle of the capitals of the row's
+/// first line, which stands on `first_base` in a face drawn `scale` times its size
+/// (`crate::chargen::draw::cap_mid`): by the letters' ink, so the game font's glow and the
+/// sharp font's taller capitals place it alike.
+fn mark_box(face: &Face, first_base: f32, scale: f32) -> [f32; 4] {
+    let mid = crate::chargen::draw::cap_mid(face, first_base, scale);
+    [MARK_AT + (MARK - MARK_DRAWN) / 2.0, mid - MARK_DRAWN / 2.0, MARK_DRAWN, MARK_DRAWN]
 }
 
 /// The first row drawn from the list's own first row: a selection the pointer made stays
@@ -552,19 +567,15 @@ fn list(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side, x0
                     let h = row_h - 1.0;
                     let fill = amber(128.0).with_alpha((HIGHLIGHT_FILL / 255.0).powf(2.2));
                     row.spawn((at(0.0, 0.0, row_w, h), BackgroundColor(fill)));
-                    let line = amber(HIGHLIGHT_LINE);
-                    for yy in [0.0, h - THICK] {
-                        c.line(row, 0.0, yy, row_w, THICK, line);
-                    }
-                    for xx in [0.0, row_w - THICK] {
-                        c.line(row, xx, THICK, THICK, h - 2.0 * THICK, line);
-                    }
+                    crate::chargen::draw::outline(row, 0.0, 0.0, row_w, h, THICK, amber(HIGHLIGHT_LINE));
                 }
                 // [documented] A filled square for an equipped item, an open one for an
                 // item put up for the trade.
                 let mark = if r.bartered { Some("square.dds") } else if r.equipped || r.loaded { Some("square_filled.dds") } else { None };
                 if let Some(mark) = mark {
-                    c.image(row, mark, at(MARK_AT, MARK_AT, MARK, MARK), bright);
+                    let first_base = (TEXT_Y + BODY_BASE) * c.kit.text_size;
+                    let [x, y, w, h] = mark_box(&c.kit.body, first_base, c.kit.text_size);
+                    c.image(row, mark, at(x, y, w, h), bright);
                 }
                 if let Some(icon) = r.ysi.as_ref().and_then(|d| d.icon.as_deref()) {
                     c.image(row, icon, at(NAME_X, MARK_AT, 24.0, 24.0), bright);
@@ -848,6 +859,30 @@ mod tests {
         assert_eq!(flow_figure_x(Flow::Sell, 70.0), 20.0 + 449.0 + 20.0 + 32.5 + 7.5);
         assert_eq!(flow_figure_x(Flow::Buy, 90.0), 20.0 + 449.0 + 32.5 - 20.0);
         assert_eq!(flow_figure_x(Flow::Sell, 90.0), 20.0 + 449.0 + 20.0 + 40.0 + 20.0);
+    }
+
+    /// A face whose `H` is a picture `ascent` over the line and `height` high.
+    fn face_with_h(ascent: f32, height: f32) -> Face {
+        let mut font = plain_font(31.0, 12.0);
+        font.glyphs[usize::from(b'H')] = fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 14.0, height, before: 0.0, after: 0.0, ascent };
+        Face { font, image: None, vector: None }
+    }
+
+    #[test]
+    fn the_mark_is_smaller_and_on_the_capitals_middle() {
+        // The game's font 2: H's picture 24 over the line and 26 high (2 of glow over its 22
+        // of ink); a sharp face's table: H as high as its capitals, 22.
+        for face in [face_with_h(24.0, 26.0), face_with_h(22.0, 22.0)] {
+            let [x, y, w, h] = mark_box(&face, 35.0, 1.0);
+            assert_eq!((w, h), (MARK * 0.75, MARK * 0.75));
+            // Across: in the middle of the file's square.
+            assert_eq!(x + w / 2.0, MARK_AT + MARK / 2.0);
+            // Down: its middle on the capitals' middle, 11 over the line.
+            assert_eq!(y + h / 2.0, 35.0 - 11.0);
+        }
+        // Larger letters (the readability size) move it with their middle.
+        let [_, y, _, h] = mark_box(&face_with_h(22.0, 22.0), 52.5, 1.5);
+        assert_eq!(y + h / 2.0, 52.5 - 16.5);
     }
 
     /// Issue #1827: with a controller each list names the trigger that picks it, as the
