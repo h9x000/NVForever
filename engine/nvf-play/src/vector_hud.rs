@@ -119,6 +119,11 @@ pub struct Part {
     pub form: Form,
     pub fades: Vec<Fade>,
     pub cut: bool,
+    /// A polygon whose corners are not set on whole pixels: its angles exactly as drawn (the
+    /// crosshair's right-angled arrows, a slant) ([`polyline`]).
+    pub exact: bool,
+    /// A polygon of three points that is a rounded corner ([`corner_arc`]).
+    pub ring: bool,
 }
 
 impl Part {
@@ -140,12 +145,12 @@ impl Part {
 
 /// A rectangle from `x0, y0` to `x1, y1`.
 pub fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Part {
-    Part { form: Form::Rect(Rect::new(x0, y0, x1, y1)), fades: Vec::new(), cut: false }
+    Part { form: Form::Rect(Rect::new(x0, y0, x1, y1)), fades: Vec::new(), cut: false, exact: false, ring: false }
 }
 
 /// A polygon through `points`.
 pub fn poly(points: &[(f32, f32)]) -> Part {
-    Part { form: Form::Poly(points.iter().map(|&(x, y)| Vec2::new(x, y)).collect()), fades: Vec::new(), cut: false }
+    Part { form: Form::Poly(points.iter().map(|&(x, y)| Vec2::new(x, y)).collect()), fades: Vec::new(), cut: false, exact: false, ring: false }
 }
 
 /// A line `width` thick along `points` (open), its corners mitred and its ends square at the
@@ -166,9 +171,21 @@ pub fn polyline(points: &[(f32, f32)], width: f32) -> Part {
         };
         n * half
     };
-    let mut out: Vec<(f32, f32)> = (0..v.len()).map(|i| (v[i] + offset(i)).into()).collect();
-    out.extend((0..v.len()).rev().map(|i| -> (f32, f32) { (v[i] - offset(i)).into() }));
-    poly(&out)
+    let mut out: Vec<Vec2> = (0..v.len()).map(|i| v[i] + offset(i)).collect();
+    out.extend((0..v.len()).rev().map(|i| v[i] - offset(i)));
+    Part { form: Form::Poly(out), fades: Vec::new(), cut: false, exact: true, ring: false }
+}
+
+/// A quarter circle [`LINE`] thick round `center`, where a line across and an upright meet,
+/// from `across` (on the line's middle, the line ending there) to `down` (on the upright's
+/// middle, the upright starting there): the game's corners, whose arc stands round the
+/// corner's point and meets each line square on [observed: the corner message's bracket and
+/// the prompt's divider, `interfaceshared0.dds`]. `center` is where the two lines' middles
+/// meet; it stands on the lines' pixels as they are drawn ([`Snap`]). Kept as a polygon of
+/// the three points ([`Part::ring`]), so moving the part moves it.
+pub fn corner_arc(center: (f32, f32), across: (f32, f32), down: (f32, f32)) -> Part {
+    let v = |p: (f32, f32)| Vec2::new(p.0, p.1);
+    Part { form: Form::Poly(vec![v(center), v(across), v(down)]), fades: Vec::new(), cut: false, exact: false, ring: true }
 }
 
 /// A decoration: its box (the picture's node, interface units) and its parts in it.
@@ -209,7 +226,7 @@ impl Shape {
                     Form::Poly(v) => Form::Poly(v.into_iter().map(|q| q * k).collect()),
                 },
                 fades: p.fades.into_iter().map(|f| f.scaled(k)).collect(),
-                cut: p.cut,
+                ..p
             })
             .collect();
         Shape::new(size, parts)
@@ -387,8 +404,35 @@ fn cover(parts: &[&Part], snap: &Snap, w: usize, h: usize, scale: f32) -> Vec<f3
                     }
                 }
             }
+            Form::Poly(points) if part.ring && points.len() == 3 => {
+                let (center, across, down) = (points[0], points[1], points[2]);
+                // The middle of the lines as drawn: a line's near edge's pixel and half its
+                // whole-pixel thickness.
+                let t = whole(LINE, scale);
+                let c = Vec2::new(snap.edge(0, center.x - LINE / 2.0), snap.edge(1, center.y - LINE / 2.0)) + t / 2.0;
+                let sign = Vec2::new((across.x - center.x).signum(), (down.y - center.y).signum());
+                let r = (across.x - center.x).abs() * scale;
+                let (lo, hi) = (c - (r + t), c + (r + t));
+                let step = 1.0 / SAMPLES as f32;
+                for y in (lo.y.max(0.0) as usize)..(hi.y.min(h as f32).max(0.0) as usize) {
+                    for x in (lo.x.max(0.0) as usize)..(hi.x.min(w as f32).max(0.0) as usize) {
+                        let mut hits = 0;
+                        for sy in 0..SAMPLES {
+                            for sx in 0..SAMPLES {
+                                let p = Vec2::new(x as f32 + (sx as f32 + 0.5) * step, y as f32 + (sy as f32 + 0.5) * step);
+                                let d = (p - c) * sign;
+                                hits += usize::from(d.x >= 0.0 && d.y >= 0.0 && (d.length() - r).abs() <= t / 2.0);
+                            }
+                        }
+                        if hits > 0 {
+                            let cell = &mut alpha[y * w + x];
+                            *cell = cell.max(hits as f32 / (SAMPLES * SAMPLES) as f32);
+                        }
+                    }
+                }
+            }
             Form::Poly(points) => {
-                let v: Vec<Vec2> = points.iter().map(|&p| snap.point(p)).collect();
+                let v: Vec<Vec2> = points.iter().map(|&p| if part.exact { p * scale } else { snap.point(p) }).collect();
                 let (lo, hi) = v.iter().fold((Vec2::splat(f32::MAX), Vec2::splat(f32::MIN)), |(lo, hi), p| (lo.min(*p), hi.max(*p)));
                 let (x0, x1) = (lo.x.floor().max(0.0) as usize, (hi.x.ceil().max(0.0) as usize).min(w));
                 let (y0, y1) = (lo.y.floor().max(0.0) as usize, (hi.y.ceil().max(0.0) as usize).min(h));
@@ -571,13 +615,19 @@ impl Decoration {
         Decoration::MessageBracket,
     ];
 
-    /// The shape, in its picture's box.
+    /// The shape, in its picture's box, as drawn at 960 lines and 100% (a pixel a unit).
     pub fn shape(self) -> Shape {
+        self.shape_at(1.0)
+    }
+
+    /// The shape as drawn at `scale` pixels a unit: the brackets' caps and marks stand where
+    /// the bars' pips at that scale end ([`pips_in`]).
+    pub fn shape_at(self, scale: f32) -> Shape {
         let marks = |parts: Vec<Part>| Shape::from_texels(Vec2::splat(64.0), Vec2::splat(MARK_BOX), parts);
         match self {
-            Decoration::LeftBracket => corner(false),
-            Decoration::RightBracket => corner(true),
-            Decoration::EnemyBracket => enemy_bracket(),
+            Decoration::LeftBracket => corner(false, scale),
+            Decoration::RightBracket => corner(true, scale),
+            Decoration::EnemyBracket => enemy_bracket(scale),
             Decoration::ConditionGround => condition_bar(true),
             Decoration::ConditionFill => condition_bar(false),
             Decoration::XpBracket => xp_bracket(),
@@ -596,11 +646,11 @@ impl Decoration {
             Decoration::CrossLeft => Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]),
             Decoration::CrossRight => Shape { flip_x: Some(32.0), ..Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]) },
             Decoration::CrossFilled => {
-                // The box's left side, its arms stopping short of the middle, a line's
-                // thickness clear of the chevron all round, and the left chevron; the right
-                // half the left's mirror [design: owner's test of 2026-11-27, "make sure they
-                // do not touch the crosshair"].
-                let (x0, top, bottom) = (13.0, 18.9, 44.1);
+                // The box's left side, its arms stopping short of the middle, 5 units clear
+                // of the chevron all round, and the left chevron; the right half the left's
+                // mirror [design: owner's test of 2026-11-27, "make sure they do not touch the
+                // crosshair"; the inspection, "move the brackets a bit further"].
+                let (x0, top, bottom) = (11.0, 16.9, 46.1);
                 let parts = vec![rect(x0, top, x0 + LINE, bottom), rect(x0, top, 27.0, top + LINE), rect(x0, bottom - LINE, 27.0, bottom), chevron()];
                 Shape { mirror_x: Some(32.0), ..Shape::new(Vec2::splat(64.0), parts) }
             }
@@ -613,9 +663,18 @@ impl Decoration {
             Decoration::PromptDivider => prompt_divider(),
             // [observed: the picture's line rows 14-17 from x 33 and its upright x 33-36 down to
             // row 178, both faded at their far ends; here ending sharply where they fade]
+            // Its corner a quarter circle round the corner's point [observed: the atlas
+            // piece, the line turning down over about 8 texels each way; design: the
+            // inspection, "your version is missing the quarter circle"].
             Decoration::MessageBracket => {
-                let (x, y) = (33.0 * 470.0 / 512.0, 14.0 * 0.75);
-                Shape::new(Vec2::new(470.0, 192.0), vec![rect(x, y, 430.0, y + LINE), rect(x, y, x + LINE, 130.0)])
+                let (x, y, r) = (33.0 * 470.0 / 512.0, 14.0 * 0.75, 13.0);
+                let c = (x + LINE / 2.0, y + LINE / 2.0);
+                let parts = vec![
+                    rect(c.0 + r - LINE / 2.0, y, 430.0, y + LINE),
+                    rect(x, c.1 + r - LINE / 2.0, x + LINE, 130.0),
+                    corner_arc(c, (c.0 + r, c.1), (c.0, c.1 + r)),
+                ];
+                Shape::new(Vec2::new(470.0, 192.0), parts)
             }
         }
     }
@@ -633,7 +692,9 @@ const PLACE: [(f32, f32); 3] = [(19.5, 7.5), (30.5, 21.0), (8.5, 21.0)];
 /// standing as far from the right one as it is wide (its tip 4.4 units left of the middle,
 /// [`CHEVRON_TIP`]) [design: owner's test of 2026-11-27, "the crosshair should have some
 /// space between them by default - make the space the same as it the width of the arrow";
-/// the picture's tips are 2 units either side of the middle].
+/// the picture's tips are 2 units either side of the middle]. Its arms meet at a right
+/// angle, its corners not moved onto whole pixels ([`Part::exact`]) [design: the inspection,
+/// "make the arrows have perfect 90 degree angle"].
 fn chevron() -> Part {
     let a = CHEVRON_LEFT;
     polyline(&[(a, 26.0), (a + 5.5, 31.5), (a, 37.0)], LINE)
@@ -659,22 +720,18 @@ pub const CORNER_TURN: f32 = 380.0;
 /// from its cap and upright as the health bar from its own [design: owner 2026-11-27, "make
 /// sure the decoration on the right/left are identical"]; in place of the notch, its divider
 /// at 204 (here 176) with the lower line broken beside it [observed].
-/// The left corner bracket's upright's inner side and its step cap's upright side, in its
-/// picture's units ([`corner`]); the right bracket's are these turned over within
-/// [`CORNER_TURN`].
-pub const CORNER_UPRIGHT_INNER: f32 = 13.5 + LINE;
-pub const CORNER_CAP: f32 = 316.0;
-/// The enemy bracket's two marks' upright sides, in its picture's units ([`enemy_bracket`]).
-pub const ENEMY_MARK_SIDES: (f32, f32) = (55.0 * 500.0 / 512.0, 307.0 * 500.0 / 512.0);
-
-fn corner(right: bool) -> Shape {
+fn corner(right: bool, scale: f32) -> Shape {
     let (u0, top, bottom, end) = (13.5, 64.0, 69.0, 358.0);
+    // The step cap stands a pip's gap after the last pip ([`pips_in`]) [design: the
+    // inspection, "move the half arrow to the left to align it with the hp bars - same
+    // spacing as in between the bars"].
+    let cap = cap_px(scale) / scale;
     let mut parts = vec![
         rect(u0, 16.0, u0 + LINE, top),
         rect(u0, top, end, top + LINE),
         polyline(&[(22.5, bottom + LINE / 2.0), (u0 + LINE / 2.0, bottom + LINE / 2.0 + 7.0)], LINE),
         rect(u0, 76.0, u0 + LINE, 125.0),
-        poly(&[(316.0, 48.0), (322.0, 48.0), (336.0, 64.0), (316.0, 64.0)]),
+        poly(&[(cap, 48.0), (cap + 6.0, 48.0), (cap + 20.0, 64.0), (cap, 64.0)]),
     ];
     if right {
         parts.extend([rect(20.0, bottom, 166.0, bottom + LINE), rect(174.5, bottom, end, bottom + LINE), rect(174.5, bottom, 174.5 + LINE, 125.0)]);
@@ -686,12 +743,53 @@ fn corner(right: bool) -> Shape {
 
 /// The enemy's bracket: one line (rows 21-24) and the two corner marks over it, right
 /// triangles with their upright sides at 55 and 307 [observed: the texture].
-fn enemy_bracket() -> Shape {
-    Shape::from_texels(
-        Vec2::new(512.0, 64.0),
+fn enemy_bracket(scale: f32) -> Shape {
+    // The marks a pip's gap either side of the pips ([`pips_in`]) [design: the inspection,
+    // "move the half arrows closer to the bars so they fit perfectly - same spacing as in
+    // between the bars"].
+    let (lefts, width) = pips_in(Decoration::EnemyBracket, scale);
+    let (step, _) = crate::hud::tick_pixels(scale * 960.0);
+    let gap = step - width;
+    let (left, right) = ((lefts[0] - gap) / scale, (lefts[lefts.len() - 1] + width + gap) / scale);
+    let k = 500.0 / 512.0;
+    let (mark, y0, y1) = (11.0 * k, 10.0, 21.0);
+    Shape::new(
         Vec2::new(500.0, 64.0),
-        vec![rect(16.0, 21.0, 346.0, 21.0 + LINE), poly(&[(55.0, 10.0), (55.0, 21.0), (44.0, 21.0)]), poly(&[(307.0, 10.0), (318.0, 21.0), (307.0, 21.0)])],
+        vec![rect(16.0 * k, y1, 346.0 * k, y1 + LINE), poly(&[(left, y0), (left, y1), (left - mark, y1)]), poly(&[(right, y0), (right + mark, y1), (right, y1)])],
     )
+}
+
+/// The health and action points bars' and the enemy bar's pips (`crate::hud::PIPS`, 37, and
+/// `ENEMY_PIPS`, 31) in their bracket's picture at `scale`: each one's left in the picture's
+/// pixels, and their width (`crate::hud::tick_pixels`). The health pips start a pip's gap
+/// right of the upright's inner side, a whole step apart; the action points' are those
+/// turned over within [`CORNER_TURN`]; the enemy's stand centred between its marks' old
+/// places [design: the inspection, "align the hitpoints to the left edge … same spacing as
+/// in between the bars"; "align the ap points to the right edge"].
+pub fn pips_in(kind: Decoration, scale: f32) -> (Vec<f32>, f32) {
+    let (step, width) = crate::hud::tick_pixels(scale * 960.0);
+    let gap = step - width;
+    let inner = (13.5 * scale).round() + whole(LINE, scale);
+    match kind {
+        Decoration::RightBracket => {
+            let turned = (CORNER_TURN * scale).round();
+            ((0..37).map(|i| turned - inner - 37.0 * step + i as f32 * step).collect(), width)
+        }
+        Decoration::EnemyBracket => {
+            let span = 31.0 * step - gap;
+            let first = ((55.0 + 307.0) / 2.0 * 500.0 / 512.0 * scale - span / 2.0).round();
+            ((0..31).map(|i| first + i as f32 * step).collect(), width)
+        }
+        _ => ((0..37).map(|i| inner + gap + i as f32 * step).collect(), width),
+    }
+}
+
+/// Where the left bracket's step cap's upright side stands at `scale`, in pixels: a pip's gap
+/// after the last health pip ([`pips_in`]).
+fn cap_px(scale: f32) -> f32 {
+    let (lefts, width) = pips_in(Decoration::LeftBracket, scale);
+    let (step, _) = crate::hud::tick_pixels(scale * 960.0);
+    lefts[lefts.len() - 1] + width + (step - width)
 }
 
 /// The condition bar (60 x 20, [`CONDITION_MARGIN`] in) with the jamming threshold's two
@@ -750,8 +848,17 @@ fn radiation_bracket() -> Shape {
 /// `STEM_IN_PICTURE`), the right the left's mirror [observed: the texture; design: owner
 /// 2026-11-27, "make sure the bottom 2 are identical just mirrored"].
 fn prompt_divider() -> Shape {
-    let (middle, stem) = (160.5, 158.5);
-    let parts = vec![rect(16.0, 13.0, 2.0 * middle - 16.0, 13.0 + LINE), rect(16.0, 19.0, stem, 19.0 + LINE), rect(stem - LINE, 19.0 + LINE, stem, 59.0)];
+    // The lower line turning down into the stem by a quarter circle [observed: the atlas
+    // piece, rows 9-14 by the stems; design: the inspection, "your version is missing the
+    // quarter circle"].
+    let (middle, stem, r) = (160.5, 158.5, 7.0);
+    let c = (stem - LINE / 2.0, 19.0 + LINE / 2.0);
+    let parts = vec![
+        rect(16.0, 13.0, 2.0 * middle - 16.0, 13.0 + LINE),
+        rect(16.0, 19.0, c.0 - r + LINE / 2.0, 19.0 + LINE),
+        rect(stem - LINE, c.1 + r - LINE / 2.0, stem, 59.0),
+        corner_arc(c, (c.0 - r, c.1), (c.0, c.1 + r)),
+    ];
     Shape { mirror_x: Some(middle), ..Shape::new(Vec2::new(512.0, 128.0), parts) }
 }
 
@@ -827,7 +934,7 @@ impl VectorPictures {
             self.made.clear();
             self.scale = scale;
         }
-        self.made.entry(kind).or_insert_with(|| images.add(image(&kind.shape(), scale))).clone()
+        self.made.entry(kind).or_insert_with(|| images.add(image(&kind.shape_at(scale), scale))).clone()
     }
 }
 
@@ -1054,6 +1161,71 @@ mod tests {
                 let near = (y - 1..=y + 1).any(|v| (x - 1..=x + 1).any(|u| arrow.at(u, v) > 0.0));
                 assert!(!(near && b.at(x, y) > 0.0), "the box touches the arrow at {x}, {y}");
             }
+        }
+    }
+
+    #[test]
+    fn the_pips_stand_a_gap_from_the_upright_and_the_cap_at_every_scale() {
+        for s in SCALES {
+            let (step, width) = crate::hud::tick_pixels(s * 960.0);
+            let gap = step - width;
+            let left = ink(&Decoration::LeftBracket.shape_at(s), s);
+            let (pips, w) = pips_in(Decoration::LeftBracket, s);
+            assert_eq!(w, width);
+            // The upright's inner side: the last lit column of its row 40 units down.
+            let upright_end = *lit_columns(&left, (40.0 * s) as usize).last().unwrap() as f32 + 1.0;
+            assert_eq!(pips[0] - upright_end, gap, "scale {s}: the first pip");
+            assert!(pips.windows(2).all(|p| p[1] - p[0] == step));
+            // The cap's upright side: the first lit column of the cap's row.
+            let cap_row = (60.0 * s) as usize;
+            let cap = lit_columns(&left, cap_row).into_iter().find(|&x| x as f32 > upright_end).unwrap() as f32;
+            assert_eq!(cap - (pips[36] + w), gap, "scale {s}: the cap");
+            // The action points': the same turned over.
+            let (ap, _) = pips_in(Decoration::RightBracket, s);
+            let n = (CORNER_TURN * s).round();
+            for (a, b) in pips.iter().zip(ap.iter().rev()) {
+                assert_eq!(n - (a + w), *b, "scale {s}");
+            }
+            // The enemy's marks a gap either side of its pips.
+            let e = ink(&Decoration::EnemyBracket.shape_at(s), s);
+            let (ep, _) = pips_in(Decoration::EnemyBracket, s);
+            let row = (17.0 * s) as usize;
+            let lit = lit_columns(&e, row);
+            let left_mark = *lit.iter().filter(|&&x| (x as f32) < ep[0]).max().unwrap() as f32 + 1.0;
+            let right_mark = *lit.iter().filter(|&&x| (x as f32) > ep[30]).min().unwrap() as f32;
+            assert_eq!(ep[0] - left_mark, gap, "scale {s}: the left mark");
+            assert_eq!(right_mark - (ep[30] + w), gap, "scale {s}: the right mark");
+        }
+    }
+
+    #[test]
+    fn the_arrows_meet_at_a_right_angle() {
+        // The arrow's outer edges run at 45 degrees: along its upper arm, a row lower ends a
+        // pixel further right.
+        let s = 4.0;
+        let m = ink(&Decoration::CrossLeft.shape(), s);
+        let end = |y: usize| (0..m.width).rev().find(|&x| m.at(x, y) >= 0.5).unwrap() as i32;
+        let rows: Vec<usize> = ((27.0 * s) as usize..(31.0 * s) as usize).collect();
+        assert!(rows.windows(2).all(|w| (end(w[1]) - end(w[0]) - 1).abs() <= 1), "{:?}", rows.iter().map(|&y| end(y)).collect::<Vec<_>>());
+        let slope = (end(rows[rows.len() - 1]) - end(rows[0])) as f32 / (rows.len() - 1) as f32;
+        assert!((slope - 1.0).abs() < 0.1, "slope {slope}");
+    }
+
+    #[test]
+    fn rounded_corners_meet_their_lines() {
+        for s in SCALES {
+            // The message bracket: the arc's ends on the line's and the upright's pixels.
+            let m = ink(&Decoration::MessageBracket.shape(), s);
+            let line_top = (10.5 * s).round() as usize;
+            let up_left = (33.0 * 470.0 / 512.0 * s).round() as usize;
+            // Along the corner's diagonal some pixel is lit (the arc), and no gap opens between
+            // the arc and either line on their rows and columns.
+            let row = lit_columns(&m, line_top + 1);
+            assert!(row.windows(2).all(|w| w[1] == w[0] + 1), "scale {s}: the top row {row:?}");
+            let col = lit_rows(&m, up_left + 1);
+            assert!(col.windows(2).all(|w| w[1] == w[0] + 1), "scale {s}: the left column {col:?}");
+            // The corner itself is round: its outer corner pixel is clear.
+            assert_eq!(m.at(up_left, line_top), 0.0, "scale {s}");
         }
     }
 

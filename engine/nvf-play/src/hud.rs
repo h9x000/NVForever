@@ -993,26 +993,26 @@ struct PipRow {
     /// The row's width (interface units) and its tick count.
     width: f32,
     count: usize,
-    /// In vector: where its first tick starts and its last ends, from the row's left, and how
-    /// far over the row its ticks stand, in units ([`vector_fit`]).
-    fit: [f32; 3],
+    /// In vector: its bracket's picture, where that picture and the row stand in their
+    /// piece, and how far over the row its ticks stand, in units ([`VectorRow`]).
+    vector: VectorRow,
 }
 
-/// The room between a vector bar's ticks and its bracket's lines at either end, and over the
-/// enemy's line: a line's thickness (`crate::vector_hud::LINE`) at the ends, 2 units over the
-/// line as the health and action points ticks stand over theirs (`METER_GAP` less the 2 units
-/// `LINE_Y` is into the line) [design: owner's test of 2026-11-27, "make the HP/AP points fit
-/// perfectly on both sides", the enemy's "bigger space on the left and they overlay the
-/// bottom line of the decoration"].
-const FIT_GAP: f32 = crate::vector_hud::LINE;
+/// Where a bar's ticks stand in vector: in its bracket's picture
+/// (`crate::vector_hud::pips_in`), the picture at `picture_x` of the piece and the row at
+/// `row_x`, lifted `lift` units.
+#[derive(Clone, Copy)]
+struct VectorRow {
+    bracket: Decoration,
+    picture_x: f32,
+    row_x: f32,
+    lift: f32,
+}
+
+/// The enemy's ticks stand 2 units over its line in vector, as the health and action points
+/// ticks over theirs (`METER_GAP` less the 2 units `LINE_Y` is into the line) [design: owner's
+/// test of 2026-11-27, "they overlay the bottom line of the decoration"].
 const ENEMY_LIFT: f32 = 2.0;
-
-/// A vector bar's ticks' span for a row standing at `row_x` of its piece between `from` and
-/// `to` (its bracket's upright or mark and its step cap or other mark), [`FIT_GAP`] in from
-/// each, lifted by `lift`.
-fn vector_fit(row_x: f32, from: f32, to: f32, lift: f32) -> [f32; 3] {
-    [from + FIT_GAP - row_x, to - FIT_GAP - row_x, lift]
-}
 
 /// A tick of a bar, `index` from the bar's left end.
 #[derive(Component)]
@@ -1121,8 +1121,8 @@ struct SneakText;
 /// A bar's row of ticks at `x`, `y` (`width` long); the ticks are set in it on whole
 /// pixels by [`pips`].
 #[allow(clippy::too_many_arguments)]
-fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32, count: usize, color: Color, fit: [f32; 3]) {
-    p.spawn((PipRow { bar, color, width, count, fit }, at(x, y, width, TICK.y)));
+fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32, count: usize, color: Color, vector: VectorRow) {
+    p.spawn((PipRow { bar, color, width, count, vector }, at(x, y, width, TICK.y)));
 }
 
 /// A condition bar in vector (`crate::vector_hud`), shown while Sharp in place of the plain
@@ -1181,8 +1181,8 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
           wrapper.spawn((HpPiece, piece.clone(), DrawnByTiles)).with_children(|p| {
             spawn_bracket(p, &art.left_bracket, 0.0, &[LEFT_UPRIGHT], color, Decoration::LeftBracket);
             label(p, HudLabel { bold: true, ..HudLabel::at(HP, places.hp_label, UPPER_BASE) });
-            let fit = vector_fit(places.hp_meter, crate::vector_hud::CORNER_UPRIGHT_INNER, crate::vector_hud::CORNER_CAP, 0.0);
-            spawn_row(p, Bar::Health, places.hp_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), fit);
+            let vector = VectorRow { bracket: Decoration::LeftBracket, picture_x: 0.0, row_x: places.hp_meter, lift: 0.0 };
+            spawn_row(p, Bar::Health, places.hp_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), vector);
           });
         });
         // The compass is a sibling so changing health size cannot resize its marks.
@@ -1234,10 +1234,8 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         root.spawn((screen.clone(), Pickable::IGNORE, crate::hud_readability::HudSize(crate::hud_readability::Part::ActionPoints))).with_children(|wrapper| {
           wrapper.spawn((ApPiece, piece, DrawnByTiles)).with_children(|p| {
             spawn_bracket(p, &art.right_bracket, RIGHT_BRACKET_X, &[RIGHT_UPRIGHT, DIVIDER], color, Decoration::RightBracket);
-            // The right bracket is the left turned over within `CORNER_TURN`.
-            let turned = |x: f32| RIGHT_BRACKET_X + crate::vector_hud::CORNER_TURN - x;
-            let fit = vector_fit(places.ap_meter, turned(crate::vector_hud::CORNER_CAP), turned(crate::vector_hud::CORNER_UPRIGHT_INNER), 0.0);
-            spawn_row(p, Bar::ActionPoints, places.ap_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), fit);
+            let vector = VectorRow { bracket: Decoration::RightBracket, picture_x: RIGHT_BRACKET_X, row_x: places.ap_meter, lift: 0.0 };
+            spawn_row(p, Bar::ActionPoints, places.ap_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS), vector);
             label(p, HudLabel { end: Some(AP_LABEL_END), bold: true, ..HudLabel::at(AP, places.ap_label, UPPER_BASE) });
             p.spawn((ConditionRow, at(0.0, 0.0, DIVIDER, AP_PANEL.y), Visibility::Inherited)).with_children(|row| {
                 label(row, HudLabel::at(CND, places.cnd_label, LOWER_BASE));
@@ -1300,9 +1298,8 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
                 }
             }
             let (from, to) = (bx + ENEMY_MARKS.0, bx + ENEMY_MARKS.1);
-            let marks = crate::vector_hud::ENEMY_MARK_SIDES;
-            let fit = vector_fit(from, bx + marks.0, bx + marks.1, ENEMY_LIFT);
-            spawn_row(p, Bar::Enemy, from, by + ENEMY_LINE_Y - ENEMY_METER_GAP - TICK.y, to - from, ENEMY_PIPS, red, fit);
+            let vector = VectorRow { bracket: Decoration::EnemyBracket, picture_x: bx, row_x: from, lift: ENEMY_LIFT };
+            spawn_row(p, Bar::Enemy, from, by + ENEMY_LINE_Y - ENEMY_METER_GAP - TICK.y, to - from, ENEMY_PIPS, red, vector);
             p.spawn((EnemyName, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
             p.spawn((EnemyStats, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
         });
@@ -1554,15 +1551,18 @@ fn pips(
             vector_ticks.clear();
         }
         for (e, row) in &rows {
-            // In vector the ticks fill their span between the bracket's lines exactly, first
-            // tick to last ([`vector_fit`]).
+            // In vector the ticks stand where their bracket's picture has them, a step apart
+            // and a gap from its lines (`crate::vector_hud::pips_in`), and under the bracket so
+            // their glow does not fall on it [design: the inspection, "move the bars behind
+            // the decoration so the decoration does not have their shadow/glow on it"].
             let (first, lefts, width) = if sharp {
-                let [from, to, _] = row.fit;
-                let (lefts, width) = tick_lefts(((to - from) * scale).round(), width, row.count);
-                ((from * scale).round(), lefts, width)
+                let v = row.vector;
+                let (lefts, width) = crate::vector_hud::pips_in(v.bracket, scale);
+                ((v.picture_x * scale).round() - (v.row_x * scale).round(), lefts, width)
             } else {
                 row_ticks(row.bar, row.width * height / 960.0, step, width, row.count, false)
             };
+            commands.entity(e).insert(ZIndex(if sharp { -1 } else { 0 }));
             let shape = sharp.then(|| {
                 vector_ticks
                     .entry([width.to_bits(), row_px.to_bits(), margin.to_bits(), scale.to_bits()])
@@ -1573,7 +1573,7 @@ fn pips(
                 for (index, left) in lefts.iter().enumerate() {
                     let pip = Pip { bar: row.bar, index };
                     if let Some(shape) = &shape {
-                        let top = -margin - (row.fit[2] * scale).round();
+                        let top = -margin - (row.vector.lift * scale).round();
                         let node = Node { position_type: PositionType::Absolute, left: px(first + left - margin), top: px(top), width: px(width + 2.0 * margin), height: px(row_px + 2.0 * margin), ..default() };
                         r.spawn((pip, node, ImageNode { color: row.color, ..ImageNode::new(shape.clone()) }));
                         continue;
@@ -2052,29 +2052,6 @@ mod tests {
         // 1229-1232 with the upright at 1234).
         let (first, lefts, w) = row_ticks(Bar::ActionPoints, 222.0, 6.0, 5.0, PIPS, false);
         assert_eq!((first, lefts[1], lefts[PIPS - 1] + w), (0.0, 6.0, 221.0));
-    }
-
-    /// In vector a bar's ticks stand a line's thickness from its bracket's lines at both ends,
-    /// the action points' as the health's turned over.
-    #[test]
-    fn in_vector_the_ticks_fit_between_the_brackets_lines() {
-        let places = Places::new(&plain_font(36.0, 15.0));
-        let hp = vector_fit(places.hp_meter, crate::vector_hud::CORNER_UPRIGHT_INNER, crate::vector_hud::CORNER_CAP, 0.0);
-        let turned = |x: f32| RIGHT_BRACKET_X + crate::vector_hud::CORNER_TURN - x;
-        let ap = vector_fit(places.ap_meter, turned(crate::vector_hud::CORNER_CAP), turned(crate::vector_hud::CORNER_UPRIGHT_INNER), 0.0);
-        // The same span, the gaps alike at both ends.
-        assert!(((hp[1] - hp[0]) - (ap[1] - ap[0])).abs() < 1e-3);
-        assert_eq!(places.hp_meter + hp[0] - crate::vector_hud::CORNER_UPRIGHT_INNER, FIT_GAP);
-        assert_eq!(crate::vector_hud::CORNER_CAP - (places.hp_meter + hp[1]), FIT_GAP);
-        assert!((places.ap_meter + ap[0] - turned(crate::vector_hud::CORNER_CAP) - FIT_GAP).abs() < 1e-3);
-        // At any size the first tick starts and the last ends on the span's ends.
-        for lines in [720.0, 1080.0, 1215.0, 2160.0] {
-            let s = lines / 960.0;
-            let (_, width) = tick_pixels(lines);
-            let (lefts, w) = tick_lefts(((hp[1] - hp[0]) * s).round(), width, PIPS);
-            assert_eq!(lefts[0], 0.0);
-            assert_eq!(lefts[PIPS - 1] + w, ((hp[1] - hp[0]) * s).round());
-        }
     }
 
     /// In vector the action points' row is the health row's mirror: its first tick a clear
