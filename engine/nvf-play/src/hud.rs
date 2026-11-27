@@ -27,7 +27,7 @@ use crate::reticle::crime_colour;
 use crate::script::{with_world, ScriptState};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, EnemyPiece};
-use crate::vector_hud::{Decor, Decoration};
+use crate::vector_hud::{Decor, Decoration, OriginalOnly};
 use crate::interface::{amber, at, bc_supported, letters_changed, plain_font, screen_face, set_line, texture, u, Face, Kept, Picture, Pictures};
 use std::ops::DerefMut;
 use crate::{PlaySet, PlayState};
@@ -466,10 +466,16 @@ pub const STRIP_FADE: (f32, f32) = (273.0, 341.0);
 /// T12e the action points' row put the strip before its first tick instead, mirrored, and
 /// its last tick met the upright [design: after "the last meets the upright", measured by
 /// eye on the 1080-line `Target healthbar` screenshot]. The enemy's stand in the middle.
-fn row_ticks(bar: Bar, room: f32, step: f32, width: f32, count: usize) -> (f32, Vec<f32>, f32) {
+///
+/// `mirrored` (the HUD in vector, `crate::vector_hud`): the action points' row the health
+/// row's mirror, its clear strip before its first tick, so its ticks stand as far from the
+/// right bracket's step cap and upright as the health ticks from the left's [design: owner's
+/// test of 2026-11-27, "the AP points are not aligned correctly or the decoration"].
+fn row_ticks(bar: Bar, room: f32, step: f32, width: f32, count: usize, mirrored: bool) -> (f32, Vec<f32>, f32) {
     let clear = (step - width).max(1.0);
     let (lefts, width) = tick_lefts((room - clear).round(), width, count);
     let first = match bar {
+        Bar::ActionPoints if mirrored => clear.round(),
         Bar::Health | Bar::ActionPoints => 0.0,
         Bar::Enemy => (clear / 2.0).round(),
     };
@@ -705,7 +711,8 @@ impl Plugin for HudPlugin {
             .add_systems(Update, (gather, draw, sharp_strip, relabel, pips, texts, enemy_colours, place_name, armor_row).chain().in_set(HudSet).in_set(PlaySet::Ui))
             // The decorations in vector while Sharp (`crate::vector_hud`): the HUD's, the
             // compass's, the experience and radiation meters'.
-            .add_systems(PostUpdate, crate::vector_hud::follow_decor.before(bevy::ui::UiSystems::Layout))
+            .add_systems(PostUpdate, (crate::vector_hud::follow_decor, crate::vector_hud::follow_sharp_fills).before(bevy::ui::UiSystems::Layout))
+            .add_systems(PostUpdate, crate::vector_hud::follow_sharp_parts.before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate))
             .add_systems(PostUpdate, hide_parts.before(crate::tiles::vanilla::hide_hand_built).before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }
@@ -1068,6 +1075,25 @@ fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32,
     p.spawn((PipRow { bar, color, width, count }, at(x, y, width, TICK.y)));
 }
 
+/// A condition bar in vector (`crate::vector_hud`), shown while Sharp in place of the plain
+/// ground and `fill` (and the arrows' picture): its ground with the jamming threshold's
+/// arrows cut out and the glow, and over it the same shape in the fill's colour, cut to the
+/// fill's width (`crate::vector_hud::follow_sharp_fills`) [design: owner's test of
+/// 2026-11-27, "remake the CND bar - the two white arrows are suppose to be a cutout into the
+/// shade not added on top of the bar - make it follow the huds color and the background
+/// glow"].
+fn sharp_bar(row: &mut ChildSpawnerCommands, places: &Places, fill: Entity) {
+    use crate::vector_hud::{SharpFill, SharpOnly, CONDITION_MARGIN as M};
+    let size = CND_BAR + 2.0 * M;
+    let ground = ImageNode { color: amber(GROUND_BRIGHTNESS), ..default() };
+    row.spawn((at(places.cnd_x - M, places.cnd_y - M, size.x, size.y), ground, Decor::new(Decoration::ConditionGround), SharpOnly, Visibility::Hidden));
+    let mut cut = at(places.cnd_x, places.cnd_y - M, CND_FILL_WIDTH, size.y);
+    cut.overflow = Overflow::clip_x();
+    row.spawn((cut, SharpFill(fill), SharpOnly, Visibility::Hidden)).with_children(|c| {
+        c.spawn((at(-M, 0.0, size.x, size.y), ImageNode::default(), Decor::new(Decoration::ConditionFill)));
+    });
+}
+
 /// A bracket: the game's picture `x` right of its piece's corner, or plain lines where its
 /// lines are.
 fn spawn_bracket(p: &mut ChildSpawnerCommands, image: &Option<Picture>, x: f32, uprights: &[f32], color: Color, shape: Decoration) {
@@ -1161,29 +1187,31 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             label(p, AP, places.ap_label, UPPER_BASE);
             p.spawn((ConditionRow, at(0.0, 0.0, DIVIDER, AP_PANEL.y), Visibility::Inherited)).with_children(|row| {
                 label(row, CND, places.cnd_label, LOWER_BASE);
-                row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS))));
-                row.spawn((ConditionBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS))));
+                row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS)), OriginalOnly));
+                let fill = row.spawn((ConditionBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS)), OriginalOnly)).id();
+                sharp_bar(row, &places, fill);
                 // The jamming threshold's two arrows, over the bar (§4).
                 match &art.arrows {
                     Some(image) => {
                         let mut clip = at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y);
                         clip.overflow = Overflow::clip();
                         let side = CND_BAR.y + 2.0 * ARROWS_BLEED;
-                        row.spawn(clip).with_children(|c| {
-                            c.spawn((at(places.arrows_x - places.cnd_x, -ARROWS_BLEED, side, side), ImageNode::new(image.clone()), Decor::new(Decoration::ConditionArrows)));
+                        row.spawn((clip, OriginalOnly)).with_children(|c| {
+                            c.spawn((at(places.arrows_x - places.cnd_x, -ARROWS_BLEED, side, side), ImageNode::new(image.clone())));
                         });
                     }
                     None => {
                         let x = places.cnd_x + JAM_CONDITION * CND_BAR.x - 2.0;
-                        row.spawn((at(x, places.cnd_y, 4.0, 5.0), BackgroundColor(Color::BLACK)));
-                        row.spawn((at(x, places.cnd_y + CND_BAR.y - 5.0, 4.0, 5.0), BackgroundColor(Color::BLACK)));
+                        row.spawn((at(x, places.cnd_y, 4.0, 5.0), BackgroundColor(Color::BLACK), OriginalOnly));
+                        row.spawn((at(x, places.cnd_y + CND_BAR.y - 5.0, 4.0, 5.0), BackgroundColor(Color::BLACK), OriginalOnly));
                     }
                 }
             });
             p.spawn((ArmorRow, at(0.0, ARMOR_DROP, DIVIDER, AP_PANEL.y), Visibility::Hidden)).with_children(|row| {
                 label(row, ARM, places.cnd_label, LOWER_BASE);
-                row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS))));
-                row.spawn((ArmorBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS))));
+                row.spawn((at(places.cnd_x, places.cnd_y, CND_BAR.x, CND_BAR.y), BackgroundColor(amber(GROUND_BRIGHTNESS)), OriginalOnly));
+                let fill = row.spawn((ArmorBar, at(places.cnd_x, places.cnd_y, CND_FILL_WIDTH, CND_BAR.y), BackgroundColor(amber(CONDITION_BRIGHTNESS)), OriginalOnly)).id();
+                sharp_bar(row, &places, fill);
             });
             p.spawn((AmmoText, at(0.0, 0.0, AP_PANEL.x, AP_PANEL.y)));
           });
@@ -1480,7 +1508,7 @@ fn pips(
             vector_ticks.clear();
         }
         for (e, row) in &rows {
-            let (first, lefts, width) = row_ticks(row.bar, row.width * height / 960.0, step, width, row.count);
+            let (first, lefts, width) = row_ticks(row.bar, row.width * height / 960.0, step, width, row.count, sharp);
             let shape = sharp.then(|| {
                 vector_ticks
                     .entry([width.to_bits(), row_px.to_bits(), margin.to_bits(), scale.to_bits()])
@@ -1959,7 +1987,7 @@ mod tests {
             let (step, width) = tick_pixels(h);
             let room = METER_WIDTH * h / 960.0;
             for bar in [Bar::Health, Bar::ActionPoints] {
-                let (first, lefts, w) = row_ticks(bar, room, step, width, PIPS);
+                let (first, lefts, w) = row_ticks(bar, room, step, width, PIPS, false);
                 assert_eq!(first, 0.0, "{lines} lines");
                 let end = first + lefts[PIPS - 1] + w;
                 assert!(room - end >= 0.5 && room - end <= step - w + 0.5, "{lines} lines: {bar:?} ends {end} of {room}");
@@ -1967,8 +1995,26 @@ mod tests {
         }
         // At 720 lines: ticks every 6 pixels, the last ending 1 pixel short (the original's
         // 1229-1232 with the upright at 1234).
-        let (first, lefts, w) = row_ticks(Bar::ActionPoints, 222.0, 6.0, 5.0, PIPS);
+        let (first, lefts, w) = row_ticks(Bar::ActionPoints, 222.0, 6.0, 5.0, PIPS, false);
         assert_eq!((first, lefts[1], lefts[PIPS - 1] + w), (0.0, 6.0, 221.0));
+    }
+
+    /// In vector the action points' row is the health row's mirror: its first tick a clear
+    /// strip in from its start (the step cap), its last at its end (by the upright).
+    #[test]
+    fn in_vector_the_action_points_row_mirrors_the_health_row() {
+        for lines in [720, 1080, 1440, 2160] {
+            let h = lines as f32;
+            let (step, width) = tick_pixels(h);
+            let room = METER_WIDTH * h / 960.0;
+            let (hf, hl, hw) = row_ticks(Bar::Health, room, step, width, PIPS, true);
+            let (af, al, aw) = row_ticks(Bar::ActionPoints, room, step, width, PIPS, true);
+            assert_eq!(hw, aw);
+            assert_eq!(hf, 0.0);
+            // The health row's strip after its last tick is the action points' before its first.
+            assert!((af - (room - (hf + hl[PIPS - 1] + hw))).abs() <= 1.0, "{lines} lines");
+            assert!((af + al[PIPS - 1] + aw - room).abs() <= 1.0, "{lines} lines");
+        }
     }
 
     #[test]

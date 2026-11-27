@@ -951,10 +951,19 @@ fn draw(
             let id = match image {
                 Some(image) => {
                     let mut e = p.spawn((node, ImageNode { color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
-                    // An actor's tick in vector while Sharp (`crate::vector_hud`); the place
-                    // marks are icons, kept.
-                    if kind.is_some() {
-                        e.insert(crate::vector_hud::Decor::new(crate::vector_hud::Decoration::ActorTick));
+                    // In vector while Sharp (`crate::vector_hud`): the actors' ticks and the
+                    // quest, place and player marks; a door's icon is kept.
+                    use crate::vector_hud::Decoration as D;
+                    let shape = match mark {
+                        Mark::Actor | Mark::Hostile | Mark::Companion => Some(D::ActorTick),
+                        Mark::Quest => Some(D::QuestMark),
+                        Mark::Place => Some(D::PlaceMark),
+                        Mark::Found => Some(D::FoundMark),
+                        Mark::Player => Some(D::PlayerMark),
+                        Mark::Door => None,
+                    };
+                    if let Some(shape) = shape {
+                        e.insert(crate::vector_hud::Decor::new(shape));
                     }
                     e.id()
                 }

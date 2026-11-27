@@ -610,10 +610,12 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
   raster font, whose letters are stretched at high resolutions. Default Original [design: owner
   2026-11-15, the menu overhaul and its second test; 2026-11-16: the vanilla font by default].
   Sharp also draws the HUD's decorations in vector at the screen's pixels, with the letters'
-  dark glow: the corner brackets, the bars' ticks, the condition bar's arrows, the compass
-  strip (its letters in Roboto Condensed) and its actor ticks, the enemy bracket and the
-  experience and radiation meters' brackets and pointers; Original keeps the game's pictures
-  [design: owner 2026-11-27, `crate::vector_hud`].
+  dark glow and every line as thick as Quick Loot's frame: the corner brackets (mirrors to the
+  pixel), the bars' ticks, the condition bars (their arrows cut out), the compass strip (its
+  letters in Roboto Condensed), its actor ticks and its quest, place and player marks, the
+  enemy bracket, the experience and radiation meters' brackets and pointers, both crosshair
+  styles and the boxed crosshair, and the prompt's divider; Original keeps the game's pictures
+  [design: owner 2026-11-27 and the test of that day, `crate::vector_hud`].
   The game's font has only its code page's 256 letters: where the chosen language's are not
   among them (Russian on an English install, whose page is Windows-1252) Original draws
   sharp too, else the words would read as `?`; Sharp draws every letter the font has

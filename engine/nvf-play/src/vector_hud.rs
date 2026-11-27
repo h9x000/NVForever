@@ -13,8 +13,16 @@
 //! - **The shapes** are lines, ticks and triangles at the places and sizes the pictures
 //!   show them, measured in the pictures' texels [observed: each texture read with
 //!   `fnvtool bsa extract`, 2026-11-27; the texels at half brightness and more are the
-//!   shape, the dimmer ones around them the picture's own glow]. Lines end where the
-//!   pictures' end, with the same fade where the picture fades a line out ([`Fade`]).
+//!   shape, the dimmer ones around them the picture's own glow]. Every line is [`LINE`]
+//!   thick, as Quick Loot's frame, and ends sharply where the picture's faded out; what is
+//!   the mirror of something else is drawn as its pixels turned over, so the two are alike
+//!   to the pixel [design: owner's test of 2026-11-27, "standardize all elements - same dark
+//!   glow behind all elements and text, same line thickness", "make the lines end sharply
+//!   instead of the gradual opacity change"].
+//! - Beyond the HUD's own pieces: the crosshairs (both styles, the boxed one), the prompt's
+//!   divider (`crate::reticle`), the compass's actor ticks and its quest, place and player
+//!   marks (`crate::compass`), and the condition bars with their arrows cut out
+//!   ([`SharpOnly`], [`SharpFill`]).
 //! - **Drawn at the screen's own pixels**: each shape is drawn on the CPU into an image as
 //!   many pixels across as its box covers on the screen ([`hud_scale`]), sampled texel for
 //!   pixel. A rectangle's thin side (a line's thickness, a tick's width) is a whole number
@@ -27,9 +35,7 @@
 //!   the shape's white. The picture is drawn as the game's was, tinted by its node's colour
 //!   (`crate::interface::amber`, the enemy's red): the white takes the colour, the black
 //!   stays black, and the node's alpha fades both (the experience meter's fade, the enemy
-//!   ticks' blink), as a faded line's glow fades with its words. The condition bar's arrows
-//!   are black, so they have no glow, as dark words have none
-//!   (`crate::interface::dark_ink`).
+//!   ticks' blink), as a faded line's glow fades with its words.
 //! - [`Decor`] on a picture's node swaps the picture for the shape while Sharp and back
 //!   (`follow_decor`, every frame that the switch or the view's size changed); the bars'
 //!   ticks (`crate::hud`'s `pips`) and the compass strip (`crate::hud`, [`compass_rail`])
@@ -106,16 +112,24 @@ pub enum Form {
     Poly(Vec<Vec2>),
 }
 
-/// One part of a shape and how it fades.
+/// One part of a shape and how it fades; a cut part takes its form out of the parts
+/// drawn (the condition bar's arrows, a hollow mark's inside).
 #[derive(Clone, Debug, PartialEq)]
 pub struct Part {
     pub form: Form,
     pub fades: Vec<Fade>,
+    pub cut: bool,
 }
 
 impl Part {
     pub fn fade(mut self, f: Fade) -> Part {
         self.fades.push(f);
+        self
+    }
+
+    /// This part taken out of the shape.
+    pub fn cut(mut self) -> Part {
+        self.cut = true;
         self
     }
 
@@ -126,12 +140,35 @@ impl Part {
 
 /// A rectangle from `x0, y0` to `x1, y1`.
 pub fn rect(x0: f32, y0: f32, x1: f32, y1: f32) -> Part {
-    Part { form: Form::Rect(Rect::new(x0, y0, x1, y1)), fades: Vec::new() }
+    Part { form: Form::Rect(Rect::new(x0, y0, x1, y1)), fades: Vec::new(), cut: false }
 }
 
 /// A polygon through `points`.
 pub fn poly(points: &[(f32, f32)]) -> Part {
-    Part { form: Form::Poly(points.iter().map(|&(x, y)| Vec2::new(x, y)).collect()), fades: Vec::new() }
+    Part { form: Form::Poly(points.iter().map(|&(x, y)| Vec2::new(x, y)).collect()), fades: Vec::new(), cut: false }
+}
+
+/// A line `width` thick along `points` (open), its corners mitred and its ends square at the
+/// points, as a polygon.
+pub fn polyline(points: &[(f32, f32)], width: f32) -> Part {
+    let v: Vec<Vec2> = points.iter().map(|&(x, y)| Vec2::new(x, y)).collect();
+    let normal = |a: Vec2, b: Vec2| (b - a).normalize_or_zero().perp();
+    let half = width / 2.0;
+    let offset = |i: usize| -> Vec2 {
+        let n = match i {
+            0 => normal(v[0], v[1]),
+            _ if i == v.len() - 1 => normal(v[i - 1], v[i]),
+            _ => {
+                let (n1, n2) = (normal(v[i - 1], v[i]), normal(v[i], v[i + 1]));
+                let m = (n1 + n2).normalize_or_zero();
+                return m * half / m.dot(n1).max(0.25);
+            }
+        };
+        n * half
+    };
+    let mut out: Vec<(f32, f32)> = (0..v.len()).map(|i| (v[i] + offset(i)).into()).collect();
+    out.extend((0..v.len()).rev().map(|i| -> (f32, f32) { (v[i] - offset(i)).into() }));
+    poly(&out)
 }
 
 /// A decoration: its box (the picture's node, interface units) and its parts in it.
@@ -143,9 +180,23 @@ pub struct Shape {
     pub glow: bool,
     /// Its left and right ends meet (the compass strip, a turn round).
     pub wrap: bool,
+    /// Drawn, then turned over left to right within its first `flip_x` units (top to bottom
+    /// within `flip_y`): a shape the mirror of another, on the same pixels turned over, so
+    /// the two are alike to the pixel (the corner brackets, the crosshair's halves).
+    pub flip_x: Option<f32>,
+    pub flip_y: Option<f32>,
+    /// Its left of `mirror_x` (units) drawn, and copied turned over onto its right: a shape
+    /// alike to the pixel either side of its middle (the prompt's stems, the boxed
+    /// crosshair).
+    pub mirror_x: Option<f32>,
 }
 
 impl Shape {
+    /// `parts` in a box of `size` units, with the glow.
+    pub fn new(size: Vec2, parts: Vec<Part>) -> Shape {
+        Shape { size, parts, glow: true, wrap: false, flip_x: None, flip_y: None, mirror_x: None }
+    }
+
     /// `parts` measured in a picture's texels (`texels` across and down), set in a box of
     /// `size` units over which the picture was stretched.
     pub fn from_texels(texels: Vec2, size: Vec2, parts: Vec<Part>) -> Shape {
@@ -158,9 +209,10 @@ impl Shape {
                     Form::Poly(v) => Form::Poly(v.into_iter().map(|q| q * k).collect()),
                 },
                 fades: p.fades.into_iter().map(|f| f.scaled(k)).collect(),
+                cut: p.cut,
             })
             .collect();
-        Shape { size, parts, glow: true, wrap: false }
+        Shape::new(size, parts)
     }
 }
 
@@ -203,7 +255,8 @@ impl Snap {
     /// A rectangle's pixel edges: a thin side from its near edge.
     fn rect(&self, r: Rect) -> (f32, f32, f32, f32) {
         let side = |axis: usize, a: f32, b: f32| {
-            let p0 = (a * self.scale).round();
+            // A near edge on another line's far edge takes its pixel too.
+            let p0 = self.edge(axis, a);
             if b - a <= THIN {
                 (p0, p0 + whole(b - a, self.scale))
             } else {
@@ -281,10 +334,48 @@ fn inside(v: &[Vec2], p: Vec2) -> bool {
 /// Draw `shape`'s parts at `scale` pixels a unit: the strongest part at each pixel.
 pub fn ink(shape: &Shape, scale: f32) -> Mask {
     let (w, h) = pixels(shape, scale);
-    let mut alpha = vec![0.0f32; w * h];
     let snap = Snap::new(shape, scale);
+    let (drawn, cuts): (Vec<&Part>, Vec<&Part>) = shape.parts.iter().partition(|p| !p.cut);
+    let mut alpha = cover(&drawn, &snap, w, h, scale);
+    if !cuts.is_empty() {
+        let out = cover(&cuts, &snap, w, h, scale);
+        for (a, c) in alpha.iter_mut().zip(out) {
+            *a *= 1.0 - c;
+        }
+    }
+    // Turned over within its first `flip` units, or copied onto its right half.
+    let rows = |alpha: &mut Vec<f32>, f: &dyn Fn(&mut [f32])| alpha.chunks_mut(w).for_each(f);
+    if let Some(fx) = shape.flip_x {
+        let n = ((fx * scale).round() as usize).min(w);
+        rows(&mut alpha, &|row| row[..n].reverse());
+    }
+    if let Some(fy) = shape.flip_y {
+        let n = ((fy * scale).round() as usize).min(h);
+        for y in 0..n / 2 {
+            for x in 0..w {
+                alpha.swap(y * w + x, (n - 1 - y) * w + x);
+            }
+        }
+    }
+    if let Some(axis) = shape.mirror_x {
+        // Column `x` and column `k - x` are each other's mirror.
+        let k = (2.0 * axis * scale).round() as i64 - 1;
+        rows(&mut alpha, &|row| {
+            for x in 0..row.len() as i64 {
+                if 2 * x > k && k - x >= 0 {
+                    row[x as usize] = row[(k - x) as usize];
+                }
+            }
+        });
+    }
+    Mask { width: w, height: h, alpha }
+}
+
+/// How much of each pixel `parts` cover (the strongest at each).
+fn cover(parts: &[&Part], snap: &Snap, w: usize, h: usize, scale: f32) -> Vec<f32> {
+    let mut alpha = vec![0.0f32; w * h];
     let unit = |px: f32| px / scale;
-    for part in &shape.parts {
+    for part in parts {
         match &part.form {
             Form::Rect(r) => {
                 let (x0, y0, x1, y1) = snap.rect(*r);
@@ -322,7 +413,7 @@ pub fn ink(shape: &Shape, scale: f32) -> Mask {
             }
         }
     }
-    Mask { width: w, height: h, alpha }
+    alpha
 }
 
 /// The dark glow round `ink` at `scale` pixels a unit (each pixel's darkness, 0 to 1): the
@@ -397,17 +488,27 @@ pub fn hud_scale(physical_height: f32) -> f32 {
 
 // ---- the decorations [observed: the textures, measured 2026-11-27, module notes] ------------
 
+/// Every line's thickness, as Quick Loot's frame (`crate::quick_loot`'s `FRAME`, drawn with
+/// `crate::interface::line`): a whole number of pixels [design: owner 2026-11-27, "make them
+/// the same thickness as the loot menu is", "standardize all elements"].
+pub const LINE: f32 = 3.0;
+/// Room round the condition bar's picture for its glow, in units.
+pub const CONDITION_MARGIN: f32 = 6.0;
+
 /// The pictures drawn as shapes.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Decoration {
     /// `glow_hud_left_seperatorglow` (atlas piece 256 x 128) over 512 x 256.
     LeftBracket,
-    /// `glow_hud_right_seperatorglow`, the same.
+    /// `glow_hud_right_seperatorglow`, the same: the left one's mirror, with the divider.
     RightBracket,
     /// `glow_enemy_health_seperator.dds` (512 x 64) over 500 x 64.
     EnemyBracket,
-    /// `repair_meter_pips.dds` (16 x 16) over 22 x 22: two black arrows.
-    ConditionArrows,
+    /// The condition bar's ground, 60 x 20 [`CONDITION_MARGIN`] in, with the jamming
+    /// threshold's two arrows (`repair_meter_pips.dds`) cut out of it, and its fill (the same,
+    /// without the glow: it lies on the ground).
+    ConditionGround,
+    ConditionFill,
     /// `glow_xp_bar_over.dds` (512 x 256) over the same.
     XpBracket,
     /// `glow_xp_bar_pointer.dds` (64 x 64) over the same.
@@ -416,158 +517,210 @@ pub enum Decoration {
     RadiationBracket,
     /// `glow_messages_radiation_seperator_arrow.dds` (64 x 32) over 46 x 24.
     RadiationPointer,
-    /// The compass's actor tick, `glow_hud_tick_mark` (atlas piece 32 x 32) over the same.
+    /// The compass's actor tick, `glow_hud_tick_mark` (32 x 32) over the same.
     ActorTick,
+    /// The compass's marks (64 x 64 over 38 x 38, `crate::compass`'s `LANDMARK_SIZE`): the
+    /// quest marker, a place not yet found (a hollow triangle), a place found (a whole one),
+    /// the player's own marker (a hollow quest marker).
+    QuestMark,
+    PlaceMark,
+    FoundMark,
+    PlayerMark,
+    /// The crosshair's two halves (`glow_crosshair.dds` 64 x 64, each half 32 x 64), the
+    /// right the left's mirror; the boxed one (`glow_crosshair_filled.dds`).
+    CrossLeft,
+    CrossRight,
+    CrossFilled,
+    /// The gun cross's four bars (`target_*.dds`, 8 x 32 and 32 x 8).
+    GunTop,
+    GunBottom,
+    GunLeft,
+    GunRight,
+    /// The prompt's line across with its stem (`glow_hud_bottom_info_seperator_divider`,
+    /// 512 x 128).
+    PromptDivider,
 }
 
 impl Decoration {
-    pub const ALL: [Decoration; 9] = [
+    pub const ALL: [Decoration; 22] = [
         Decoration::LeftBracket,
         Decoration::RightBracket,
         Decoration::EnemyBracket,
-        Decoration::ConditionArrows,
+        Decoration::ConditionGround,
+        Decoration::ConditionFill,
         Decoration::XpBracket,
         Decoration::XpPointer,
         Decoration::RadiationBracket,
         Decoration::RadiationPointer,
         Decoration::ActorTick,
+        Decoration::QuestMark,
+        Decoration::PlaceMark,
+        Decoration::FoundMark,
+        Decoration::PlayerMark,
+        Decoration::CrossLeft,
+        Decoration::CrossRight,
+        Decoration::CrossFilled,
+        Decoration::GunTop,
+        Decoration::GunBottom,
+        Decoration::GunLeft,
+        Decoration::GunRight,
+        Decoration::PromptDivider,
     ];
 
     /// The shape, in its picture's box.
     pub fn shape(self) -> Shape {
+        let marks = |parts: Vec<Part>| Shape::from_texels(Vec2::splat(64.0), Vec2::splat(MARK_BOX), parts);
         match self {
-            Decoration::LeftBracket => left_bracket(),
-            Decoration::RightBracket => right_bracket(),
+            Decoration::LeftBracket => corner(false),
+            Decoration::RightBracket => corner(true),
             Decoration::EnemyBracket => enemy_bracket(),
-            Decoration::ConditionArrows => condition_arrows(),
+            Decoration::ConditionGround => condition_bar(true),
+            Decoration::ConditionFill => condition_bar(false),
             Decoration::XpBracket => xp_bracket(),
-            Decoration::XpPointer => Shape::from_texels(Vec2::splat(64.0), Vec2::splat(64.0), vec![poly(&[(21.0, 29.0), (42.0, 29.0), (31.5, 40.0)])]),
+            Decoration::XpPointer => Shape::new(Vec2::splat(64.0), vec![poly(&[(21.0, 29.0), (42.0, 29.0), (31.5, 40.0)])]),
             Decoration::RadiationBracket => radiation_bracket(),
             Decoration::RadiationPointer => Shape::from_texels(Vec2::new(64.0, 32.0), Vec2::new(46.0, 24.0), vec![poly(&[(32.5, 10.0), (43.0, 21.0), (22.0, 21.0)])]),
-            // The bar brightens down to row 20 and stops at 27 (`crate::compass`'s
-            // `TICK_BAR_ROWS`).
-            Decoration::ActorTick => Shape::from_texels(Vec2::splat(32.0), Vec2::splat(32.0), vec![rect(7.0, 4.0, 13.0, 27.0).fade(Fade::y(4.0, 0.35, 20.0, 1.0))]),
+            // A line from under the corner bracket's lower line (the window standing 65 units
+            // down the piece, the line ending at 72) to where the picture's bar ended (row 27,
+            // `crate::compass`'s `TICK_BAR_ROWS`) [design: owner 2026-11-27, "the NPC indicator
+            // goes into the HP bar and decoration"].
+            Decoration::ActorTick => Shape::new(Vec2::splat(32.0), vec![rect(8.5, 11.0, 8.5 + LINE, 27.0)]),
+            Decoration::QuestMark => marks(vec![poly(&QUEST)]),
+            Decoration::PlaceMark => marks(vec![poly(&PLACE), poly(&[(19.5, 13.5), (25.0, 18.0), (14.0, 18.0)]).cut()]),
+            Decoration::FoundMark => marks(vec![poly(&PLACE)]),
+            Decoration::PlayerMark => marks(vec![poly(&QUEST), poly(&[(19.5, 12.5), (27.5, 22.5), (27.5, 38.5), (19.5, 34.0), (11.5, 38.5), (11.5, 22.5)]).cut()]),
+            Decoration::CrossLeft => Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]),
+            Decoration::CrossRight => Shape { flip_x: Some(32.0), ..Shape::new(Vec2::new(32.0, 64.0), vec![chevron()]) },
+            Decoration::CrossFilled => {
+                // The box's left side, its arms stopping short of the middle, and the left
+                // chevron; the right half the left's mirror.
+                let parts = vec![rect(14.5, 20.5, 14.5 + LINE, 41.5), rect(14.5, 20.5, 28.0, 20.5 + LINE), rect(14.5, 41.5 - LINE, 28.0, 41.5), chevron()];
+                Shape { mirror_x: Some(32.0), ..Shape::new(Vec2::splat(64.0), parts) }
+            }
+            // The bar's middle line 2.5 units in, its inner end at the picture's edge toward
+            // the middle (`crate::reticle`'s `BAR_MIDDLE`).
+            Decoration::GunTop => Shape::new(Vec2::new(8.0, 32.0), vec![rect(1.0, 12.0, 1.0 + LINE, 32.0)]),
+            Decoration::GunBottom => Shape { flip_y: Some(32.0), ..Decoration::GunTop.shape() },
+            Decoration::GunLeft => Shape::new(Vec2::new(32.0, 8.0), vec![rect(12.0, 1.0, 32.0, 1.0 + LINE)]),
+            Decoration::GunRight => Shape { flip_x: Some(32.0), ..Decoration::GunLeft.shape() },
+            Decoration::PromptDivider => prompt_divider(),
         }
     }
 }
 
-/// The corner pieces' atlas pieces and their boxes.
-const CORNER_TEXELS: Vec2 = Vec2::new(256.0, 128.0);
-const CORNER_BOX: Vec2 = Vec2::new(512.0, 256.0);
+/// The compass marks' box (`crate::compass`'s `LANDMARK_SIZE`).
+const MARK_BOX: f32 = 38.0;
+/// The quest marker's outline: pointed at the top, its foot notched [observed:
+/// `glow_hud_compass_objective_marker.dds`, rows 8-43].
+const QUEST: [(f32, f32); 8] = [(19.5, 7.5), (31.0, 21.0), (31.0, 44.0), (28.0, 44.0), (19.5, 38.5), (11.0, 44.0), (8.0, 44.0), (8.0, 21.0)];
+/// A place's triangle [observed: `glow_hud_compass_landmark(_discovered).dds`, rows 8-20].
+const PLACE: [(f32, f32); 3] = [(19.5, 7.5), (30.5, 21.0), (8.5, 21.0)];
 
-/// The uprights fade in over their top 4 texels and out over their bottom 4 or 5.
-fn upright_top() -> Fade {
-    Fade::y(4.0, 0.0, 8.5, 1.0)
-}
-fn upright_bottom() -> Fade {
-    Fade::y(59.5, 1.0, 64.0, 0.0)
-}
-
-/// The left corner piece: the upright (x 6-9) broken under the double line (rows 32-34 and
-/// 35-37) and joined to the lower line by a slant, the notch under it at 78-88 and the step
-/// cap over its right end at 158 [observed: the atlas piece].
-fn left_bracket() -> Shape {
-    let end = Fade::x(176.0, 1.0, 179.0, 0.35);
-    Shape::from_texels(
-        CORNER_TEXELS,
-        CORNER_BOX,
-        vec![
-            rect(6.0, 4.0, 9.0, 32.0).fade(upright_top()),
-            rect(6.0, 32.0, 179.0, 34.0).fade(end),
-            rect(10.0, 35.0, 179.0, 37.0).fade(end),
-            poly(&[(10.0, 37.0), (13.0, 37.0), (9.0, 41.0), (6.0, 41.0)]),
-            rect(6.0, 41.0, 9.0, 64.0).fade(upright_bottom()),
-            poly(&[(78.0, 37.0), (88.0, 37.0), (83.0, 42.0)]),
-            poly(&[(158.0, 24.0), (161.0, 24.0), (168.0, 32.0), (158.0, 32.0)]),
-        ],
-    )
+/// The crosshair's left arrow, pointing in to its tip 2.5 units left of the middle
+/// [observed: `glow_crosshair.dds`, rows 26-36, the tip at texel 30].
+fn chevron() -> Part {
+    polyline(&[(24.0, 26.0), (29.5, 31.5), (24.0, 37.0)], LINE)
 }
 
-/// The right corner piece: the double line from x 9 (faded in to 12) to the upright at
-/// 181-184, the lower line broken at 103-107 by the divider (101-103, down from it), the
-/// slant from the lower line to the upright, the step cap over the left end at 33
-/// [observed: the atlas piece].
-fn right_bracket() -> Shape {
-    let start = Fade::x(8.0, 0.0, 12.0, 1.0);
-    Shape::from_texels(
-        CORNER_TEXELS,
-        CORNER_BOX,
-        vec![
-            rect(181.0, 4.0, 184.0, 32.0).fade(upright_top()),
-            rect(9.0, 32.0, 184.0, 34.0).fade(start),
-            rect(9.0, 35.0, 103.0, 37.0).fade(start),
-            rect(107.0, 35.0, 180.0, 37.0),
-            rect(101.0, 37.0, 103.0, 64.0).fade(upright_bottom()),
-            poly(&[(177.0, 37.0), (180.0, 37.0), (184.0, 41.0), (181.0, 41.0)]),
-            rect(181.0, 41.0, 184.0, 64.0).fade(upright_bottom()),
-            poly(&[(30.0, 24.0), (33.0, 24.0), (33.0, 32.0), (23.0, 32.0)]),
-        ],
-    )
+/// The width the right bracket is turned over in: its upright's outer side at 380 - 13.5 =
+/// 366.5 units into its picture, 4 in from its piece's edge (`crate::hud`'s
+/// `RIGHT_BRACKET_X`), so 370.5 of the piece, a mirror of the left one's about 384 / 2.
+pub const CORNER_TURN: f32 = 380.0;
+
+/// The corner brackets, measured on the left one [observed: the atlas piece, module notes]:
+/// the upright (x 13.5), broken under the double line (rows 64 and 69) and joined to the
+/// lower line by a slant, the step cap over the line's right end at 316 and the notch under
+/// it at 166. The right bracket is the same turned over within [`CORNER_TURN`] units, so
+/// that its upright stands where the picture's did and the action points' bar stands as far
+/// from its cap and upright as the health bar from its own [design: owner 2026-11-27, "make
+/// sure the decoration on the right/left are identical"]; in place of the notch, its divider
+/// at 204 (here 176) with the lower line broken beside it [observed].
+fn corner(right: bool) -> Shape {
+    let (u0, top, bottom, end) = (13.5, 64.0, 69.0, 358.0);
+    let mut parts = vec![
+        rect(u0, 16.0, u0 + LINE, top),
+        rect(u0, top, end, top + LINE),
+        polyline(&[(22.5, bottom + LINE / 2.0), (u0 + LINE / 2.0, bottom + LINE / 2.0 + 7.0)], LINE),
+        rect(u0, 76.0, u0 + LINE, 125.0),
+        poly(&[(316.0, 48.0), (322.0, 48.0), (336.0, 64.0), (316.0, 64.0)]),
+    ];
+    if right {
+        parts.extend([rect(20.0, bottom, 166.0, bottom + LINE), rect(174.5, bottom, end, bottom + LINE), rect(174.5, bottom, 174.5 + LINE, 125.0)]);
+    } else {
+        parts.extend([rect(20.0, bottom, end, bottom + LINE), poly(&[(156.0, bottom + LINE), (176.0, bottom + LINE), (166.0, bottom + LINE + 10.0)])]);
+    }
+    Shape { flip_x: right.then_some(CORNER_TURN), ..Shape::new(Vec2::new(512.0, 256.0), parts) }
 }
 
-/// The enemy's bracket: one line (rows 21-24) faded in from x 8 and out to 352, and the two
-/// corner marks over it, right triangles with their upright sides at 55 and 307 [observed:
-/// the texture].
+/// The enemy's bracket: one line (rows 21-24) and the two corner marks over it, right
+/// triangles with their upright sides at 55 and 307 [observed: the texture].
 fn enemy_bracket() -> Shape {
     Shape::from_texels(
         Vec2::new(512.0, 64.0),
         Vec2::new(500.0, 64.0),
-        vec![
-            rect(8.0, 21.0, 352.0, 24.0).fade(Fade::x(8.0, 0.0, 30.0, 1.0)).fade(Fade::x(330.0, 1.0, 352.0, 0.0)),
-            poly(&[(55.0, 10.0), (55.0, 21.0), (44.0, 21.0)]),
-            poly(&[(307.0, 10.0), (318.0, 21.0), (307.0, 21.0)]),
-        ],
+        vec![rect(16.0, 21.0, 346.0, 21.0 + LINE), poly(&[(55.0, 10.0), (55.0, 21.0), (44.0, 21.0)]), poly(&[(307.0, 10.0), (318.0, 21.0), (307.0, 21.0)])],
     )
 }
 
-/// The jamming threshold's two arrows, pointing in from the top and the bottom, their
-/// middle 3.5 texels from the left [observed: the texture; `crate::hud::ARROWS_MIDDLE`].
-fn condition_arrows() -> Shape {
-    let mut s = Shape::from_texels(
-        Vec2::splat(16.0),
-        Vec2::splat(22.0),
-        vec![poly(&[(1.0, 0.0), (6.0, 0.0), (3.5, 5.5)]), poly(&[(1.0, 16.0), (6.0, 16.0), (3.5, 10.5)])],
-    );
-    s.glow = false;
-    s
-}
-
-/// The experience meter's bracket: the double line (rows 64-67 and 70-73) faded in from x 14,
-/// the nine ticks (4 wide, rows 49-64) 27 apart from 85, the upright at 364-368 from row 7
-/// to 129, faded at both ends and broken between the lines [observed: the texture].
-fn xp_bracket() -> Shape {
-    let start = Fade::x(14.0, 0.0, 38.0, 1.0);
-    let mut parts = vec![
-        rect(8.0, 64.0, 364.0, 67.0).fade(start),
-        rect(8.0, 70.0, 364.0, 73.0).fade(start),
-        rect(364.0, 7.0, 368.0, 67.0).fade(Fade::y(7.0, 0.0, 41.0, 1.0)),
-        rect(364.0, 70.0, 368.0, 129.0).fade(Fade::y(95.0, 1.0, 129.0, 0.0)),
+/// The condition bar (60 x 20, [`CONDITION_MARGIN`] in) with the jamming threshold's two
+/// arrows cut out of it, pointing in from its top and bottom edges at three quarters of
+/// its length (`crate::hud::JAM_CONDITION`) [observed: `repair_meter_pips.dds`, the arrows 5
+/// texels wide and 5.5 deep of 16, drawn over 22 units; design: owner 2026-11-27, "the two
+/// white arrows are suppose to be a cutout into the shade"].
+fn condition_bar(glow: bool) -> Shape {
+    let m = CONDITION_MARGIN;
+    let x = m + crate::hud::JAM_CONDITION * 60.0;
+    let (half, deep) = (3.5, 6.5);
+    let parts = vec![
+        rect(m, m, m + 60.0, m + 20.0),
+        poly(&[(x - half, m - 1.0), (x + half, m - 1.0), (x, m + deep)]).cut(),
+        poly(&[(x - half, m + 21.0), (x + half, m + 21.0), (x, m + 20.0 - deep)]).cut(),
     ];
-    parts.extend((0..9).map(|i| {
-        let x = 85.0 + 27.0 * i as f32;
-        rect(x, 49.0, x + 4.0, 64.0)
-    }));
-    Shape::from_texels(Vec2::new(512.0, 256.0), Vec2::new(512.0, 256.0), parts)
+    Shape { glow, ..Shape::new(Vec2::new(60.0 + 2.0 * m, 20.0 + 2.0 * m), parts) }
 }
 
-/// The radiation meter's bracket: the line (rows 13-16) faded in from x 132 to 166, the
-/// upright at 495-499 down to 106 (faded from 86), the two corner marks, right triangles
-/// hanging from the line with their upright sides at 176 and 471, ticks every 20 from 192
-/// to 452, the four at 232 … 412 long [observed: the texture; design: the owner 2026-11-27,
-/// "the half arrow should have a right angle"].
+/// The experience meter's bracket: the double line (rows 64 and 70) from x 20, the nine
+/// ticks (rows 49-64) 27 apart from 85.5, the upright at 364.5 broken between the lines
+/// [observed: the texture].
+fn xp_bracket() -> Shape {
+    let up = 364.5;
+    let mut parts = vec![rect(20.0, 64.0, up, 64.0 + LINE), rect(20.0, 70.0, up, 70.0 + LINE), rect(up, 24.0, up + LINE, 64.0 + LINE), rect(up, 70.0, up + LINE, 113.0)];
+    parts.extend((0..9).map(|i| {
+        let x = 85.5 + 27.0 * i as f32;
+        rect(x, 49.0, x + LINE, 64.0)
+    }));
+    Shape::new(Vec2::new(512.0, 256.0), parts)
+}
+
+/// The radiation meter's bracket: the line (rows 13-16) from x 148, the upright at 495.5
+/// down to 96, the two corner marks, right triangles hanging from the line with their
+/// upright sides at 176 and 471, ticks every 20 from 192 to 452, the four at 232 … 412 long
+/// [observed: the texture; design: the owner 2026-11-27, "the half arrow should have a right
+/// angle"].
 fn radiation_bracket() -> Shape {
+    let up = 495.5;
     let mut parts = vec![
-        rect(132.0, 13.0, 495.0, 16.0).fade(Fade::x(132.0, 0.0, 166.0, 1.0)),
-        rect(495.0, 13.0, 499.0, 106.0).fade(Fade::y(86.0, 1.0, 106.0, 0.0)),
+        rect(148.0, 13.0, up + LINE, 13.0 + LINE),
+        rect(up, 13.0, up + LINE, 96.0),
         poly(&[(161.0, 16.0), (176.0, 16.0), (176.0, 30.0)]),
         poly(&[(471.0, 16.0), (486.0, 16.0), (471.0, 30.0)]),
     ];
     parts.extend((0..14).map(|i| {
         let x = 192.0 + 20.0 * i as f32;
         let long = matches!(i, 2 | 5 | 8 | 11);
-        rect(x, 16.0, x + 3.0, if long { 30.0 } else { 19.0 })
+        rect(x, 16.0, x + LINE, if long { 30.0 } else { 19.0 })
     }));
-    Shape::from_texels(Vec2::new(512.0, 128.0), Vec2::new(512.0, 128.0), parts)
+    Shape::new(Vec2::new(512.0, 128.0), parts)
+}
+
+/// The prompt's divider: the double line (rows 13 and 19), the lower broken by the stem, two
+/// uprights down to row 59 either side of the middle at 160.5 (`crate::reticle`'s
+/// `STEM_IN_PICTURE`), the right the left's mirror [observed: the texture; design: owner
+/// 2026-11-27, "make sure the bottom 2 are identical just mirrored"].
+fn prompt_divider() -> Shape {
+    let (middle, stem) = (160.5, 158.5);
+    let parts = vec![rect(16.0, 13.0, 2.0 * middle - 16.0, 13.0 + LINE), rect(16.0, 19.0, stem, 19.0 + LINE), rect(stem - LINE, 19.0 + LINE, stem, 59.0)];
+    Shape { mirror_x: Some(middle), ..Shape::new(Vec2::new(512.0, 128.0), parts) }
 }
 
 /// A bar's tick (`hud_tick_mark.dds`: a block brightening from a seventh at its top to whole
@@ -577,7 +730,7 @@ fn radiation_bracket() -> Shape {
 pub fn bar_tick(width: f32, height: f32, margin: f32, scale: f32) -> Shape {
     let (m, w, h) = (margin, width, height);
     let part = rect(m, m, m + w, m + h).fade(Fade::y(m, 34.0 / 255.0, m + h * 17.0 / 20.0, 1.0));
-    Shape { size: Vec2::new(w + 2.0 * m, h + 2.0 * m), parts: vec![part], glow: true, wrap: false }.at_scale(scale)
+    Shape::new(Vec2::new(w + 2.0 * m, h + 2.0 * m), vec![part]).at_scale(scale)
 }
 
 impl Shape {
@@ -600,29 +753,30 @@ pub const LETTER_OFFSET: f32 = -1.0;
 /// The letters' cap height and the line they stand on [observed: rows 21-39 of the strip].
 pub const LETTER_CAP: f32 = 19.0;
 pub const LETTER_BASE: f32 = 40.0;
-/// Room between a letter and the rail's lines [observed: 2 to 4 units].
+/// Room between a letter and the rail's line [observed: 2 to 4 units].
 pub const LETTER_GAP: f32 = 3.0;
 
 /// The compass strip's rail, 1024 x 64 units (360 degrees), without its letters (drawn in
-/// the sharp font over it, `crate::hud`): between each two letters a double line (rows 29-31
-/// and 33-34), a thick bar over it from 32 to 94 units past the letter's place, with a tick
-/// up at each end (from row 26) and a long one through its middle (rows 23-37); the lines
-/// stop `half[k]` units each side of letter `k`'s middle [observed: the atlas piece; its
-/// thick bars stand 29 to 37 units past their letters, here all at 32, as a compass's
-/// degrees are even].
+/// the sharp font over it, `crate::hud`): between each two letters a line through the
+/// letters' middle (rows 29.5-32.5), a thick bar over it from 32 to 94 units past the
+/// letter's place (two lines' thickness), with a tick up at each end and a long one through
+/// its middle; the line stops `half[k]` units each side of letter `k`'s middle [observed:
+/// the atlas piece, its double line, thick bars and ticks; its thick bars stand 29 to 37
+/// units past their letters, here all at 32, as a compass's degrees are even; design: one
+/// line thickness, owner 2026-11-27].
 pub fn compass_rail(half: [f32; 8]) -> Shape {
     let mut parts = Vec::new();
+    let (y, bar) = (29.5, 28.0);
     for k in 0..8 {
         let c = 128.0 * k as f32;
         let (from, to) = (c + LETTER_OFFSET + half[k], c + 128.0 + LETTER_OFFSET - half[(k + 1) % 8]);
-        parts.push(rect(from, 29.0, to, 31.0));
-        parts.push(rect(from, 33.0, to, 34.0));
-        parts.push(rect(c + 32.0, 29.0, c + 94.0, 34.0));
-        parts.push(rect(c + 32.0, 26.0, c + 34.0, 29.0));
-        parts.push(rect(c + 92.0, 26.0, c + 94.0, 29.0));
-        parts.push(rect(c + 62.0, 23.0, c + 64.0, 37.0));
+        parts.push(rect(from, y, to, y + LINE));
+        parts.push(rect(c + 32.0, bar, c + 94.0, bar + 2.0 * LINE));
+        parts.push(rect(c + 32.0, 24.0, c + 32.0 + LINE, bar));
+        parts.push(rect(c + 94.0 - LINE, 24.0, c + 94.0, bar));
+        parts.push(rect(c + 63.0 - LINE / 2.0, 22.0, c + 63.0 + LINE / 2.0, 40.0));
     }
-    Shape { size: Vec2::new(1024.0, 64.0), parts, glow: true, wrap: true }
+    Shape { wrap: true, ..Shape::new(Vec2::new(1024.0, 64.0), parts) }
 }
 
 // ---- swapping the pictures ---------------------------------------------------------------
@@ -690,6 +844,48 @@ fn swap(decor: &mut Decor, node: &mut ImageNode, sharp: bool, scale: f32, pictur
     decor.drawn = Some((sharp, scale.to_bits()));
 }
 
+/// A node drawn only while Sharp (a shape with no picture to swap: the condition bar's) or
+/// only while Original (what that shape stands for).
+#[derive(Component, Clone, Copy)]
+pub struct SharpOnly;
+#[derive(Component, Clone, Copy)]
+pub struct OriginalOnly;
+
+/// Show each [`SharpOnly`] node while Sharp and each [`OriginalOnly`] one while Original.
+#[allow(clippy::type_complexity)]
+pub fn follow_sharp_parts(mut sharp: Query<&mut Visibility, (With<SharpOnly>, Without<OriginalOnly>)>, mut original: Query<&mut Visibility, (With<OriginalOnly>, Without<SharpOnly>)>) {
+    let on = crate::vector_font::sharp();
+    let show = |v: bool| if v { Visibility::Inherited } else { Visibility::Hidden };
+    for mut v in &mut sharp {
+        v.set_if_neq(show(on));
+    }
+    for mut v in &mut original {
+        v.set_if_neq(show(!on));
+    }
+}
+
+/// A bar's fill in vector: a node cut to the width of the plain fill `source` (which the
+/// HUD sets, `crate::hud`), holding the bar's shape in the fill's colour.
+#[derive(Component, Clone, Copy)]
+pub struct SharpFill(pub Entity);
+
+/// Each [`SharpFill`] as wide as its plain fill and its shape in that fill's colour.
+pub fn follow_sharp_fills(mut fills: Query<(&SharpFill, &mut Node, &Children)>, sources: Query<(&Node, &BackgroundColor), Without<SharpFill>>, mut inks: Query<&mut ImageNode>) {
+    for (fill, mut node, children) in &mut fills {
+        let Ok((source, colour)) = sources.get(fill.0) else { continue };
+        if node.width != source.width {
+            node.width = source.width;
+        }
+        for child in children.iter() {
+            if let Ok(mut ink) = inks.get_mut(child) {
+                if ink.color != colour.0 {
+                    ink.color = colour.0;
+                }
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -701,6 +897,9 @@ mod tests {
     fn lit_columns(m: &Mask, y: usize) -> Vec<usize> {
         (0..m.width).filter(|&x| m.at(x, y) >= 0.5).collect()
     }
+    fn row(m: &Mask, y: usize) -> &[f32] {
+        &m.alpha[y * m.width..(y + 1) * m.width]
+    }
 
     /// The HUD's scales on the owner's 4K view at 50% and 100%, at 1080 and 720 lines, and
     /// some uneven ones.
@@ -709,101 +908,179 @@ mod tests {
     #[test]
     fn a_lines_thickness_is_whole_pixels_wherever_it_stands() {
         for s in SCALES {
-            // The same 2-unit line at three heights: the same pixels thick.
-            let shape = Shape { size: Vec2::new(40.0, 40.0), parts: vec![rect(1.0, 3.3, 39.0, 5.3), rect(1.0, 17.7, 39.0, 19.7), rect(1.0, 30.1, 39.0, 32.1)], glow: false, wrap: false };
+            // The same line at three heights: the same pixels thick, Quick Loot's frame's.
+            let shape = Shape::new(Vec2::new(40.0, 40.0), vec![rect(1.0, 3.3, 39.0, 3.3 + LINE), rect(1.0, 17.7, 39.0, 17.7 + LINE), rect(1.0, 30.1, 39.0, 30.1 + LINE)]);
             let m = ink(&shape, s);
             let rows = lit_rows(&m, m.width / 2);
-            let want = whole(2.0, s) as usize;
+            let want = crate::interface::line_pixels(LINE, 1.0, s * 960.0) as usize;
             assert_eq!(rows.len(), 3 * want, "scale {s}: {rows:?}");
         }
     }
 
     #[test]
-    fn corners_meet_where_a_line_ends_on_an_upright() {
+    fn every_line_is_the_same_thickness() {
         for s in SCALES {
-            let shape = Decoration::RightBracket.shape();
-            let snap = Snap::new(&shape, s);
-            let m = ink(&shape, s);
-            // The upright's outer edge (184 texels, 368 units) is the long line's end.
-            let upright = lit_columns(&m, (30.0 * s) as usize);
-            let line_row = ((64.0 * s).round() as usize).min(m.height - 1);
-            let line = lit_columns(&m, line_row);
-            assert_eq!(upright.last(), line.last(), "scale {s}: the line ends with the upright");
-            assert_eq!(*line.last().unwrap() as f32 + 1.0, snap.edge(0, 368.0));
-            // The upright is a whole 6 units' pixels wide, the line 4 units' high.
-            assert_eq!(upright.len(), whole(6.0, s) as usize, "scale {s}");
-            let x = (300.0 * s) as usize;
-            let rows = lit_rows(&m, x);
-            let (top, bottom) = rows.split_at(rows.iter().position(|&y| y > rows[0] + whole(4.0, s) as usize).unwrap_or(rows.len()));
-            assert_eq!(top.len(), whole(4.0, s) as usize, "scale {s}: the upper line {rows:?}");
-            assert_eq!(bottom.len(), whole(4.0, s) as usize, "scale {s}: the lower line {rows:?}");
-            // And the upper upright stands on the line: no row between them.
-            let col = upright[0];
-            let up = lit_rows(&m, col);
-            assert!(up.windows(2).take_while(|w| w[0] < line_row).all(|w| w[1] == w[0] + 1), "scale {s}: {up:?}");
+            let want = whole(LINE, s) as usize;
+            let left = ink(&Decoration::LeftBracket.shape(), s);
+            // The upright, the two long lines.
+            assert_eq!(lit_columns(&left, (40.0 * s) as usize).len(), want, "scale {s}: upright");
+            let rows = lit_rows(&left, (200.0 * s) as usize);
+            assert_eq!(rows.len(), 2 * want, "scale {s}: the double line {rows:?}");
+            let xp = ink(&Decoration::XpBracket.shape(), s);
+            assert_eq!(lit_rows(&xp, (40.0 * s) as usize).len(), 2 * want, "scale {s}: the meter's lines");
+            let enemy = ink(&Decoration::EnemyBracket.shape(), s);
+            assert_eq!(lit_rows(&enemy, (150.0 * s) as usize).len(), want, "scale {s}: the enemy's line");
+            let rad = ink(&Decoration::RadiationBracket.shape(), s);
+            assert_eq!(lit_rows(&rad, (300.0 * s) as usize).len(), want, "scale {s}: the radiation line");
         }
     }
 
     #[test]
-    fn the_brackets_stand_where_the_pictures_lines_stand() {
-        let s = 1.0;
-        let m = ink(&Decoration::LeftBracket.shape(), s);
-        // The double line at units 64-68 and 70-74; the upright at 12-18.
-        assert_eq!(lit_rows(&m, 200), vec![64, 65, 66, 67, 70, 71, 72, 73]);
-        assert_eq!(lit_columns(&m, 30), vec![12, 13, 14, 15, 16, 17]);
-        // The notch under the line round 165, the step cap over it from 316.
-        assert!(m.at(165, 77) > 0.9 && m.at(150, 77) == 0.0);
-        assert!(m.at(318, 55) > 0.9 && m.at(312, 55) == 0.0);
-        // The upright fades out at its ends.
-        assert!(m.at(14, 8) < 0.1 && m.at(14, 30) > 0.99 && m.at(14, 126) < 0.2);
+    fn lines_end_sharply() {
+        // No fading ends: every lit pixel of the brackets' lines is whole.
+        let m = ink(&Decoration::LeftBracket.shape(), 1.0);
+        assert!(row(&m, 65).iter().all(|&a| a == 0.0 || a == 1.0));
+        assert!(lit_rows(&m, 15).iter().filter(|&&y| y < 64).all(|&y| m.at(15, y) == 1.0));
         let e = ink(&Decoration::EnemyBracket.shape(), 1.0);
-        // Its corner marks' upright sides where `crate::hud::ENEMY_MARKS` sets the bar.
-        let marks = (56.0 * 500.0 / 512.0, 307.0 * 500.0 / 512.0);
-        assert!(e.at(marks.0 as usize - 2, 18) > 0.5 && e.at(marks.0 as usize + 2, 18) == 0.0, "the left mark ends at its bar");
-        assert!(e.at(marks.1 as usize + 2, 18) > 0.5 && e.at(marks.1 as usize - 2, 18) == 0.0, "the right mark starts at its bar");
+        assert!(row(&e, 22).iter().all(|&a| a == 0.0 || a == 1.0));
+    }
+
+    #[test]
+    fn the_right_bracket_is_the_left_one_turned_over_to_the_pixel() {
+        for s in SCALES {
+            let (l, r) = (ink(&Decoration::LeftBracket.shape(), s), ink(&Decoration::RightBracket.shape(), s));
+            let n = (CORNER_TURN * s).round() as usize;
+            // Over the lower line (the notch and the divider are below it) the two are
+            // mirrors within the turned width; the rest of the right picture is empty.
+            for y in 0..(69.0 * s).round() as usize {
+                let (a, b) = (row(&l, y), row(&r, y));
+                assert!((0..n).all(|x| a[x] == b[n - 1 - x]), "scale {s}: row {y}");
+                assert!(b[n..].iter().all(|&v| v == 0.0));
+            }
+            // The upright's lower part too.
+            let y = (100.0 * s) as usize;
+            assert_eq!(lit_columns(&r, y).iter().map(|&x| n - 1 - x).min(), lit_columns(&l, y).first().copied(), "scale {s}");
+        }
+    }
+
+    #[test]
+    fn corners_meet_where_lines_join() {
+        for s in SCALES {
+            let m = ink(&Decoration::LeftBracket.shape(), s);
+            // The upright stands on the top line: no row between them.
+            let col = lit_columns(&m, (30.0 * s) as usize)[0];
+            let up = lit_rows(&m, col);
+            let line_top = (64.0 * s).round() as usize;
+            assert!(up.windows(2).take_while(|w| w[0] < line_top).all(|w| w[1] == w[0] + 1), "scale {s}: {up:?}");
+            // The prompt's stems meet the lower line.
+            let d = ink(&Decoration::PromptDivider.shape(), s);
+            let stem = lit_columns(&d, (40.0 * s) as usize)[0];
+            let rows = lit_rows(&d, stem);
+            assert!(rows.windows(2).all(|w| w[1] == w[0] + 1 || w[0] < (19.0 * s).round() as usize), "scale {s}: {rows:?}");
+        }
+    }
+
+    #[test]
+    fn mirrored_shapes_are_alike_to_the_pixel() {
+        for s in SCALES {
+            let d = ink(&Decoration::PromptDivider.shape(), s);
+            let k = (2.0 * 160.5 * s).round() as usize - 1;
+            for y in 0..d.height {
+                let r = row(&d, y);
+                assert!((0..=k / 2).all(|x| r[x] == r[k - x]), "scale {s}: divider row {y}");
+            }
+            let (left, right) = (ink(&Decoration::CrossLeft.shape(), s), ink(&Decoration::CrossRight.shape(), s));
+            for y in 0..left.height {
+                let (a, b) = (row(&left, y), row(&right, y));
+                assert!((0..a.len()).all(|x| a[x] == b[a.len() - 1 - x]), "scale {s}: crosshair row {y}");
+            }
+            let (top, bottom) = (ink(&Decoration::GunTop.shape(), s), ink(&Decoration::GunBottom.shape(), s));
+            assert!((0..top.height).all(|y| row(&top, y) == row(&bottom, top.height - 1 - y)), "scale {s}: the gun bars");
+        }
+    }
+
+    #[test]
+    fn the_half_arrows_have_a_right_angle() {
+        // The radiation bracket's marks: an upright side, every row of it lit to the same
+        // column, from the line down to the point.
+        let s = 2.25;
+        let m = ink(&Decoration::RadiationBracket.shape(), s);
+        let (top, bottom) = ((16.0 * s) as usize + 1, (30.0 * s) as usize - 2);
+        for (side, inner) in [(176.0 * s, false), (471.0 * s, true)] {
+            let edge = |y: usize| {
+                // Only the triangle: from its upright side across its 15 units.
+                let (from, to) = if inner { (side - s, side + 16.0 * s) } else { (side - 16.0 * s, side + s) };
+                let lit: Vec<usize> = (0..m.width).filter(|&x| m.at(x, y) >= 0.5 && (from..to).contains(&(x as f32))).collect();
+                if inner { lit[0] } else { *lit.last().unwrap() }
+            };
+            let want = edge(top);
+            assert!((top..bottom).all(|y| edge(y) == want), "side at {side}: {:?}", (top..bottom).map(edge).collect::<Vec<_>>());
+        }
+    }
+
+    #[test]
+    fn the_condition_arrows_are_cut_out_of_the_bar() {
+        let s = 1.0;
+        let m = ink(&Decoration::ConditionGround.shape(), s);
+        let (x, top) = ((CONDITION_MARGIN + 45.0) as usize, CONDITION_MARGIN as usize);
+        // The arrows' tips' rows: clear at the arrow, the bar either side of it.
+        assert_eq!(m.at(x, top + 1), 0.0);
+        assert_eq!(m.at(x, top + 18), 0.0);
+        assert_eq!(m.at(x - 6, top + 1), 1.0);
+        // The bar's middle row is whole across.
+        assert!((top..top + 60).all(|i| m.at(i, top + 10) == 1.0));
+        // The ground glows, the fill does not.
+        assert!(Decoration::ConditionGround.shape().glow && !Decoration::ConditionFill.shape().glow);
+    }
+
+    #[test]
+    fn the_actor_tick_stays_under_the_corner_bracket() {
+        // The compass window stands 65 units down the health piece (`crate::hud`'s
+        // `COMPASS_AT`), the bracket's lower line ends at 72.
+        let m = ink(&Decoration::ActorTick.shape(), 1.0);
+        let first = (0..m.height).find(|&y| row(&m, y).iter().any(|&a| a > 0.0)).unwrap();
+        assert!(65.0 + first as f32 >= 72.0 + 2.0, "starts at {first}");
     }
 
     #[test]
     fn a_triangle_is_smoothed_and_as_large_as_drawn() {
-        let shape = Shape { size: Vec2::new(30.0, 30.0), parts: vec![poly(&[(5.0, 5.0), (25.0, 5.0), (5.0, 25.0)])], glow: false, wrap: false };
+        let shape = Shape::new(Vec2::new(30.0, 30.0), vec![poly(&[(5.0, 5.0), (25.0, 5.0), (5.0, 25.0)])]);
         let m = ink(&shape, 1.0);
         let area: f32 = m.alpha.iter().sum();
         // (Samples on the slant itself count out: a little under.)
         assert!((area - 200.0).abs() < 3.0, "area {area}");
-        // Its slant is smoothed: pixels partly covered.
         assert!(m.alpha.iter().any(|&a| a > 0.2 && a < 0.8));
         assert!(m.at(6, 6) == 1.0 && m.at(24, 24) == 0.0);
     }
 
     #[test]
+    fn a_hollow_mark_is_empty_inside() {
+        let m = ink(&Decoration::PlaceMark.shape(), 2.0);
+        let k = 2.0 * MARK_BOX / 64.0;
+        // The triangle's middle clear, its sides lit.
+        assert_eq!(m.at((19.5 * k) as usize, (16.5 * k) as usize), 0.0);
+        assert!(m.at((19.5 * k) as usize, (20.0 * k) as usize) > 0.5);
+        let q = ink(&Decoration::QuestMark.shape(), 2.0);
+        assert!(q.at((19.5 * k) as usize, (30.0 * k) as usize) == 1.0);
+    }
+
+    #[test]
     fn the_glow_is_dark_round_the_shape_and_fades_out() {
         let s = 2.0;
-        let shape = Shape { size: Vec2::new(40.0, 40.0), parts: vec![rect(10.0, 19.0, 30.0, 21.0)], glow: true, wrap: false };
+        let shape = Shape::new(Vec2::new(40.0, 40.0), vec![rect(10.0, 19.0, 30.0, 21.0)]);
         let (w, h, rgba) = draw(&shape, s);
         assert_eq!((w, h), (80, 80));
         let px = |x: usize, y: usize| &rgba[(y * w + x) * 4..(y * w + x) * 4 + 4];
-        // The line white and whole.
         assert_eq!(px(40, 40), &[255, 255, 255, 255]);
-        // Just over it: black, part dark; further: lighter; far off: nothing.
         let near = px(40, 37);
         assert_eq!(&near[..3], &[0, 0, 0]);
         assert!(near[3] > 60, "near {near:?}");
         assert!(px(40, 34)[3] < near[3]);
         assert_eq!(px(40, 20)[3], 0);
         assert_eq!(px(5, 40)[3], 0);
-        // The drop shadow: darker under the line than over it.
         assert!(px(40, 43)[3] > px(40, 37)[3], "under {:?} over {:?}", px(40, 43), px(40, 37));
-        // Reaching no further than the glow's reach.
         let reach = (glow_reach() * s).ceil() as usize;
         assert_eq!(px(40, 42 + reach)[3], 0);
-    }
-
-    #[test]
-    fn a_dark_shape_has_no_glow() {
-        let (w, _, rgba) = draw(&Decoration::ConditionArrows.shape(), 2.0);
-        // Away from the arrows (their middle 3.5 of 16 texels across): nothing.
-        let x = (14.0 * 2.0) as usize;
-        assert!((0..rgba.len() / 4 / w).all(|y| rgba[(y * w + x) * 4 + 3] == 0));
     }
 
     #[test]
@@ -812,9 +1089,9 @@ mod tests {
             let shape = d.shape();
             let m = ink(&shape, 1.0);
             assert!(m.alpha.iter().any(|&a| a > 0.9), "{d:?} draws nothing");
-            // The glow fits in the box: no ink within its reach of the box's edges, but
-            // where a picture's own line runs to its edge.
-            if shape.glow && !matches!(d, Decoration::XpPointer | Decoration::RadiationPointer | Decoration::ActorTick) {
+            // The glow fits in the box but where a bar's picture runs to its edge (the gun
+            // bars and the crosshair's halves meet at the middle; the marks' boxes are small).
+            if !matches!(d, Decoration::CrossLeft | Decoration::CrossRight | Decoration::GunTop | Decoration::GunBottom | Decoration::GunLeft | Decoration::GunRight | Decoration::ActorTick | Decoration::QuestMark | Decoration::PlaceMark | Decoration::FoundMark | Decoration::PlayerMark | Decoration::ConditionFill | Decoration::XpPointer | Decoration::RadiationPointer) {
                 let r = glow_reach() as usize;
                 let edge = |x: usize, y: usize| x < r || y < r || x >= m.width - r || y >= m.height - r;
                 for y in 0..m.height {
@@ -847,36 +1124,15 @@ mod tests {
         assert_eq!(m.width, 1024);
         for k in 0..8 {
             let c = 128 * k;
-            // No line at a letter's middle; the double line beside it; the thick bar later.
             let at = |dx: i32| ((c + dx).rem_euclid(1024)) as usize;
             assert_eq!(lit_rows(&m, at(-1)), Vec::<usize>::new(), "letter {k}");
-            assert_eq!(lit_rows(&m, at(15)), vec![29, 30, 33], "letter {k}");
-            assert_eq!(lit_rows(&m, at(50)), vec![29, 30, 31, 32, 33], "letter {k}");
-            assert_eq!(lit_rows(&m, at(62)), (23..37).collect::<Vec<_>>(), "letter {k}");
+            assert_eq!(lit_rows(&m, at(15)).len(), whole(LINE, 1.0) as usize, "letter {k}: {:?}", lit_rows(&m, at(15)));
+            assert_eq!(lit_rows(&m, at(50)).len(), 2 * whole(LINE, 1.0) as usize, "letter {k}");
+            assert_eq!(lit_rows(&m, at(63)), (22..40).collect::<Vec<_>>(), "letter {k}");
         }
-        // The glow wraps: the strip's two ends glow alike.
         let g = glow(&m, 1.0, true);
         assert!((g[28 * 1024] - g[28 * 1024 + 1023]).abs() < 0.2);
         assert!(g[28 * 1024 + 15] > 0.2, "glow over the line");
-    }
-
-    #[test]
-    fn the_half_arrows_have_a_right_angle() {
-        // The radiation bracket's marks: an upright side, every row of it lit to the same
-        // column, from the line down to the point.
-        let s = 2.25;
-        let m = ink(&Decoration::RadiationBracket.shape(), s);
-        let (top, bottom) = ((16.0 * s) as usize + 1, (30.0 * s) as usize - 2);
-        for (side, inner) in [(176.0 * s, false), (471.0 * s, true)] {
-            let edge = |y: usize| {
-                // Only the triangle: from its upright side across its 15 units.
-                let (from, to) = if inner { (side - s, side + 16.0 * s) } else { (side - 16.0 * s, side + s) };
-                let lit: Vec<usize> = (0..m.width).filter(|&x| m.at(x, y) >= 0.5 && (from..to).contains(&(x as f32))).collect();
-                if inner { lit[0] } else { *lit.last().unwrap() }
-            };
-            let want = edge(top);
-            assert!((top..bottom).all(|y| edge(y) == want), "side at {side}: {:?}", (top..bottom).map(edge).collect::<Vec<_>>());
-        }
     }
 
     #[test]
@@ -895,7 +1151,6 @@ mod tests {
         let rect = Some(Rect::new(0.0, 0.5, 1.0, 1.0));
         let mut decor = Decor::new(Decoration::LeftBracket);
         let mut node = ImageNode { rect, ..ImageNode::new(original.clone()) };
-        // 720 lines at 100%.
         let scale = 0.75;
         swap(&mut decor, &mut node, false, scale, &mut pictures, &mut images);
         assert_eq!(node.image, original, "Original: the picture");
@@ -904,7 +1159,6 @@ mod tests {
         assert_eq!(node.rect, None);
         let image = images.get(&node.image).unwrap();
         assert_eq!((image.width(), image.height()), (384, 192), "512 x 256 units at 720 lines");
-        // Drawn once a scale.
         let again = pictures.get(Decoration::LeftBracket, scale, &mut images);
         assert_eq!(again, node.image);
         swap(&mut decor, &mut node, false, scale, &mut pictures, &mut images);

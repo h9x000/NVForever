@@ -37,6 +37,7 @@ use crate::control::ControlLocks;
 use crate::interface::{amber, at, bc_supported, plain_font, set_text, Face, Picture, Pictures, Set};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, PromptTexts as Texts};
+use crate::vector_hud::{Decor, Decoration};
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::prelude::*;
@@ -666,7 +667,9 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
             Some((image, rect)) => {
                 for side in [-1.0, 1.0] {
                     let x = if side < 0.0 { -half } else { 0.0 };
-                    r.spawn((Cross { filled: false, side }, at(x, -half, half, RETICLE), picture_node((image.clone(), Some(half_rect(rect, side))), color), Visibility::Hidden, DrawnByTiles));
+                    // In vector while Sharp (`crate::vector_hud`), each half its own shape.
+                    let shape = if side < 0.0 { Decoration::CrossLeft } else { Decoration::CrossRight };
+                    r.spawn((Cross { filled: false, side }, at(x, -half, half, RETICLE), picture_node((image.clone(), Some(half_rect(rect, side))), color), Visibility::Hidden, DrawnByTiles, Decor::new(shape)));
                 }
             }
             None => {
@@ -676,13 +679,13 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
             }
         }
         match kit.filled.clone() {
-            Some(p) => r.spawn((Cross { filled: true, side: 0.0 }, at(-half, -half, RETICLE, RETICLE), picture_node(p, color), Visibility::Hidden, DrawnByTiles)),
+            Some(p) => r.spawn((Cross { filled: true, side: 0.0 }, at(-half, -half, RETICLE, RETICLE), picture_node(p, color), Visibility::Hidden, DrawnByTiles, Decor::new(Decoration::CrossFilled))),
             None => r.spawn((Cross { filled: true, side: 0.0 }, at(-3.0, -3.0, 6.0, 6.0), BackgroundColor(color), Visibility::Hidden, DrawnByTiles)),
         };
         if let Some(bars) = &kit.bars {
-            for ((_, dir), p) in BARS.iter().zip(bars) {
+            for (((_, dir), p), shape) in BARS.iter().zip(bars).zip([Decoration::GunTop, Decoration::GunBottom, Decoration::GunLeft, Decoration::GunRight]) {
                 let rect = bar_rect(*dir, CROSS_REST);
-                r.spawn((Bar { dir: *dir }, at(rect.min.x, rect.min.y, rect.width(), rect.height()), picture_node(p.clone(), color), Visibility::Hidden, DrawnByTiles));
+                r.spawn((Bar { dir: *dir }, at(rect.min.x, rect.min.y, rect.width(), rect.height()), picture_node(p.clone(), color), Visibility::Hidden, DrawnByTiles, Decor::new(shape)));
             }
         }
         r.spawn((Texts, Node { position_type: PositionType::Absolute, ..default() }));
@@ -694,7 +697,7 @@ fn spawn_texts(p: &mut ChildSpawnerCommands, kit: &Kit, prompt: &Prompt) {
     let color = if prompt.grey { color.with_alpha(GREY) } else { color };
     let l = layout_inked(prompt, &kit.face.font, &kit.ink);
     if let (Some(corner), Some(picture)) = (l.divider, kit.divider.clone()) {
-        p.spawn((at(corner.x, corner.y, DIVIDER_SIZE.x, DIVIDER_SIZE.y), picture_node(picture, color)));
+        p.spawn((at(corner.x, corner.y, DIVIDER_SIZE.x, DIVIDER_SIZE.y), picture_node(picture, color), Decor::new(Decoration::PromptDivider)));
     }
     for set in &l.texts {
         set_text(p, &kit.face, set, Vec2::ZERO, color, ());
