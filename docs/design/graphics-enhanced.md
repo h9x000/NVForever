@@ -4318,6 +4318,118 @@ and names its functions `vc_m2_*`); a run draws with it and nothing else.
   composition samples every layer once and runs the transmission product twice, up to about 10 MiB of
   working memory at eight layers on the compute pool; folding both into one pass is not done.
 
+### 3.25 Physical lighting (`physical-pbr`; off in every preset, #3827)
+
+**Carried over** from #3828's branch (its split, part 5, #4199): the light loop, lamps, fog, the sky and its image-based light, exposure and tone, bloom and the materials below. The rest of that branch's physical work comes in its own pull requests, each stacked on this one: the ambient occlusion inside the physical light loop (part 2, #4287; until then the occlusion stays on the picture under this row, logged once), the canopy shading (part 3b, #4266), and skin, eyes and hair (part 6, #4262, §3.26). Not measured or pictured yet.
+
+**With the volumetric rows** [design: agreed with the volumetric work, 2026-11-26]: Volumetric
+clouds and Volumetric light run under Physical lighting. The clouds are lit as the physical
+dome they lie on is drawn, by the surfaces' sun colour and the physical sky's colours, in
+linear light, and go to the tonemapper without its inverse (sky.rs `physical_cloud_light`,
+volumetric_clouds.rs `compose_uniform`). Their sun has the ground's gain (`PHYSICAL_SUN_GAIN`,
+by night `PHYSICAL_MOON_GAIN`): without it they were lit by about a seventh of the ground's
+sun and came out grey against the sky [observed: Goodsprings at 17:30, 2026-11-26]. Their
+direct light takes the physical sun's own colour whole (`PHYSICAL_SUN_COLOUR_SHARE` 1, the
+`SUNCOLOUR` aid's value under this row), not the weather's cloud colours at its luminance,
+and their light from below is the dome's mean of overhead and horizon, not the weather's
+Ambient [design]. Volumetric light's air composite still reads the
+picture as display values (medium_air_compose.wesl); how it meets linear light is open with
+its author.
+
+**With authored reflections** (#2981; a material pack and its Reflections row on) [design:
+spooknik's review of #3828, which switched them off]: Bevy gives a view one environment map,
+and both want it. In such a run the reflection cube keeps it: authored materials keep their
+cube, `metal_gain` and room fill through the reflection gate, which goes in after the
+physical light loop (lights/reflection_gate.rs `PHYSICAL_GATE_EDITS`), and every other
+surface takes the light loop's flat physical ambient in place of the sky's image-based light
+(physical_ibl.rs makes none in such a run). Without a pack the sky's light reaches every
+surface. Two cubes at once (the sky's for all, the room's for authored materials) are a
+follow-up.
+
+[design, #3827] An addition of NVForever's own for the enhanced look: not a fact about the
+original game, never a parity item, and never to be used to explain a difference from the
+original's frames. Off in both presets; with every row below off, the picture is the
+display-value lighting of world.md §8 unchanged. Every value in the table below is an
+engineering choice tuned by eye on this machine (`[design]`) unless the row says otherwise.
+
+**Physical PBR lighting** (`physical-pbr`, Graphics > Lighting and Effects; read once at
+the start, so a change applies at the next start; in a build with the developer aids,
+`NVF_PHYSICAL_PBR=1` / `0` overrides the row, settings.rs `physical_pbr_after_ini`).
+The display-value lighting sum (world.md §8) is replaced by linear lighting:
+
+- *Diffuse*: the energy-preserving Oren-Nayar model (EON) [documented: Portsmouth, Kutz
+  and Hill, "EON: A practical energy-preserving rough diffuse BRDF", JCGT 2025; the
+  OpenPBR surface specification's diffuse]. *Specular*: Cook-Torrance with the GGX
+  distribution [documented: Walter et al. 2007, "Microfacet Models for Refraction through
+  Rough Surfaces"] and Bevy's Schlick Fresnel; the perceptual roughness floor is 0.045,
+  Filament's desktop figure, in place of Bevy's mobile 0.089 [documented: Filament's
+  material documentation]. In the display-value mode the highlight keeps F = F0 in world
+  views (#2266, `lights.rs` `FRESNEL_EDIT`); physical PBR takes Bevy's Fresnel on
+  purpose. Code: `lights/display_shader.rs` (`lighting_patched`, `oren_nayar_patched`).
+- *Lamps*: inverse-square falloff with a finite bulb core and a smooth window at the
+  light's radius, `w² · 0.22 / (u + 0.09)` with `u = (d / R)²` and
+  `w = 1 − u²` [design: the inverse-square law with a core and window after Karis 2013,
+  "Real Shading in Unreal Engine 4"; the 0.22 and 0.09 put a lamp's light at about 0.35 R
+  where the display-value falloff had it in the rooms checked]. Light colours are decoded
+  from sRGB to linear light (`PHYSICAL_SPECULAR_EDITS`).
+- *Sky and ambient*: Bevy's flat ambient is replaced in world views by an image-based
+  light from cube maps built each time the sky changes (`physical_ibl.rs`): outdoors the
+  sky dome's zenith, middle and horizon colours, a sunlit ground below and the sun's disc
+  and aureole for the specular; indoors the cell's ambient as ceiling and floor and its
+  directional colour as a lobe.
+- *Sky*: a single-scattering atmosphere (Rayleigh, Mie and ozone) for the sky's colour and
+  the sun's light (`sky.rs`, `sky.wesl`) [documented: Bruneton and Neyret 2008, "Precomputed
+  Atmospheric Scattering"; Hillaire 2020, "A Scalable and Production Ready Sky and
+  Atmosphere Rendering Technique", for the model and the Earth and atmosphere radii].
+- *Fog*: the game's fog (fog.rs), with the Desert haze and Aerial perspective rows over it
+  as in the display-value look, and with Volumetric light its air [design: agreed with the
+  volumetric work, 2026-11-26]; outdoors its colour is the physical dome's horizon
+  (sky.rs `physical_horizon_color`), so far land fades into the sky behind it.
+- *Exposure and tone*: the world view keeps Bevy's Tony McMapface curve in place of the
+  display-value clip (lights.rs `physical_tony`), the curve the volumetric clouds and the
+  air are matched to [design: agreed with the volumetric work, 2026-11-26; a choice of
+  tonemapper and editable presets for every view is #4690]; outdoors the weather's own grade
+  (tint, contrast, brightness) is set aside so it is not laid over linear light twice, while
+  the game's image-space modifiers still apply (imagespace.rs `effective_grade_base`). The
+  eye adaptation meters both ways (lifting dark scenes and darkening bright ones) with its
+  own limits (`eye_adapt.rs`), and runs with the row even when Glow is off. The view is HDR under the row.
+- *Bloom*: with Glow on, the bloom takes the HDR picture's linear light (post.rs
+  `new_with_hdr_glow`).
+- *Materials* (nif_material.wesl and .rs `NVF_PHYSICAL_PBR`, terrain.wesl): the shade light
+  is mixed in linear light and returned as such; a shape's hot (emissive) light is added
+  on top; the environment map is weighted by its Fresnel term; blended unlit colours are
+  scaled before the fog and multiply decals fade with it. A normal-mapped shape without the
+  specular flag takes a faint reflectance (0.32, F0 about 0.016) and a roughness of at
+  least 0.86, so it never reads as polished (nif_spawn.rs `specular`); an authored set's
+  metallic channel counts. #3828's branch changed the shade light's return, the unlit
+  colours' place before the fog and the decals' fade for every view; here they are under
+  this row only, so the default look is unchanged.
+- The weather sources' daylight brightness (the window light rays' weather regions) is kept
+  for the indoor image-based light's day lift (`emittance.rs` `weather_daylight_luma`); the
+  rays themselves are drawn as in the display-value look.
+
+| Constant | Value | Tag and basis |
+|---|---|---|
+| `PHYSICAL_ATTENUATION` (display_shader.rs) | `w² · 0.22 / (u + 0.09)` | [design] core of 0.30 R, matched at 0.35 R |
+| roughness floor (`ROUGHNESS_FLOOR_EDIT`) | 0.045 | [documented: Filament] |
+| unflagged shapes' reflectance and roughness (nif_spawn.rs) | 0.32, at least 0.86 | [design] |
+| `PHYSICAL_SUN_GAIN`, `PHYSICAL_MOON_GAIN`, `PHYSICAL_INTERIOR_DIR_GAIN` (sky.rs) | 6.8, 1.2, 0.85 | [design] the display-value shares (world.md §8) carried into linear light |
+| `ATMO_RE`, `ATMO_RA` (sky.rs, sky.wesl) | 6360, 6460 km | [documented: Bruneton and Neyret 2008; Hillaire 2020] |
+| `ATMO_H0` | 1.1 km | [hypothesis] the Mojave floor's height above the sea |
+| `ATMO_HR`, `ATMO_HM` | 8.0, 1.0 km | [design] Rayleigh's usual 8 km scale height [documented: Bruneton and Neyret 2008]; Mie lowered from their 1.2 km for desert air |
+| `BETA_R`, `BETA_O` | (4.60, 13.00, 35.50)·10⁻³, (1.10, 2.35, 0.06)·10⁻³ per km | [design] tuned from the published sea-level coefficients for the desert's colour |
+| `ATMO_SUN_IRRADIANCE` | 8.2 | [design] |
+| `OUTDOOR_IBL_SCALE`, `INDOOR_IBL_SCALE` (physical_ibl.rs) | 0.62, 0.45 | [design] |
+| cube map sizes (physical_ibl.rs) | 16 (diffuse), 32 with 5 mips (specular), 16-step sky table | [design] cost |
+| `PHYSICAL_LOW_REF`, `PHYSICAL_HIGH_REF` (eye_adapt.rs) | −6.0, −1.2 EV | [design] |
+| `PHYSICAL_LIFT_SLOPE`, `PHYSICAL_MAX_LIFT`, `PHYSICAL_DARKEN_SLOPE`, `PHYSICAL_MAX_DARKEN` | 0.68, 2.6, 0.45, 1.4 | [design] |
+| `PHYSICAL_METER_FILTER` | 10-98 % | [design] the display-value meter's 10-100 % (eye_adapt.rs `METER_FILTER`) less the brightest 2 % |
+
+- **Cost**: not measured yet (to be measured as in §5, the Goodsprings and Prospector
+  Saloon frames, with the row on and off).
+- **Screenshots**: before and after, for the owner, still to be taken.
+
+
 ## 4. Tried and dropped
 
 - **Bevy `ContactShadows`** on the sun (16 steps, 40 units, thickness 12): the right effect on
