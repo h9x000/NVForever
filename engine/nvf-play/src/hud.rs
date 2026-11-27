@@ -27,6 +27,7 @@ use crate::reticle::crime_colour;
 use crate::script::{with_world, ScriptState};
 use crate::sim::SimState;
 use crate::tiles::vanilla::{DrawnByTiles, EnemyPiece};
+use crate::vector_hud::{Decor, Decoration};
 use crate::interface::{amber, at, bc_supported, letters_changed, plain_font, screen_face, set_line, texture, u, Face, Kept, Picture, Pictures};
 use std::ops::DerefMut;
 use crate::{PlaySet, PlayState};
@@ -700,7 +701,11 @@ impl Plugin for HudPlugin {
         app.init_resource::<HudView>()
             .add_plugins((crate::hud_target::HudTargetPlugin, crate::hud_limbs::HudLimbsPlugin, crate::hud_needs::HudNeedsPlugin, crate::hud_breath::HudBreathPlugin, crate::grenade_indicator::GrenadeIndicatorPlugin, crate::heartbeat::HeartbeatPlugin, crate::marker_added::MarkerAddedPlugin))
             .init_resource::<HudHidden>()
-            .add_systems(Update, (gather, draw, relabel, pips, texts, enemy_colours, place_name, armor_row).chain().in_set(HudSet).in_set(PlaySet::Ui))
+            .init_resource::<crate::vector_hud::VectorPictures>()
+            .add_systems(Update, (gather, draw, sharp_strip, relabel, pips, texts, enemy_colours, place_name, armor_row).chain().in_set(HudSet).in_set(PlaySet::Ui))
+            // The decorations in vector while Sharp (`crate::vector_hud`): the HUD's, the
+            // compass's, the experience and radiation meters'.
+            .add_systems(PostUpdate, crate::vector_hud::follow_decor.before(bevy::ui::UiSystems::Layout))
             .add_systems(PostUpdate, hide_parts.before(crate::tiles::vanilla::hide_hand_built).before(bevy::camera::visibility::VisibilitySystems::VisibilityPropagate));
     }
 }
@@ -1065,10 +1070,11 @@ fn spawn_row(p: &mut ChildSpawnerCommands, bar: Bar, x: f32, y: f32, width: f32,
 
 /// A bracket: the game's picture `x` right of its piece's corner, or plain lines where its
 /// lines are.
-fn spawn_bracket(p: &mut ChildSpawnerCommands, image: &Option<Picture>, x: f32, uprights: &[f32], color: Color) {
+fn spawn_bracket(p: &mut ChildSpawnerCommands, image: &Option<Picture>, x: f32, uprights: &[f32], color: Color, shape: Decoration) {
     match image {
         Some(image) => {
-            p.spawn((at(x, 0.0, BRACKET.x, BRACKET.y), picture_node(image, color)));
+            // The shape in vector while Sharp (`crate::vector_hud`).
+            p.spawn((at(x, 0.0, BRACKET.x, BRACKET.y), picture_node(image, color), Decor::new(shape)));
         }
         None => {
             p.spawn((at(LEFT_UPRIGHT, LINE_Y, RIGHT_UPRIGHT - LEFT_UPRIGHT, 2.0), BackgroundColor(color)));
@@ -1080,6 +1086,8 @@ fn spawn_bracket(p: &mut ChildSpawnerCommands, image: &Option<Picture>, x: f32, 
 }
 
 fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>, heading: f32) {
+    // Kept for drawing the game's strip again after the vector one ([`sharp_strip`]).
+    commands.insert_resource(StripOriginal(art.strip_texels.clone()));
     let window = art.strip_texels.take().and_then(|t| StripWindow::new(t, COMPASS.x, heading, images));
     let art = &*art;
     let places = Places::new(&art.font.font);
@@ -1095,7 +1103,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         let piece = Node { position_type: PositionType::Absolute, left: u(MARGIN_X), bottom: u(MARGIN_Y), width: u(HP_PANEL.x), height: u(HP_PANEL.y), ..default() };
         root.spawn((screen.clone(), Pickable::IGNORE, crate::hud_readability::HudSize(crate::hud_readability::Part::Health))).with_children(|wrapper| {
           wrapper.spawn((HpPiece, piece.clone(), DrawnByTiles)).with_children(|p| {
-            spawn_bracket(p, &art.left_bracket, 0.0, &[LEFT_UPRIGHT], color);
+            spawn_bracket(p, &art.left_bracket, 0.0, &[LEFT_UPRIGHT], color, Decoration::LeftBracket);
             label(p, HP, places.hp_label, UPPER_BASE);
             spawn_row(p, Bar::Health, places.hp_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS));
           });
@@ -1148,7 +1156,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
         let piece = Node { position_type: PositionType::Absolute, right: u(MARGIN_X), bottom: u(MARGIN_Y), width: u(AP_PANEL.x), height: u(AP_PANEL.y), ..default() };
         root.spawn((screen.clone(), Pickable::IGNORE, crate::hud_readability::HudSize(crate::hud_readability::Part::ActionPoints))).with_children(|wrapper| {
           wrapper.spawn((ApPiece, piece, DrawnByTiles)).with_children(|p| {
-            spawn_bracket(p, &art.right_bracket, RIGHT_BRACKET_X, &[RIGHT_UPRIGHT, DIVIDER], color);
+            spawn_bracket(p, &art.right_bracket, RIGHT_BRACKET_X, &[RIGHT_UPRIGHT, DIVIDER], color, Decoration::RightBracket);
             spawn_row(p, Bar::ActionPoints, places.ap_meter, places.meter_y, METER_WIDTH, PIPS, amber(METER_BRIGHTNESS));
             label(p, AP, places.ap_label, UPPER_BASE);
             p.spawn((ConditionRow, at(0.0, 0.0, DIVIDER, AP_PANEL.y), Visibility::Inherited)).with_children(|row| {
@@ -1162,7 +1170,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
                         clip.overflow = Overflow::clip();
                         let side = CND_BAR.y + 2.0 * ARROWS_BLEED;
                         row.spawn(clip).with_children(|c| {
-                            c.spawn((at(places.arrows_x - places.cnd_x, -ARROWS_BLEED, side, side), ImageNode::new(image.clone())));
+                            c.spawn((at(places.arrows_x - places.cnd_x, -ARROWS_BLEED, side, side), ImageNode::new(image.clone()), Decor::new(Decoration::ConditionArrows)));
                         });
                     }
                     None => {
@@ -1203,7 +1211,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             let (bx, by) = (ENEMY_BRACKET_AT.x, ENEMY_BRACKET_AT.y);
             match &art.enemy_bracket {
                 Some(image) => {
-                    p.spawn((at(bx, by, ENEMY_BRACKET.x, ENEMY_BRACKET.y), ImageNode { color: red, ..ImageNode::new(image.clone()) }));
+                    p.spawn((at(bx, by, ENEMY_BRACKET.x, ENEMY_BRACKET.y), ImageNode { color: red, ..ImageNode::new(image.clone()) }, Decor::new(Decoration::EnemyBracket)));
                 }
                 None => {
                     p.spawn((at(bx + ENEMY_MARKS.0 - 20.0, by + ENEMY_LINE_Y, ENEMY_MARKS.1 - ENEMY_MARKS.0 + 40.0, 2.0), BackgroundColor(red)));
@@ -1215,6 +1223,116 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             p.spawn((EnemyStats, at(0.0, 0.0, ENEMY.x, ENEMY.y)));
         });
     });
+}
+
+/// The game's compass strip's texels, kept when the HUD is spawned: drawn again when the
+/// Menu Font row goes back to Original ([`sharp_strip`]).
+#[derive(Resource)]
+struct StripOriginal(Option<StripTexels>);
+
+/// The compass strip's letters while Sharp, over the vector rail: moved with the strip.
+#[derive(Component)]
+struct StripLetters;
+
+/// A letter of the strip while Sharp: its middle in the doubled strip, in units.
+#[derive(Component, Clone, Copy)]
+struct StripLetter(f32);
+
+/// The eight directions' letters [hypothesis: the strip's letters; the game's own words for
+/// them are not in its settings].
+const DIRECTIONS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
+
+/// The strip's letters' face: the sharp font, bold as the strip's letters are, its capitals
+/// as high as theirs ([`crate::vector_hud::LETTER_CAP`]) [observed: the strip's letters'
+/// rows 21-39; design].
+fn strip_face() -> Option<Face> {
+    let m = crate::vector_font::metrics()?;
+    let em = (crate::vector_hud::LETTER_CAP / (m.cap_height / m.units_per_em) * 2.0).round() / 2.0;
+    Some(crate::vector_font::face_with(m, crate::vector_font::FONT_HANDLE, em, crate::vector_font::BOLD, 36.0, false))
+}
+
+/// How far the rail's lines stop each side of each letter's middle: half the letter's
+/// width and the gap ([`crate::vector_hud::LETTER_GAP`]).
+fn letter_halves(face: Option<&Face>) -> [f32; 8] {
+    std::array::from_fn(|k| face.map_or(10.0, |f| f.font.width(DIRECTIONS[k]) / 2.0) + crate::vector_hud::LETTER_GAP)
+}
+
+/// **The compass strip in vector while Sharp** (`crate::vector_hud`): the window baked from
+/// the vector rail drawn at the view's pixels ([`crate::vector_hud::compass_rail`]) instead
+/// of the game's strip, its right end faded as ever (`crate::compass_strip`), and the
+/// letters in the sharp font over it, moved with the strip and each as strong as the fade
+/// at its middle; the game's strip again while Original. Only a strip baked from the
+/// game's texels changes (without them the strip is the moving one, `StripNode::Moving`).
+#[allow(clippy::type_complexity, clippy::too_many_arguments)]
+fn sharp_strip(
+    mut commands: Commands,
+    view: Res<HudView>,
+    original: Option<Res<StripOriginal>>,
+    windows: Query<&Window, With<PrimaryWindow>>,
+    mut images: ResMut<Assets<Image>>,
+    mut strips: Query<(&mut Strip, &mut ImageNode, &mut Node, &ChildOf), Without<StripLetters>>,
+    mut holders: Query<(Entity, &mut Node), (With<StripLetters>, Without<Strip>)>,
+    mut letters: Query<(&StripLetter, &mut TextColor)>,
+    mut drawn: Local<Option<(bool, u32)>>,
+) {
+    let _hud = crate::interface::hud_units();
+    let (Some(original), Ok(window)) = (original, windows.single()) else { return };
+    let scale = crate::vector_hud::hud_scale(window.physical_height() as f32);
+    let sharp = crate::vector_font::sharp();
+    // Original at a new size, or first seen in Original: the game's strip as spawned.
+    let key = (sharp, if sharp { scale.to_bits() } else { 0 });
+    if drawn.is_none() && !sharp {
+        *drawn = Some(key);
+    }
+    if *drawn != Some(key) && !strips.is_empty() {
+        *drawn = Some(key);
+        for (e, _) in &holders {
+            commands.entity(e).despawn();
+        }
+        let face = if sharp { strip_face() } else { None };
+        for (mut strip, mut image, mut node, parent) in &mut strips {
+            let texels = if sharp {
+                let (w, _, rgba) = crate::vector_hud::draw(&crate::vector_hud::compass_rail(letter_halves(face.as_ref())), scale);
+                StripTexels::new(rgba, w)
+            } else {
+                original.0.clone()
+            };
+            let Some(baked) = texels.and_then(|t| StripWindow::new(t, COMPASS.x, view.heading, &mut images)) else { continue };
+            info!("compass: the strip drawn {} ({} x {} texels)", if sharp { "in vector" } else { "from the game's picture" }, baked.texels().0, baked.texels().1);
+            image.image = baked.image();
+            let size = baked.size();
+            node.width = u(size.x);
+            node.height = u(size.y);
+            strip.0 = StripNode::Baked(baked);
+            let Some(face) = face.as_ref() else { continue };
+            commands.entity(parent.parent()).with_children(|w| {
+                w.spawn((StripLetters, at(strip_left(view.heading), 0.0, 2.0 * STRIP.x, STRIP.y), Pickable::IGNORE)).with_children(|s| {
+                    for i in 0..16 {
+                        let name = DIRECTIONS[i % 8];
+                        let middle = (i % 8) as f32 * STRIP.x / 8.0 + crate::vector_hud::LETTER_OFFSET + (i / 8) as f32 * STRIP.x;
+                        let Some(line) = face.font.lines(name, None).into_iter().next() else { continue };
+                        let colour = amber(255.0).with_alpha(crate::compass_strip::fade(strip_left(view.heading) + middle));
+                        crate::interface::set_marked(s, face, &line, middle - line.width / 2.0, crate::vector_hud::LETTER_BASE, colour, StripLetter(middle));
+                    }
+                });
+            });
+        }
+    }
+    if !sharp {
+        return;
+    }
+    let left = strip_left(view.heading);
+    for (_, mut node) in &mut holders {
+        if node.left != u(left) {
+            node.left = u(left);
+        }
+    }
+    for (letter, mut colour) in &mut letters {
+        let alpha = crate::compass_strip::fade(left + letter.0);
+        if (colour.0.alpha() - alpha).abs() > 1e-3 {
+            colour.0.set_alpha(alpha);
+        }
+    }
 }
 
 /// The enemy piece's place from the HUD's bottom margin: its long line level with the
@@ -1330,16 +1448,19 @@ fn pips(
     rows: Query<(Entity, &PipRow)>,
     mut ticks: Query<(&Pip, &mut Visibility, Option<&mut ImageNode>, Option<&mut BackgroundColor>)>,
     real: Res<Time<Real>>,
-    mut set_for: Local<Option<(f32, f32)>>,
+    mut set_for: Local<Option<(f32, f32, u32)>>,
     mut tick: Local<Option<Option<Handle<Image>>>>,
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
+    mut vector_ticks: Local<std::collections::HashMap<[u32; 4], Handle<Image>>>,
 ) {
     if !view.shown && !view.enemy_shown {
         return;
     }
     let Ok(window) = windows.single() else { return };
     // The ticks are set for the HUD's height at the UI scale: the view's at 100% (#1631).
-    let key = (window.physical_height() as f32 * crate::interface::ui_scale(), window.scale_factor());
+    // Set again when the letters change: the ticks in vector while Sharp
+    // (`crate::vector_hud::bar_tick`).
+    let key = (window.physical_height() as f32 * crate::interface::ui_scale(), window.scale_factor(), crate::vector_font::letters());
     if rows.is_empty() {
         return;
     }
@@ -1347,15 +1468,34 @@ fn pips(
         let image = tick
             .get_or_insert_with(|| data.as_deref().and_then(|d| texture(&format!("{HUD_TEXTURES}hud_tick_mark.dds"), d, &mut images, bc_supported(formats.as_deref()))).map(|t| t.0))
             .clone();
-        let (height, sf) = key;
+        let (height, sf, _) = key;
         let (step, width) = tick_pixels(height);
         let px = |v: f32| Val::Px(v / sf);
+        // While Sharp each tick is its shape with the glow, in a picture the glow's reach
+        // larger all round, drawn on the tick's own pixels.
+        let scale = height / 960.0;
+        let (row_px, margin) = ((TICK.y * scale).round().max(1.0), (crate::vector_hud::glow_reach() * scale).ceil());
+        let sharp = crate::vector_font::sharp();
+        if !sharp {
+            vector_ticks.clear();
+        }
         for (e, row) in &rows {
             let (first, lefts, width) = row_ticks(row.bar, row.width * height / 960.0, step, width, row.count);
+            let shape = sharp.then(|| {
+                vector_ticks
+                    .entry([width.to_bits(), row_px.to_bits(), margin.to_bits(), scale.to_bits()])
+                    .or_insert_with(|| images.add(crate::vector_hud::image(&crate::vector_hud::bar_tick(width, row_px, margin, scale), scale)))
+                    .clone()
+            });
             commands.entity(e).despawn_related::<Children>().with_children(|r| {
                 for (index, left) in lefts.iter().enumerate() {
-                    let node = Node { position_type: PositionType::Absolute, left: px(first + left), top: Val::Px(0.0), width: px(width), height: Val::Percent(100.0), ..default() };
                     let pip = Pip { bar: row.bar, index };
+                    if let Some(shape) = &shape {
+                        let node = Node { position_type: PositionType::Absolute, left: px(first + left - margin), top: px(-margin), width: px(width + 2.0 * margin), height: px(row_px + 2.0 * margin), ..default() };
+                        r.spawn((pip, node, ImageNode { color: row.color, ..ImageNode::new(shape.clone()) }));
+                        continue;
+                    }
+                    let node = Node { position_type: PositionType::Absolute, left: px(first + left), top: Val::Px(0.0), width: px(width), height: Val::Percent(100.0), ..default() };
                     match &image {
                         // The picture's block: its top part, as high as a tick.
                         Some(image) => r.spawn((pip, node, ImageNode { rect: Some(Rect::new(0.0, 0.0, TICK_BLOCK, TICK.y)), color: row.color, ..ImageNode::new(image.clone()) })),

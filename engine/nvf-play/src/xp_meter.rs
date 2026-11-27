@@ -28,6 +28,7 @@ use crate::sim::SimState;
 use crate::tiles::vanilla::MeterRoot;
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
+use crate::vector_hud::{Decor, Decoration};
 use bevy::prelude::*;
 use fnv_font::Font;
 use fnv_game::experience::{self, Standing};
@@ -679,7 +680,8 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
     commands.spawn((MeterRoot, piece, Visibility::Hidden, Pickable::IGNORE)).with_children(|p| {
         match &kit.bracket {
             Some(image) => {
-                p.spawn((MeterVisual, at(0.0, 0.0, BRACKET.x, BRACKET.y), ImageNode { color: colour, ..ImageNode::new(image.clone()) }, Faded));
+                // In vector while Sharp (`crate::vector_hud`).
+                p.spawn((MeterVisual, at(0.0, 0.0, BRACKET.x, BRACKET.y), ImageNode { color: colour, ..ImageNode::new(image.clone()) }, Faded, Decor::new(Decoration::XpBracket)));
             }
             None => {
                 // Without the picture: the line, the ticks and the upright as plain blocks.
@@ -693,7 +695,7 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
         let mut place = at(pointer_x(0.0), POINTER_Y, POINTER, POINTER);
         match &kit.pointer {
             Some(image) => {
-                p.spawn((Pointer, MeterVisual, place, ImageNode { color: colour, ..ImageNode::new(image.clone()) }, Faded));
+                p.spawn((Pointer, MeterVisual, place, ImageNode { color: colour, ..ImageNode::new(image.clone()) }, Faded, Decor::new(Decoration::XpPointer)));
             }
             None => {
                 // A small block where the triangle would be.

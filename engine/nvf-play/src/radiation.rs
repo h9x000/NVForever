@@ -40,6 +40,7 @@ use crate::sfx::{PlaySound, Sfx};
 use crate::sim::SimState;
 use crate::{PlaySet, PlayState, PlayWorld};
 use bevy::image::CompressedImageFormatSupport;
+use crate::vector_hud::{Decor, Decoration};
 use bevy::prelude::*;
 use fnv_game::radiation::{Exposure, WaterContact};
 use fnv_sim::FormId;
@@ -442,12 +443,13 @@ fn spawn(commands: &mut Commands, kit: &Kit) {
     let piece = Node { position_type: PositionType::Absolute, right: u(RIGHT), top: u(TOP), width: u(PIECE.x), height: u(PIECE.y), ..default() };
     commands.spawn((MeterRoot, piece, Visibility::Hidden, Pickable::IGNORE, DrawnByTiles)).with_children(|p| {
         if let Some(image) = &kit.bracket {
-            p.spawn((at(BRACKET_AT, 0.0, BRACKET.x, BRACKET.y), ImageNode { color: crime_colour(), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
+            // In vector while Sharp (`crate::vector_hud`).
+            p.spawn((at(BRACKET_AT, 0.0, BRACKET.x, BRACKET.y), ImageNode { color: crime_colour(), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }, Decor::new(Decoration::RadiationBracket)));
         }
         let place = at(pointer_x(0.0), POINTER_Y, POINTER.x, POINTER.y);
         match &kit.pointer {
             Some(image) => {
-                p.spawn((Pointer, place, ImageNode { color: crime_colour(), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
+                p.spawn((Pointer, place, ImageNode { color: crime_colour(), image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }, Decor::new(Decoration::RadiationPointer)));
             }
             None => {
                 // Without the picture: a small block where the triangle would be.

@@ -131,6 +131,7 @@ pub mod pad;
 pub mod full_screen_key;
 pub mod pause;
 pub mod vector_font;
+pub mod vector_hud;
 pub mod graphics_resume;
 pub mod phys;
 pub mod phys_load;

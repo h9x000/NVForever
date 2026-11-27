@@ -1845,7 +1845,7 @@ impl Plugin for PausePlugin {
                 key: "menu-font",
                 group: "Interface",
                 label: "Menu font",
-                note: "Letters of the menus, HUD and minigames (not the Pip-Boy or terminals). Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed, sharp at any resolution.",
+                note: "Letters of the menus, HUD and minigames (not the Pip-Boy or terminals). Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed and vector HUD lines, sharp at any size.",
                 switches: "",
                 get: |_| false,
                 set: |_, _| {},

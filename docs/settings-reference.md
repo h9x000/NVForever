@@ -598,8 +598,8 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
 ### `menu-font`: Menu font
 
 - On the page: Letters of the menus, HUD and minigames (not the Pip-Boy or terminals).
-  Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed, sharp at
-  any resolution.
+  Original: the game's font (Sharp for a language it lacks). Sharp: Roboto Condensed and vector
+  HUD lines, sharp at any size.
 - In full: Sharp draws the main menu's entries and the pause menu's text (the column, the
   settings page, the load page) with Roboto Condensed (SIL Open Font License 1.1, Fallout 4's
   own interface font), laid out by Bevy's text at the screen's resolution, without kerning or
@@ -609,6 +609,11 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
   and a drop shadow as the game's own fonts have in their pictures. Original keeps the game's
   raster font, whose letters are stretched at high resolutions. Default Original [design: owner
   2026-11-15, the menu overhaul and its second test; 2026-11-16: the vanilla font by default].
+  Sharp also draws the HUD's decorations in vector at the screen's pixels, with the letters'
+  dark glow: the corner brackets, the bars' ticks, the condition bar's arrows, the compass
+  strip (its letters in Roboto Condensed) and its actor ticks, the enemy bracket and the
+  experience and radiation meters' brackets and pointers; Original keeps the game's pictures
+  [design: owner 2026-11-27, `crate::vector_hud`].
   The game's font has only its code page's 256 letters: where the chosen language's are not
   among them (Russian on an English install, whose page is Windows-1252) Original draws
   sharp too, else the words would read as `?`; Sharp draws every letter the font has

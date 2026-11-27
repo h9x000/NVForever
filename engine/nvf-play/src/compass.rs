@@ -949,7 +949,15 @@ fn draw(
                 }
             }
             let id = match image {
-                Some(image) => p.spawn((node, ImageNode { color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })).id(),
+                Some(image) => {
+                    let mut e = p.spawn((node, ImageNode { color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
+                    // An actor's tick in vector while Sharp (`crate::vector_hud`); the place
+                    // marks are icons, kept.
+                    if kind.is_some() {
+                        e.insert(crate::vector_hud::Decor::new(crate::vector_hud::Decoration::ActorTick));
+                    }
+                    e.id()
+                }
                 // Without the game's pictures: a small block.
                 None => p.spawn((at(left, if matches!(mark, Mark::Actor | Mark::Hostile | Mark::Companion) { 10.0 } else { 40.0 }, 4.0, 12.0), BackgroundColor(colour))).id(),
             };
