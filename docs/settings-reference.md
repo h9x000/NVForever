@@ -643,19 +643,21 @@ Android-specific rows and HUD compatibility are documented in [the Android setti
 - On the page: How dark the box behind message boxes and the dialogue is. Quick Loot has its own.
 - A slider: 0% to 100% in steps of 5%; 70% by default, as Quick Loot's. The message boxes'
   and the dialogue's backing is plain black at this darkness with sharp edges, set over the
-  frame only (it was the game's soft dark picture, wider than the box) [design: owner
+  frame only (it was the game's soft dark picture, wider than the box); the dialogue's spoken
+  line and its Goodbye hint have none, only boxes with lines round them do [design: owner
   2026-11-27].
 - Registered in `engine/nvf-play/src/interface.rs` (`box_rows`)
 
 ### `subtitle-position`: Subtitle position
 
-- On the page: Moves the subtitles and the dialogue's words up or down the screen. 0% is the
-  original's place.
-- A slider: 200 interface units (about 21% of the view's height) up or down, in steps of 10
-  units, shown as a part of the view's height ("+5%" up); the original's place by default.
-  It moves the HUD's subtitles and the dialogue menu's line or choices with its band (the
-  speaker's name stays), never above the safe zone's top nor lower than the menu's room at
-  the foot [design: owner 2026-11-27].
+- On the page: Where the subtitles and the dialogue's words stand: 0% the bottom of the
+  screen, 50% the middle, 100% the top.
+- A slider: 0% to 100% in steps of 1%; 25% by default. The middle of the HUD's subtitles
+  (their first line's capitals to their last line's foot) and of the dialogue menu's line
+  or choices stands that part of the view's height up from its foot, the whole block kept
+  15 units (the safe zone) inside the view; the speaker's name stays [design: owner
+  2026-11-27, "make it 1-100% while 50% is the exact middle of the screen, 0 is bottom 100
+  is top spanning the whole height of the screen - set 25% as the default"].
 - Registered in `engine/nvf-play/src/interface.rs` (`box_rows`)
 
 ### `sneak-gauges`: Light and noise gauges while sneaking

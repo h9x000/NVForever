@@ -1034,7 +1034,41 @@ fn line(y: f32) -> Node {
     Node { justify_content: JustifyContent::Center, align_items: AlignItems::Center, ..at(0.0, y - 15.0, BOX.x, 30.0) }
 }
 
-fn spawn_menu(commands: &mut Commands) {
+/// The screenshot's pixels (720 to the view's height) in interface units (960), the kit's
+/// (`crate::vector_menu`).
+const IU: f32 = 960.0 / 720.0;
+
+/// The box's frame with Sharp on, in interface units: the top and bottom lines across the
+/// box and the corners' short sides (the fading ones, 30 pixels, the kit's
+/// [`crate::vector_menu::STUB`]) ending square, joined in the corners [design: owner
+/// 2026-11-27, "make sure all corner lines connect", "make the lines end sharply"].
+fn sharp_frame() -> crate::vector_menu::Drawing {
+    let (w, h) = (BOX.x * IU, BOX.y * IU);
+    crate::vector_menu::Drawing::new(w, h).bracket_down(0.0, w, 0.0).bracket_up(0.0, w, h)
+}
+
+/// The slider with Sharp on, in interface units over the box: its line (the kit's
+/// [`crate::vector_menu::LINE`] thick, its top where the drawn one's is), the hour marks
+/// and the two end marks, standing on the line as the drawn ones do.
+fn sharp_slider() -> crate::vector_menu::Drawing {
+    let k = |v: f32| v * IU;
+    let mut d = crate::vector_menu::Drawing::new(k(BOX.x), k(BOX.y)).hline(k(65.0), k(65.0 + 516.0), k(LINE_Y));
+    for i in 1..=MAX_HOURS {
+        let x = MARK_X0 + MARK_STEP * i as f32 - 1.0;
+        d = d.block(k(x), k(LINE_Y - 6.0), k(x + 2.0), k(LINE_Y));
+    }
+    let last = MARK_X0 + MARK_STEP * (MAX_HOURS + 1) as f32;
+    for (x, foot) in [(MARK_X0, -7.0), (last, 2.5)] {
+        d = d.block(k(x - 1.25), k(LINE_Y - 12.0), k(x + 1.25), k(LINE_Y));
+        d = d.block(k(x + foot - 1.25), k(LINE_Y - 4.0), k(x + foot + 5.75), k(LINE_Y));
+    }
+    d
+}
+
+fn spawn_menu(commands: &mut Commands, images: &mut Assets<Image>) {
+    // Sharp: the lines and marks in vector with the letters' dark glow over the boxes'
+    // backing (`crate::vector_menu`); Original: the plain fills below.
+    let sharp = crate::vector_menu::on();
     let screen = Node {
         position_type: PositionType::Absolute,
         width: Val::Percent(100.0),
@@ -1044,39 +1078,55 @@ fn spawn_menu(commands: &mut Commands) {
         ..default()
     };
     commands.spawn((WaitRoot, screen, GlobalZIndex(105))).with_children(|root| {
-        root.spawn((Node { width: u(BOX.x), height: u(BOX.y), ..default() }, BackgroundColor(SHADE))).with_children(|b| {
-            // The outline: a line along the top and the bottom, and at each corner a
-            // short side that fades out.
-            for y in [0.0, BOX.y - 1.5] {
-                b.spawn((at(0.0, y, BOX.x, 1.5), BackgroundColor(hud())));
-            }
-            for x in [0.0, BOX.x - 1.5] {
-                for (i, part) in [0.85, 0.55, 0.25].into_iter().enumerate() {
-                    let step = 10.0 * i as f32;
-                    b.spawn((at(x, step, 1.5, 10.0), BackgroundColor(shade(part))));
-                    b.spawn((at(x, BOX.y - 10.0 - step, 1.5, 10.0), BackgroundColor(shade(part))));
+        let fill = if sharp { Color::NONE } else { SHADE };
+        root.spawn((Node { width: u(BOX.x), height: u(BOX.y), ..default() }, BackgroundColor(fill))).with_children(|b| {
+            if sharp {
+                crate::vector_menu::backing(b, 0.0, 0.0, BOX.x * IU, BOX.y * IU);
+                crate::vector_menu::spawn(b, &sharp_frame(), 0.0, 0.0, hud(), images);
+                crate::vector_menu::spawn(b, &sharp_slider(), 0.0, 0.0, hud(), images);
+            } else {
+                // The outline: a line along the top and the bottom, and at each corner a
+                // short side that fades out.
+                for y in [0.0, BOX.y - 1.5] {
+                    b.spawn((at(0.0, y, BOX.x, 1.5), BackgroundColor(hud())));
+                }
+                for x in [0.0, BOX.x - 1.5] {
+                    for (i, part) in [0.85, 0.55, 0.25].into_iter().enumerate() {
+                        let step = 10.0 * i as f32;
+                        b.spawn((at(x, step, 1.5, 10.0), BackgroundColor(shade(part))));
+                        b.spawn((at(x, BOX.y - 10.0 - step, 1.5, 10.0), BackgroundColor(shade(part))));
+                    }
+                }
+                // The slider: the line, the hour marks on it and the two end marks.
+                b.spawn((at(65.0, LINE_Y, 516.0, 3.0), BackgroundColor(hud())));
+                for k in 1..=MAX_HOURS {
+                    b.spawn((at(MARK_X0 + MARK_STEP * k as f32 - 1.0, LINE_Y - 6.0, 2.0, 6.0), BackgroundColor(hud())));
+                }
+                let last = MARK_X0 + MARK_STEP * (MAX_HOURS + 1) as f32;
+                for (x, foot) in [(MARK_X0, -7.0), (last, 2.5)] {
+                    b.spawn((at(x - 1.25, LINE_Y - 12.0, 2.5, 12.0), BackgroundColor(hud())));
+                    b.spawn((at(x + foot - 1.25, LINE_Y - 4.0, 7.0, 4.0), BackgroundColor(hud())));
                 }
             }
             b.spawn((TitleText, Glyphs::new(TITLE_FONT, false), line(61.0)));
-            // The slider: the line, the hour marks on it and the two end marks.
-            b.spawn((at(65.0, LINE_Y, 516.0, 3.0), BackgroundColor(hud())));
-            for k in 1..=MAX_HOURS {
-                b.spawn((at(MARK_X0 + MARK_STEP * k as f32 - 1.0, LINE_Y - 6.0, 2.0, 6.0), BackgroundColor(hud())));
+            // The marker: the lower half of a square standing on its corner (Sharp: the
+            // same triangle in vector, its glow not clipped).
+            let marker = at(0.0, LINE_Y - MARKER_GAP - MARKER.y, MARKER.x, MARKER.y);
+            if sharp {
+                let d = crate::vector_menu::Drawing::new(MARKER.x * IU, MARKER.y * IU).arrow(0.0, 0.0, MARKER.x * IU, MARKER.y * IU, crate::vector_menu::Dir::Down);
+                b.spawn((Marker, marker)).with_children(|m| {
+                    crate::vector_menu::spawn(m, &d, 0.0, 0.0, hud(), images);
+                });
+            } else {
+                let side = MARKER.x / std::f32::consts::SQRT_2;
+                b.spawn((Marker, Node { overflow: Overflow::clip(), ..marker })).with_children(|m| {
+                    m.spawn((
+                        at((MARKER.x - side) / 2.0, -side / 2.0, side, side),
+                        BackgroundColor(hud()),
+                        UiTransform::from_rotation(Rot2::degrees(45.0)),
+                    ));
+                });
             }
-            let last = MARK_X0 + MARK_STEP * (MAX_HOURS + 1) as f32;
-            for (x, foot) in [(MARK_X0, -7.0), (last, 2.5)] {
-                b.spawn((at(x - 1.25, LINE_Y - 12.0, 2.5, 12.0), BackgroundColor(hud())));
-                b.spawn((at(x + foot - 1.25, LINE_Y - 4.0, 7.0, 4.0), BackgroundColor(hud())));
-            }
-            // The marker: the lower half of a square standing on its corner.
-            let side = MARKER.x / std::f32::consts::SQRT_2;
-            b.spawn((Marker, Node { overflow: Overflow::clip(), ..at(0.0, LINE_Y - MARKER_GAP - MARKER.y, MARKER.x, MARKER.y) })).with_children(|m| {
-                m.spawn((
-                    at((MARKER.x - side) / 2.0, -side / 2.0, side, side),
-                    BackgroundColor(hud()),
-                    UiTransform::from_rotation(Rot2::degrees(45.0)),
-                ));
-            });
             // What takes the mouse: the slider's length, from above the marker to under
             // the line.
             b.spawn((SliderTrack, Button, RelativeCursorPosition::default(), at(MARK_X0, LINE_Y - 34.0, MARK_STEP * (MAX_HOURS + 1) as f32, 46.0)));
@@ -1108,6 +1158,7 @@ fn draw(
     )>,
     mut marker: Query<&mut Node, With<Marker>>,
     (tiles, script): (Option<Res<crate::tiles::vanilla::TileMenus>>, Option<Res<ScriptState>>),
+    mut images: ResMut<Assets<Image>>,
 ) {
     let Some(m) = menu.0.as_ref() else { return };
     // T15b: with `[UI] TileMenus=SleepWaitMenu` the menu is drawn from its file
@@ -1120,7 +1171,7 @@ fn draw(
         return;
     }
     if roots.is_empty() {
-        spawn_menu(&mut commands);
+        spawn_menu(&mut commands, &mut images);
         // Filled in from the next frame on, when the texts exist.
         return;
     }
@@ -1298,6 +1349,40 @@ mod tests {
         // The end marks stand inside the line's ends.
         let last = MARK_X0 + MARK_STEP * (MAX_HOURS + 1) as f32;
         assert!(MARK_X0 > 65.0 && last < 65.0 + 516.0);
+    }
+
+    /// A drawing's parts as rectangles.
+    fn rects(d: &crate::vector_menu::Drawing) -> Vec<Rect> {
+        d.parts.iter().map(|p| match &p.form {
+            crate::vector_hud::Form::Rect(r) => *r,
+            _ => panic!("a line is a rectangle"),
+        }).collect()
+    }
+
+    #[test]
+    fn the_sharp_frames_corners_join_and_its_marks_stand_on_the_line() {
+        use crate::vector_menu::{LINE, STUB};
+        let (w, h) = (BOX.x * IU, BOX.y * IU);
+        let f = rects(&sharp_frame());
+        assert_eq!(f.len(), 6);
+        // Top: the line across and a side down from each end, from the box's corners.
+        assert_eq!(f[0], Rect::new(0.0, 0.0, w, LINE));
+        assert_eq!(f[1], Rect::new(0.0, 0.0, LINE, STUB));
+        assert_eq!(f[2], Rect::new(w - LINE, 0.0, w, STUB));
+        // Bottom: the same, up from the box's foot.
+        assert_eq!(f[3], Rect::new(0.0, h - LINE, w, h));
+        assert_eq!(f[4], Rect::new(0.0, h - STUB, LINE, h));
+        assert_eq!(f[5], Rect::new(w - LINE, h - STUB, w, h));
+        // The fading sides were 30 of the screenshot's pixels, the kit's stub.
+        assert!((30.0 * IU - STUB).abs() < 1e-4);
+        // The slider: every mark's foot on the line's top, inside its ends.
+        let s = rects(&sharp_slider());
+        let line = s[0];
+        assert!((line.height() - LINE).abs() < 1e-4);
+        for m in &s[1..] {
+            assert!((m.max.y - line.min.y).abs() < 1e-4 && m.min.x >= line.min.x && m.max.x <= line.max.x, "{m:?}");
+        }
+        assert_eq!(s.len(), 1 + MAX_HOURS as usize + 4);
     }
 
     #[test]

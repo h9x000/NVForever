@@ -74,12 +74,10 @@ const PLUS_PIC: [&str; 2] = ["interface\\shared\\arrow\\adjust_increase.dds", "i
 pub fn spawn(root: &mut ChildSpawnerCommands, v: &View, c: &mut Ctx) {
     let bright = amber(255.0);
     root.spawn(Node { width: crate::interface::u(MAIN.x), height: crate::interface::u(MAIN.y), ..default() }).with_children(|p| {
-        c.line(p, 0.0, 0.0, HEAD_LINE, THICK, bright);
-        c.fade(p, 0.0, 0.0, HEAD_CORNER, false, bright);
+        // Sharp: the headline as one drawing (`Ctx::headline`).
         let w = c.text(p, Which::Title, &v.title, TITLE_X, TITLE_Y, Align::Left, bright);
         let h2 = TITLE_X + w + 20.0;
-        c.line(p, h2, 0.0, MAIN.x - h2, THICK, bright);
-        c.fade(p, MAIN.x - THICK, 0.0, HEAD_CORNER, false, bright);
+        c.headline(p, 0.0, 0.0, MAIN.x, (HEAD_LINE, h2), HEAD_CORNER, bright);
         list(p, c, v);
         if let Some(icon) = v.icon.as_deref() {
             let [x, y, size] = ICON;
@@ -98,12 +96,23 @@ fn list(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &View) {
         Page::Perks => (PERK_LIST_Y, PERK_ROWS),
     };
     let h = shown as f32 * ROW_H;
+    let bar = marker(v.rows.len(), shown, v.scroll, h);
+    // Sharp: the menus' scroll bar; its ends still take the clicks.
+    let sharp = c.sharp();
+    if sharp && bar.is_some() {
+        c.sharp_scrollbar(p, LIST_X, y, BAR_W, h, bar, bright);
+    }
     p.spawn(at(LIST_X, y, LIST_W, h)).with_children(|l| {
-        if let Some((my, mh)) = marker(v.rows.len(), shown, v.scroll, h) {
-            c.image(l, "arrow_up.dds", at(0.0, 0.0, BAR_W, BAR_ARROW), bright, (Button, Part::ScrollUp));
-            c.image(l, "arrow_down.dds", at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), bright, (Button, Part::ScrollDown));
-            if c.image(l, "vert_marker.dds", at(12.0, my, 6.0, mh), bright, ()).is_none() {
-                l.spawn((at(12.0, my, 6.0, mh), BackgroundColor(bright)));
+        if let Some((my, mh)) = bar {
+            if sharp {
+                l.spawn((at(0.0, 0.0, BAR_W, BAR_ARROW), Button, Part::ScrollUp));
+                l.spawn((at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), Button, Part::ScrollDown));
+            } else {
+                c.image(l, "arrow_up.dds", at(0.0, 0.0, BAR_W, BAR_ARROW), bright, (Button, Part::ScrollUp));
+                c.image(l, "arrow_down.dds", at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), bright, (Button, Part::ScrollDown));
+                if c.image(l, "vert_marker.dds", at(12.0, my, 6.0, mh), bright, ()).is_none() {
+                    l.spawn((at(12.0, my, 6.0, mh), BackgroundColor(bright)));
+                }
             }
         }
         let row_w = LIST_W - BAR_W - BOX_SHORT;
@@ -160,12 +169,9 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &View) {
     let bright = amber(255.0);
     let x = LIST_X + LIST_W + 10.0;
     let w = MAIN.x - x;
-    let len = w - 3.0;
     let b = INFO_Y + INFO_B - THICK;
-    for y in [INFO_Y, b] {
-        c.line(p, x, y, len, THICK, bright);
-        c.fade(p, x + w - THICK, y, HEAD_CORNER, false, bright);
-    }
+    let t = if c.sharp() { crate::vector_menu::LINE } else { THICK };
+    c.corner_lines(p, x, INFO_Y, w, &[0.0, INFO_B - t], HEAD_CORNER, bright);
     c.wrapped(p, &v.info, x, INFO_Y + 20.0, w - 40.0, bright);
     if !v.counter.is_empty() {
         c.text(p, Which::Title, &v.counter, x, b + 20.0, Align::Left, bright);

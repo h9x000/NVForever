@@ -14,6 +14,7 @@ use crate::pipboy::items::{tiles_in, Info};
 use super::model::{Category, Command, MenuModel, Mode, Quantity, Row, Side};
 use super::{AmountMeter, CategoryTitle, CmdButton, RowButton};
 use crate::interface::{amber, at, plain_font, texture, Face, Picture, Pictures};
+use crate::vector_menu::{self, Dir, Drawing, LINE, STUB};
 use bevy::ui::{FocusPolicy, RelativeCursorPosition};
 use bevy::prelude::*;
 use crate::ui_pointer::{Button, PointerState};
@@ -122,12 +123,17 @@ const TITLE_BASE: f32 = 21.5;
 const LINE_PITCH: f32 = 35.0;
 /// The key hint stands this far right of its button's text ("Accept A)").
 const HINT_GAP: f32 = 16.0;
-/// How dark the original's picture behind the menu makes the world: about a third at its edge on
-/// the barter screenshot (the world behind is also blurred there; not built).
-/// Ours is as dark as a message box's, 0.93 black [design: the owner's wish after the
-/// playtest of 2026-10-17, the other menus' 0.75 (`crate::interface::MENU_BACKING`) still
-/// let the world show through too much].
-const SHADE: f32 = 0.93;
+/// The caps arrow in vector (Sharp), in units from the picture's top left as it is drawn
+/// (120 by 360): pointing left (the player paid), its tip 94 down at the left edge, the head's
+/// back 35 in, the shaft's two lines 52 above and below the tip, ending 62 in; pointing right
+/// the same turned about 79 [observed: `barter_arrow_sell.dds` and `_buy.dds`, 128 by 256
+/// texels: tip at texel 0 (84), 67 down; the head's back at 37 (47); the shaft's lines 30-35
+/// and 100-105 down, fading out by 74 (10)].
+const CAPS_TIP_Y: f32 = 94.0;
+const CAPS_BACK: f32 = 35.0;
+const CAPS_SHAFT: f32 = 52.0;
+const CAPS_END: f32 = 62.0;
+const CAPS_W: f32 = 79.0;
 
 const BODY_FONT: &str = "textures\\fonts\\monofonto_large.fnt";
 const TITLE_FONT: &str = "textures\\fonts\\glow_monofonto_vl_dialogs.fnt";
@@ -303,6 +309,13 @@ fn mark_box(face: &Face, first_base: f32, scale: f32) -> [f32; 4] {
     [MARK_AT + (MARK - MARK_DRAWN) / 2.0, mid - MARK_DRAWN / 2.0, MARK_DRAWN, MARK_DRAWN]
 }
 
+/// A row's mark in vector, `w` by `h` ([`mark_box`]): the open square a frame, the filled
+/// one a block.
+fn mark_drawing(w: f32, h: f32, filled: bool) -> Drawing {
+    let d = Drawing::new(w, h);
+    if filled { d.block(0.0, 0.0, w, h) } else { d.frame(0.0, 0.0, w, h) }
+}
+
 /// The first row drawn from the list's own first row: a selection the pointer made stays
 /// where it is (only the wheel and the keys scroll; owner's playtest list 7, item 11), any
 /// other is brought into the list ([`first_shown`]).
@@ -322,11 +335,11 @@ pub fn drawn_first(m: &MenuModel, side: Side, kit: &Kit) -> usize {
     shown_from(m, side, &heights, m.scroll[side as usize])
 }
 
-/// The scroll bar's marker: its top and height inside the bar's track, or `None` when the
+/// The scroll bar's marker: its top and height inside the bar's track, `track` high (the
+/// pictures' 16-high arrows or the vector bar's leave different tracks), or `None` when the
 /// list fits. Counted in steps of half a row [hypothesis: the steps not shown are the
 /// marker's positions].
-pub fn marker(rows: usize, first: usize) -> Option<(f32, f32)> {
-    let track = LIST_H - 2.0 * BAR_ARROW;
+pub fn marker(rows: usize, first: usize, track: f32) -> Option<(f32, f32)> {
     let shown = (LIST_H / SCROLL_STEP).floor();
     let total = (rows as f32 * ROW_H / SCROLL_STEP).ceil();
     if total <= shown {
@@ -357,9 +370,26 @@ pub fn rows_marker(rows: usize, first: usize, page: usize, track: f32) -> Option
 /// list fits.
 #[allow(clippy::too_many_arguments)]
 pub fn spawn_rows_bar(p: &mut ChildSpawnerCommands, kit: &mut Kit, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool, glyphs: &crate::pad::PadGlyphs, (x, y, height): (f32, f32, f32), rows: usize, first: usize, page: usize) {
-    let Some((my, mh)) = rows_marker(rows, first, page, height - 2.0 * BAR_ARROW) else { return };
     let mut c = Ctx { kit, data, images, bc, glyphs };
+    scroll_bar(p, &mut c, (x, y, height), |track| rows_marker(rows, first, page, track));
+}
+
+/// A list's scroll bar, `BAR_W` wide at `x`, `y` and `height` high; `marker` gives the
+/// marker (top, height) in the track between the arrows, `None` (nothing drawn) when the
+/// list fits. Sharp: the kit's bar (`crate::vector_menu::scrollbar`: the titles' arrow
+/// turned, a thin marker) [design: owner 2026-11-27, "recreate the scrollbar - it should be
+/// vector and a bit thinner, make the arrows the same arrows as are before/next to ITEMS"];
+/// Original: the atlas's pictures.
+fn scroll_bar(p: &mut ChildSpawnerCommands, c: &mut Ctx, (x, y, height): (f32, f32, f32), marker: impl Fn(f32) -> Option<(f32, f32)>) {
     let bright = amber(255.0);
+    if vector_menu::on() {
+        let arrow = vector_menu::scroll_arrow(BAR_W).1;
+        if let Some(m) = marker(height - 2.0 * arrow) {
+            c.vector(p, &vector_menu::scrollbar(BAR_W, height, Some(m)), x, y, bright);
+        }
+        return;
+    }
+    let Some((my, mh)) = marker(height - 2.0 * BAR_ARROW) else { return };
     c.image(p, "arrow_up.dds", at(x, y, BAR_W, BAR_ARROW), bright);
     c.image(p, "arrow_down.dds", at(x, y + height - BAR_ARROW, BAR_W, BAR_ARROW), bright);
     if c.image(p, "vert_marker.dds", at(x + 12.0, y + BAR_ARROW + my, 6.0, mh), bright).is_none() {
@@ -401,6 +431,11 @@ impl Ctx<'_> {
         }
     }
 
+    /// A vector drawing (`crate::vector_menu`) with its top left at `x, y`.
+    fn vector(&mut self, p: &mut ChildSpawnerCommands, d: &Drawing, x: f32, y: f32, color: Color) {
+        vector_menu::spawn(p, d, x, y, color, self.images);
+    }
+
     /// A line 40 long that fades out downwards (or upwards, `up`), standing at `y`.
     fn fade(&mut self, p: &mut ChildSpawnerCommands, x: f32, y: f32, up: bool, color: Color) {
         let name = if up { "fade_to_top.dds" } else { "fade_to_bottom.dds" };
@@ -434,20 +469,25 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
         height: crate::interface::u(MAIN.y),
         ..default()
     };
+    let sharp = vector_menu::on();
     root.spawn(main).with_children(|p| {
-        // [documented] The dark picture behind, 40 left of and 105 above the menu.
-        let behind = at(-40.0, -105.0, 1144.0, 970.0);
-        let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-        if c.image(p, "interface\\shared\\background\\solid_black.dds", behind.clone(), shade).is_none() {
-            p.spawn((behind, BackgroundColor(shade)));
+        // The boxes' backing in place of the original's soft picture behind ([`backings`]):
+        // each half's frame, and the area from under the footers to the bottom bracket.
+        for (x, y, w, h) in backings(sharp) {
+            vector_menu::backing(p, x, y, w, h);
         }
         for side in [Side::Player, Side::Container] {
             half(p, &mut c, m, side);
         }
-        // The bottom bracket: a line with a short line fading up at each end.
-        c.line(p, LEFT_X, BRACKET_Y, MAIN.x, THICK, bright);
-        for x in [LEFT_X, LEFT_X + MAIN.x - THICK] {
-            c.fade(p, x, BRACKET_Y - CORNER + 1.0, true, bright);
+        // The bottom bracket: a line with a short line fading up at each end (Sharp: square
+        // ends, one drawing).
+        if sharp {
+            c.vector(p, &bottom_bracket(), LEFT_X, BRACKET_Y + LINE - STUB, bright);
+        } else {
+            c.line(p, LEFT_X, BRACKET_Y, MAIN.x, THICK, bright);
+            for x in [LEFT_X, LEFT_X + MAIN.x - THICK] {
+                c.fade(p, x, BRACKET_Y - CORNER + 1.0, true, bright);
+            }
         }
         match (m.mode, &m.trade) {
             (Mode::Barter(_), Some(t)) => {
@@ -459,8 +499,13 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
             }
             (Mode::Container(_), _) if m.selected_row(m.focus).is_some() => {
                 // [documented: the arrow points the way the item would go]
-                let (name, dy) = if m.focus == Side::Player { ("right.dds", 0.0) } else { ("left.dds", 6.0) };
-                c.image(p, &format!("interface\\shared\\arrow\\{name}"), at(ITEM_ARROW_X, ITEM_ARROW_Y + dy, 64.0, 128.0), bright);
+                let (name, dir, dy) = if m.focus == Side::Player { ("right.dds", Dir::Right, 0.0) } else { ("left.dds", Dir::Left, 6.0) };
+                if sharp {
+                    // [design: owner 2026-11-27, "recreate the transfer arrow"]
+                    c.vector(p, &vector_menu::transfer_arrow(64.0, 128.0, dir), ITEM_ARROW_X, ITEM_ARROW_Y + dy, bright);
+                } else {
+                    c.image(p, &format!("interface\\shared\\arrow\\{name}"), at(ITEM_ARROW_X, ITEM_ARROW_Y + dy, 64.0, 128.0), bright);
+                }
             }
             _ => {}
         }
@@ -483,43 +528,113 @@ pub fn spawn_note(root: &mut ChildSpawnerCommands, note: &str, kit: &mut Kit, da
     });
 }
 
+/// The backings (x, y, width, height from the menu's top left): each half from its heading
+/// line to under its footer line, and the bottom area from there to under the bottom
+/// bracket's line, all as wide as their lines; `sharp` lines are [`LINE`] thick, the
+/// pictures' [`THICK`]. The original's picture behind the whole menu darkens the world about
+/// a third at its edge, soft edged (§3); ours, in both Menu Font looks, is the boxes' own
+/// backing (`crate::vector_menu::backing`: the Box Background row's darkness, sharp edged)
+/// over these only [design: owner 2026-11-27, "the transfer menu still has the old blurred
+/// background, make sure that all in-game boxes have the same non-blurred background box"].
+pub fn backings(sharp: bool) -> [(f32, f32, f32, f32); 3] {
+    let thick = if sharp { LINE } else { THICK };
+    let foot = TOP + FOOTER_Y + thick;
+    [(LEFT_X, TOP, HALF_W, foot - TOP), (RIGHT_X, TOP, HALF_W, foot - TOP), (LEFT_X, foot, MAIN.x, BRACKET_Y + thick - foot)]
+}
+
+/// A half's frame in vector, from the half's top left: the heading line's 25 before the
+/// title and the rest after it (`line_x`, `line_len`, [`heading`]), a [`STUB`] down at each
+/// end, and the footer, a bracket open above along [`FOOTER_Y`], one drawing so every
+/// corner is joined [design: owner 2026-11-27, "the transfer menu has disconnected lines"].
+pub fn half_frame(line_x: f32, line_len: f32) -> Drawing {
+    let mut d = Drawing::new(HALF_W, FOOTER_Y + LINE).hline(0.0, 25.0, 0.0).vline(0.0, 0.0, STUB);
+    if line_len > 0.0 {
+        d = d.hline(line_x, line_x + line_len, 0.0);
+    }
+    d.vline_left(HALF_W, 0.0, STUB).bracket_up(0.0, HALF_W, FOOTER_Y + LINE)
+}
+
+/// The bottom bracket in vector, from its stubs' top: a line along the menu's width with a
+/// [`STUB`] up at each end, the line's top on [`BRACKET_Y`] when drawn [`STUB`] less
+/// [`LINE`] above it.
+pub fn bottom_bracket() -> Drawing {
+    Drawing::new(MAIN.x, STUB).bracket_up(0.0, MAIN.x, STUB)
+}
+
+/// A heading's ◀ or ▶ in vector: the kit's triangle in the pictures' 17.5 by 35.
+fn title_arrow(dir: Dir) -> Drawing {
+    Drawing::new(ARROW.x, ARROW.y).arrow(0.0, 0.0, ARROW.x, ARROW.y, dir)
+}
+
+/// The caps arrow in vector (`CAPS_TIP_Y`'s note), pointing left when the player is paid
+/// (`Flow::Sell`, the sell picture) and right when the player pays: the head's two sides,
+/// its back up and down to the shaft, and the shaft's two lines, all twice [`LINE`] as the
+/// transfer arrow's, ending square.
+pub fn caps_arrow(flow: Flow) -> Drawing {
+    let t = 2.0 * LINE;
+    let (back, my, s) = (CAPS_BACK, CAPS_TIP_Y, CAPS_SHAFT);
+    let x = |x: f32| if flow == Flow::Sell { x } else { CAPS_W - x };
+    let flip = |pts: [(f32, f32); 4]| pts.map(|(px, py)| (x(px), py));
+    let block = |d: Drawing, x0: f32, y0: f32, x1: f32, y1: f32| d.block(x(x0).min(x(x1)), y0, x(x0).max(x(x1)), y1);
+    let mut d = Drawing::new(CAPS_W, 2.0 * my)
+        .poly(&flip([(back - t, 0.0), (back, 0.0), (t, my), (0.0, my)]))
+        .poly(&flip([(0.0, my), (t, my), (back, 2.0 * my), (back - t, 2.0 * my)]));
+    d = block(d, back - t, 0.0, back, my - s + t);
+    d = block(d, back - t, my + s - t, back, 2.0 * my);
+    d = block(d, back - t, my - s, CAPS_END, my - s + t);
+    block(d, back - t, my + s - t, CAPS_END, my + s)
+}
+
 fn half(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side) {
     let bright = amber(255.0);
+    let sharp = vector_menu::on();
     let x0 = if side == Side::Player { LEFT_X } else { RIGHT_X };
     let title_top = TOP + if matches!(m.mode, Mode::Barter(_)) { -10.0 } else { -12.5 };
     let title = half_title(m, side);
     let title_w = first_line(&c.kit.title.font, &title).width*c.kit.text_size;
     let (left_arrow, title_x, right_arrow, (line_x, line_len)) = heading(title_w);
-    // The heading.
-    c.fade(p, x0, TOP, false, bright);
-    c.line(p, x0, TOP, 25.0, THICK, bright);
+    // The heading (Sharp: the whole frame, footer too, one drawing).
+    if sharp {
+        c.vector(p, &half_frame(line_x, line_len), x0, TOP, bright);
+    } else {
+        c.fade(p, x0, TOP, false, bright);
+        c.line(p, x0, TOP, 25.0, THICK, bright);
+    }
     c.text(p, true, &title, x0 + title_x, title_top, Align::Left, bright);
     // Over the arrows and the title, where the wheel and horizontal touch swipe step the category.
     // Spawned before the arrows so arrows sit above it in UiStack for direct taps.
     let (zone_x, zone_w) = title_zone(title_w);
     p.spawn((at(x0 + zone_x, TOP - 20.0, zone_w, 56.0), FocusPolicy::Pass, PointerState::default(), CategoryTitle(side)));
-    for (x, name, by) in [(left_arrow, "main_arrow_left.dds", -1), (right_arrow, "main_arrow_right.dds", 1)] {
+    for (x, name, dir, by) in [(left_arrow, "main_arrow_left.dds", Dir::Left, -1), (right_arrow, "main_arrow_right.dds", Dir::Right, 1)] {
         // Generous 52x52 hit container centered on the exact 17.5x35 arrow artwork.
         let hit_w = 52.0;
         let hit_h = 52.0;
         let dx = (hit_w - ARROW.x) * 0.5;
         let dy = (hit_h - ARROW.y) * 0.5;
         p.spawn((at(x0 + x - dx, TOP - 10.0 - dy, hit_w, hit_h), Button, CmdButton(Command::Category(side, by)))).with_children(|btn| {
-            c.image(btn, &format!("interface\\main\\{name}"), at(dx, dy, ARROW.x, ARROW.y), bright);
+            if sharp {
+                c.vector(btn, &title_arrow(dir), dx, dy, bright);
+            } else {
+                c.image(btn, &format!("interface\\main\\{name}"), at(dx, dy, ARROW.x, ARROW.y), bright);
+            }
         });
     }
-    c.line(p, x0 + line_x, TOP, line_len, THICK, bright);
+    if !sharp {
+        c.line(p, x0 + line_x, TOP, line_len, THICK, bright);
+    }
     if let Some(f) = half_figure(m, side) {
         // The player's tweak: the weight in red when taking the container's selected row
         // would put the player over [design: docs/design/tweaks.md].
         let colour = if over_if_taken(m, side) { crate::reticle::crime_colour() } else { bright };
         c.text(p, false, &f, x0 + FIGURE_RIGHT, TOP + 20.0, Align::Right, colour);
     }
-    c.fade(p, x0 + HALF_W - THICK, TOP, false, bright);
-    // The footer.
-    c.fade(p, x0, TOP + FOOTER_Y - CORNER, true, bright);
-    c.line(p, x0, TOP + FOOTER_Y, HALF_W, THICK, bright);
-    c.fade(p, x0 + HALF_W - THICK, TOP + FOOTER_Y - CORNER, true, bright);
+    if !sharp {
+        c.fade(p, x0 + HALF_W - THICK, TOP, false, bright);
+        // The footer.
+        c.fade(p, x0, TOP + FOOTER_Y - CORNER, true, bright);
+        c.line(p, x0, TOP + FOOTER_Y, HALF_W, THICK, bright);
+        c.fade(p, x0 + HALF_W - THICK, TOP + FOOTER_Y - CORNER, true, bright);
+    }
     if let Some(hint) = pick_hint(m.mode, side, crate::pad::labels()) {
         let x = x0 + PICK_HINT_X[side as usize] + PICK_HINT / 2.0;
         c.text(p, false, &hint, x, TOP + PICK_HINT_Y + PICK_HINT / 2.0 - BODY_BASE, Align::Centre, bright);
@@ -550,14 +665,9 @@ fn list(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side, x0
     let first = m.scroll[side as usize];
     let barter = matches!(m.mode, Mode::Barter(_));
     let node = Node { overflow: Overflow::clip(), ..at(x0 + LIST_DX, TOP + LIST_Y, width, LIST_H) };
+    let sharp = vector_menu::on();
     p.spawn(node).with_children(|l| {
-        if let Some((y, h)) = marker(rows.len(), first) {
-            c.image(l, "arrow_up.dds", at(0.0, 0.0, BAR_W, BAR_ARROW), bright);
-            c.image(l, "arrow_down.dds", at(0.0, LIST_H - BAR_ARROW, BAR_W, BAR_ARROW), bright);
-            if c.image(l, "vert_marker.dds", at(12.0, BAR_ARROW + y, 6.0, h), bright).is_none() {
-                l.spawn((at(12.0, BAR_ARROW + y, 6.0, h), BackgroundColor(bright)));
-            }
-        }
+        scroll_bar(l, c, (0.0, 0.0, LIST_H), |track| marker(rows.len(), first, track));
         let row_w = width - BAR_W - 5.0;
         let name_x = NAME_X + if rows.iter().any(|r| r.ysi.is_some()) { YSI_ICON_ADVANCE } else { 0.0 };
         let (texts, heights) = row_lines(m, side, c.kit);
@@ -580,15 +690,23 @@ fn list(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side, x0
                     let h = row_h - 1.0;
                     let fill = amber(128.0).with_alpha((HIGHLIGHT_FILL / 255.0).powf(2.2));
                     row.spawn((at(0.0, 0.0, row_w, h), BackgroundColor(fill)));
-                    crate::chargen::draw::outline(row, 0.0, 0.0, row_w, h, THICK, amber(HIGHLIGHT_LINE));
+                    if sharp {
+                        c.vector(row, &Drawing::new(row_w, h).frame(0.0, 0.0, row_w, h), 0.0, 0.0, amber(HIGHLIGHT_LINE));
+                    } else {
+                        crate::chargen::draw::outline(row, 0.0, 0.0, row_w, h, THICK, amber(HIGHLIGHT_LINE));
+                    }
                 }
                 // [documented] A filled square for an equipped item, an open one for an
-                // item put up for the trade.
-                let mark = if r.bartered { Some("square.dds") } else if r.equipped || r.loaded { Some("square_filled.dds") } else { None };
-                if let Some(mark) = mark {
+                // item put up for the trade (Sharp: a frame and a block of the kit).
+                let mark = if r.bartered { Some(("square.dds", false)) } else if r.equipped || r.loaded { Some(("square_filled.dds", true)) } else { None };
+                if let Some((mark, filled)) = mark {
                     let first_base = (TEXT_Y + BODY_BASE) * c.kit.text_size;
                     let [x, y, w, h] = mark_box(&c.kit.body, first_base, c.kit.text_size);
-                    c.image(row, mark, at(x, y, w, h), bright);
+                    if sharp {
+                        c.vector(row, &mark_drawing(w, h, filled), x, y, bright);
+                    } else {
+                        c.image(row, mark, at(x, y, w, h), bright);
+                    }
                 }
                 if let Some(icon) = r.ysi.as_ref().and_then(|d| d.icon.as_deref()) {
                     c.image(row, icon, at(NAME_X, MARK_AT, 24.0, 24.0), bright);
@@ -613,7 +731,12 @@ fn caps_flow(p: &mut ChildSpawnerCommands, c: &mut Ctx, flow: Flow, caps: u64, a
     let sell = flow == Flow::Sell;
     let rect_x = FLOW_X + if sell { 20.0 } else { 0.0 };
     let name = if sell { "barter_arrow_sell.dds" } else { "barter_arrow_buy.dds" };
-    c.image(p, &format!("interface\\barter\\{name}"), at(rect_x + 10.0 - if sell { 25.0 } else { 0.0 }, FLOW_Y - 15.0, 120.0, 360.0), bright);
+    let (px, py) = (rect_x + 10.0 - if sell { 25.0 } else { 0.0 }, FLOW_Y - 15.0);
+    if vector_menu::on() {
+        c.vector(p, &caps_arrow(flow), px, py, bright);
+    } else {
+        c.image(p, &format!("interface\\barter\\{name}"), at(px, py, 120.0, 360.0), bright);
+    }
     let figure = caps.to_string();
     let w = first_line(&c.kit.title.font, &figure).width;
     let x = flow_figure_x(flow, w);
@@ -683,12 +806,17 @@ pub fn item_figures(m: &MenuModel, r: &Row, info: Option<&Info>) -> Info {
     i
 }
 
-/// A tile of figures `w` wide: a line along its top and one fading down its right side,
-/// the title at the left and the value at the right.
+/// A tile of figures `w` wide: a line along its top and one fading down its right side
+/// (Sharp: one drawing, the corner joined, the side [`STUB`] long and square), the title at
+/// the left and the value at the right.
 fn card(p: &mut ChildSpawnerCommands, c: &mut Ctx, x: f32, y: f32, w: f32, title: &str, value: &str) {
     let bright = amber(255.0);
-    c.line(p, x, y, w, THICK, bright);
-    c.fade(p, x + w - THICK, y, false, bright);
+    if vector_menu::on() {
+        c.vector(p, &card_corner(w), x, y, bright);
+    } else {
+        c.line(p, x, y, w, THICK, bright);
+        c.fade(p, x + w - THICK, y, false, bright);
+    }
     c.text(p, false, title, x + 5.0, y + 20.0, Align::Left, bright);
     // A value too long for the room beside the title goes on in lines under it, as on the
     // Pip-Boy's cards (#2537).
@@ -696,6 +824,11 @@ fn card(p: &mut ChildSpawnerCommands, c: &mut Ctx, x: f32, y: f32, w: f32, title
     for (i, l) in crate::pipboy::frame::card_value_lines(&c.kit.body.font, title, w, value).iter().enumerate() {
         c.text(p, false, l, x + w - 10.0, y + 20.0 + pitch * i as f32, Align::Right, bright);
     }
+}
+
+/// A figures tile's top line and right side in vector, `w` wide.
+fn card_corner(w: f32) -> Drawing {
+    Drawing::new(w, STUB).hline(0.0, w, 0.0).vline_left(w, 0.0, STUB)
 }
 
 // ---- the "How many?" prompt -----------------------------------------------------------
@@ -738,6 +871,19 @@ const Q_BUTTONS_Y: [f32; 2] = [155.0, 200.0];
 /// the meter's height (as the HUD's bars, `crate::hud`).
 const Q_TICK: f32 = 8.0;
 
+/// The prompt's frame in vector, from its top left: the bracket open below on top and the
+/// one open above [`Q_BOTTOM`] lower, their sides [`Q_FADE`] long and square.
+fn quantity_frame() -> Drawing {
+    let foot = Q_BOTTOM + LINE;
+    Drawing::new(Q_W, foot)
+        .hline(0.0, Q_W, 0.0)
+        .vline(0.0, 0.0, Q_FADE)
+        .vline_left(Q_W, 0.0, Q_FADE)
+        .hline_up(0.0, Q_W, foot)
+        .vline(0.0, foot - Q_FADE, foot)
+        .vline_left(Q_W, foot - Q_FADE, foot)
+}
+
 /// How many ticks of the meter show for a part of the stack (a tick partly in shows,
 /// cut).
 pub fn quantity_ticks(part: f32) -> usize {
@@ -779,18 +925,21 @@ pub(super) fn spawn_quantity_reusing(root:&mut ChildSpawnerCommands,q:&Quantity,
     let sheet = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     root.spawn((sheet, QuantityBackdrop, FocusPolicy::Block, PointerState::default()));
     let boxed = Node { width: crate::interface::u(Q_BOX.x), height: crate::interface::u(Q_BOX.y), ..default() };
+    let sharp = vector_menu::on();
     root.spawn((boxed, FocusPolicy::Block)).with_children(|b| {
-        let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-        if c.image(b, "interface\\shared\\background\\solid_black.dds", at(0.0, 0.0, Q_BOX.x, Q_BOX.y), shade).is_none() {
-            b.spawn((at(0.0, 0.0, Q_BOX.x, Q_BOX.y), BackgroundColor(shade)));
-        }
+        // The boxes' backing, sharp edged, in both looks ([`backings`]).
+        vector_menu::backing(b, 0.0, 0.0, Q_BOX.x, Q_BOX.y);
         b.spawn(at(Q_IN.x, Q_IN.y, Q_W, Q_BOTTOM + THICK)).with_children(|p| {
-            for (y, up) in [(0.0, false), (Q_BOTTOM, true)] {
-                c.line(p, 0.0, y, Q_W, THICK, bright);
-                let (name, top) = if up { ("fade_to_top.dds", y - Q_FADE + 1.0) } else { ("fade_to_bottom.dds", y) };
-                for x in [0.0, Q_W - THICK] {
-                    if c.image(p, name, at(x, top, THICK, Q_FADE), bright).is_none() {
-                        p.spawn((at(x, top, THICK, Q_FADE), BackgroundColor(bright.with_alpha(0.5))));
+            if sharp {
+                c.vector(p, &quantity_frame(), 0.0, 0.0, bright);
+            } else {
+                for (y, up) in [(0.0, false), (Q_BOTTOM, true)] {
+                    c.line(p, 0.0, y, Q_W, THICK, bright);
+                    let (name, top) = if up { ("fade_to_top.dds", y - Q_FADE + 1.0) } else { ("fade_to_bottom.dds", y) };
+                    for x in [0.0, Q_W - THICK] {
+                        if c.image(p, name, at(x, top, THICK, Q_FADE), bright).is_none() {
+                            p.spawn((at(x, top, THICK, Q_FADE), BackgroundColor(bright.with_alpha(0.5))));
+                        }
                     }
                 }
             }
@@ -821,7 +970,7 @@ pub(super) fn spawn_quantity_reusing(root:&mut ChildSpawnerCommands,q:&Quantity,
                 let mut leaf=p.spawn((AmountMeter,Button,RelativeCursorPosition::default(),node));
                 if let Some(paint)=paint {leaf.insert(paint);}
             }
-            for (x, name, step) in [(Q_ARROWS[0], "main_arrow_left.dds", -1), (Q_ARROWS[1], "main_arrow_right.dds", 1)] {
+            for (x, name, dir, step) in [(Q_ARROWS[0], "main_arrow_left.dds", Dir::Left, -1), (Q_ARROWS[1], "main_arrow_right.dds", Dir::Right, 1)] {
                 let hit_w = 48.0;
                 let hit_h = 48.0;
                 // Expand away from AmountMeter so the generous 48x48 target never overlaps the meter track.
@@ -830,7 +979,9 @@ pub(super) fn spawn_quantity_reusing(root:&mut ChildSpawnerCommands,q:&Quantity,
                 let dy = (hit_h - ARROW.y) * 0.5;
                 p.spawn((at(box_x, my - 5.5 - dy, hit_w, hit_h), Button, CmdButton(Command::AmountStep(step)))).with_children(|btn| {
                     let node = at(img_x, dy, ARROW.x, ARROW.y);
-                    if c.image(btn, &format!("interface\\main\\{name}"), node.clone(), bright).is_none() {
+                    if sharp {
+                        c.vector(btn, &title_arrow(dir), img_x, dy, bright);
+                    } else if c.image(btn, &format!("interface\\main\\{name}"), node.clone(), bright).is_none() {
                         btn.spawn((node, BackgroundColor(bright.with_alpha(0.5))));
                     }
                 });
@@ -946,16 +1097,100 @@ mod tests {
         assert_eq!(rows_marker(17, 40, 7, 300.0).unwrap().0, end);
     }
 
+    /// The rectangles of a drawing's parts (min x, min y, max x, max y).
+    fn rects(d: &Drawing) -> Vec<[f32; 4]> {
+        d.parts.iter().filter_map(|p| match &p.form {
+            crate::vector_hud::Form::Rect(r) => Some([r.min.x, r.min.y, r.max.x, r.max.y]),
+            _ => None,
+        }).collect()
+    }
+
+    #[test]
+    fn a_halfs_frame_is_one_drawing_with_joined_corners() {
+        let (_, _, _, (line_x, line_len)) = heading(80.0);
+        let d = half_frame(line_x, line_len);
+        let r = rects(&d);
+        assert_eq!(r.len(), 7, "two heading lines, two stubs down, the footer and its two stubs");
+        // Top left: the 25 before the title and the stub down start on the same corner.
+        assert_eq!(r[0], [0.0, 0.0, 25.0, LINE]);
+        assert_eq!(r[1], [0.0, 0.0, LINE, STUB]);
+        // Top right: the line after the title ends on the stub's right edge, both at the top.
+        assert_eq!(r[2], [line_x, 0.0, HALF_W, LINE]);
+        assert_eq!(r[3], [HALF_W - LINE, 0.0, HALF_W, STUB]);
+        // The footer: its line under FOOTER_Y as the picture's, the stubs up ending on its
+        // bottom edge at both of its ends.
+        let foot = FOOTER_Y + LINE;
+        assert_eq!(r[4], [0.0, FOOTER_Y, HALF_W, foot]);
+        assert_eq!(r[5], [0.0, foot - STUB, LINE, foot]);
+        assert_eq!(r[6], [HALF_W - LINE, foot - STUB, HALF_W, foot]);
+        assert_eq!(d.size, Vec2::new(HALF_W, foot));
+        // A title too wide for the line after it: no line, the stub still there.
+        assert_eq!(rects(&half_frame(580.0, 0.0)).len(), 6);
+    }
+
+    #[test]
+    fn the_backings_cover_the_frames_and_meet() {
+        for sharp in [false, true] {
+            let thick = if sharp { LINE } else { THICK };
+            let [l, r, bottom] = backings(sharp);
+            assert_eq!((l.0, l.1, l.2), (LEFT_X, TOP, HALF_W));
+            assert_eq!((r.0, r.2, r.3), (RIGHT_X, HALF_W, l.3));
+            // From the heading line to under the footer line.
+            assert_eq!(l.1 + l.3, TOP + FOOTER_Y + thick);
+            // The bottom area starts where the halves end and ends under the bracket's line,
+            // as wide as the bracket.
+            assert_eq!((bottom.0, bottom.1, bottom.2), (LEFT_X, l.1 + l.3, MAIN.x));
+            assert_eq!(bottom.1 + bottom.3, BRACKET_Y + thick);
+        }
+        // The bracket drawn STUB less LINE above BRACKET_Y has its line's top on BRACKET_Y.
+        let b = rects(&bottom_bracket());
+        assert_eq!(b[0], [0.0, STUB - LINE, MAIN.x, STUB]);
+        assert_eq!((b[1][1], b[1][3], b[2][2]), (0.0, STUB, MAIN.x));
+    }
+
+    #[test]
+    fn the_caps_arrows_are_mirrors_and_their_shaft_meets_the_head() {
+        let shape = |d: &Drawing| crate::vector_hud::Shape { size: d.size, parts: d.parts.clone(), glow: false, wrap: false };
+        let (sell, buy) = (caps_arrow(Flow::Sell), caps_arrow(Flow::Buy));
+        let (ms, mb) = (crate::vector_hud::ink(&shape(&sell), 2.0), crate::vector_hud::ink(&shape(&buy), 2.0));
+        for y in 0..ms.height {
+            for x in 0..ms.width {
+                assert!((ms.at(x, y) - mb.at(ms.width - 1 - x, y)).abs() < 0.2, "{x} {y}");
+            }
+        }
+        // Pointing left: the shaft's lines start on the head's back and the back's lines
+        // reach into them.
+        let r = rects(&sell);
+        let t = 2.0 * LINE;
+        assert!(r.iter().all(|q| q[0] == CAPS_BACK - t), "{r:?}");
+        assert_eq!((r[0][3], r[2][1]), (CAPS_TIP_Y - CAPS_SHAFT + t, CAPS_TIP_Y - CAPS_SHAFT));
+        assert_eq!((r[1][1], r[3][3]), (CAPS_TIP_Y + CAPS_SHAFT - t, CAPS_TIP_Y + CAPS_SHAFT));
+        // Pointing right: the tip at the far side.
+        assert!(rects(&buy).iter().all(|q| q[2] == CAPS_W - (CAPS_BACK - t)));
+    }
+
+    #[test]
+    fn the_marks_and_card_corner() {
+        assert_eq!(rects(&mark_drawing(18.75, 18.75, true)), vec![[0.0, 0.0, 18.75, 18.75]]);
+        assert_eq!(rects(&mark_drawing(18.75, 18.75, false)).len(), 4);
+        let c = rects(&card_corner(176.0));
+        assert_eq!(c, vec![[0.0, 0.0, 176.0, LINE], [176.0 - LINE, 0.0, 176.0, STUB]]);
+        let q = rects(&quantity_frame());
+        assert_eq!(q[3], [0.0, Q_BOTTOM, Q_W, Q_BOTTOM + LINE]);
+        assert_eq!(q[5][2], Q_W);
+    }
+
     #[test]
     fn the_scroll_marker() {
+        let track = LIST_H - 2.0 * BAR_ARROW;
         // Seven rows fit (14 half-rows of 26 in 365).
-        assert_eq!(marker(7, 0), None);
-        let (y, h) = marker(20, 0).unwrap();
+        assert_eq!(marker(7, 0, track), None);
+        let (y, h) = marker(20, 0, track).unwrap();
         assert_eq!(y, 0.0);
         assert!(h >= 32.0);
         // Further down, further down the track, never past its end.
-        let (mid, _) = marker(20, 6).unwrap();
-        let (end, _) = marker(20, 13).unwrap();
-        assert!(0.0 < mid && mid < end && end + h <= LIST_H - 2.0 * BAR_ARROW + 1e-3);
+        let (mid, _) = marker(20, 6, track).unwrap();
+        let (end, _) = marker(20, 13, track).unwrap();
+        assert!(0.0 < mid && mid < end && end + h <= track + 1e-3);
     }
 }

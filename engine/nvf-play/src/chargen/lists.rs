@@ -510,13 +510,10 @@ pub fn spawn(root: &mut ChildSpawnerCommands, v: &ListView, c: &mut Ctx) {
     let main = Node { width: u(MAIN.x), height: u(MAIN.y), ..default() };
     root.spawn(main).with_children(|p| {
         // The headline: the short line, the title, the long line, a line fading down at
-        // each end.
-        c.line(p, 0.0, 0.0, HEAD_LINE, THICK, bright);
-        c.fade(p, 0.0, 0.0, HEAD_CORNER, false, bright);
+        // each end (Sharp: one drawing, `Ctx::headline`).
         let w = c.text(p, Which::Title, &v.title, TITLE_X, TITLE_Y, Align::Left, bright);
         let h2 = TITLE_X + w + 20.0;
-        c.line(p, h2, 0.0, MAIN.x - h2, THICK, bright);
-        c.fade(p, MAIN.x - THICK, 0.0, HEAD_CORNER, false, bright);
+        c.headline(p, 0.0, 0.0, MAIN.x, (HEAD_LINE, h2), HEAD_CORNER, bright);
         list(p, c, v, &s);
         // The chosen row's picture.
         if let Some(icon) = v.icon.as_deref() {
@@ -534,12 +531,24 @@ fn list(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
     let [x, y, w] = s.list;
     let h = s.visible as f32 * ROW_H;
     let node = Node { overflow: Overflow::clip(), ..at(x, y, w, h) };
+    let bar = marker(v.rows.len(), s.visible, v.scroll, h);
+    // Sharp: the menus' scroll bar, outside the list's clip so its glow is whole; its ends
+    // still take the clicks.
+    let sharp = c.sharp();
+    if sharp && bar.is_some() {
+        c.sharp_scrollbar(p, x, y, BAR_W, h, bar, bright);
+    }
     p.spawn(node).with_children(|l| {
-        if let Some((my, mh)) = marker(v.rows.len(), s.visible, v.scroll, h) {
-            c.image(l, "arrow_up.dds", at(0.0, 0.0, BAR_W, BAR_ARROW), bright, (Button, ListButton::ScrollUp));
-            c.image(l, "arrow_down.dds", at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), bright, (Button, ListButton::ScrollDown));
-            if c.image(l, "vert_marker.dds", at(12.0, my, 6.0, mh), bright, ()).is_none() {
-                l.spawn((at(12.0, my, 6.0, mh), BackgroundColor(bright)));
+        if let Some((my, mh)) = bar {
+            if sharp {
+                l.spawn((at(0.0, 0.0, BAR_W, BAR_ARROW), Button, ListButton::ScrollUp));
+                l.spawn((at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), Button, ListButton::ScrollDown));
+            } else {
+                c.image(l, "arrow_up.dds", at(0.0, 0.0, BAR_W, BAR_ARROW), bright, (Button, ListButton::ScrollUp));
+                c.image(l, "arrow_down.dds", at(0.0, h - BAR_ARROW, BAR_W, BAR_ARROW), bright, (Button, ListButton::ScrollDown));
+                if c.image(l, "vert_marker.dds", at(12.0, my, 6.0, mh), bright, ()).is_none() {
+                    l.spawn((at(12.0, my, 6.0, mh), BackgroundColor(bright)));
+                }
             }
         }
         let row_w = w - BAR_W - BOX_SHORT;
@@ -591,8 +600,13 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
     if v.code == menus::TAG_SKILLS {
         // [documented] Lines 560 long at the top and 300 down; the text at 20, 20
         // wrapping at 540; the counter 20 under the second line.
-        c.line(p, x, y, 560.0, THICK, bright);
-        c.line(p, x, y + 300.0 - THICK, 560.0, THICK, bright);
+        if c.sharp() {
+            let d = crate::vector_menu::Drawing::new(560.0, 300.0).hline(0.0, 560.0, 0.0).hline_up(0.0, 560.0, 300.0);
+            c.drawing(p, &d, x, y, bright);
+        } else {
+            c.line(p, x, y, 560.0, THICK, bright);
+            c.line(p, x, y + 300.0 - THICK, 560.0, THICK, bright);
+        }
         c.wrapped(p, &v.info, x + 20.0, y + 20.0, 540.0, bright);
         if !v.counter.is_empty() {
             c.text(p, Which::Body, &v.counter, x + 20.0, y + 300.0 - THICK + 20.0, Align::Left, bright);
@@ -602,12 +616,9 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
         // fading down from its right end; the text 20 down, wrapping short of the scroll
         // bar, whose arrows stand at the right; the counter (title font) 20 under the
         // second line.
-        let len = w - 3.0;
         let b = y + 335.0 - THICK;
-        for yy in [y, b] {
-            c.line(p, x, yy, len, THICK, bright);
-            c.fade(p, x + w - THICK, yy, HEAD_CORNER, false, bright);
-        }
+        let low = if c.sharp() { 335.0 - crate::vector_menu::LINE } else { 335.0 - THICK };
+        c.corner_lines(p, x, y, w, &[0.0, low], HEAD_CORNER, bright);
         let text_w = w - BAR_W;
         let node = Node { overflow: Overflow::clip(), ..at(x, y + 20.0, text_w, 275.0) };
         p.spawn(node).with_children(|t| {
@@ -616,8 +627,12 @@ fn info(p: &mut ChildSpawnerCommands, c: &mut Ctx, v: &ListView, s: &Shape) {
         // [documented: the bar 130 high, at 95 in the box 20 down; observed: its arrows at
         // 432 and 515 pixels on the screenshot, shown with a short text]
         let bar_y = y + 20.0 + 95.0;
-        c.image(p, "arrow_up.dds", at(x + text_w, bar_y, BAR_W, BAR_ARROW), bright, ());
-        c.image(p, "arrow_down.dds", at(x + text_w, bar_y + 130.0 - BAR_ARROW, BAR_W, BAR_ARROW), bright, ());
+        if c.sharp() {
+            c.sharp_scrollbar(p, x + text_w, bar_y, BAR_W, 130.0, None, bright);
+        } else {
+            c.image(p, "arrow_up.dds", at(x + text_w, bar_y, BAR_W, BAR_ARROW), bright, ());
+            c.image(p, "arrow_down.dds", at(x + text_w, bar_y + 130.0 - BAR_ARROW, BAR_W, BAR_ARROW), bright, ());
+        }
         c.text(p, Which::Title, &v.counter, x, b + 20.0, Align::Left, bright);
     }
 }

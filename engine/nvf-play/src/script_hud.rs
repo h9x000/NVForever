@@ -187,8 +187,6 @@ use crate::tiles::vanilla::SubtitlesArea as SubtitleArea;
 /// The text may be as wide as the HUD's Subtitles rect [documented:
 /// menus\main\hud_main_menu.xml, `Subtitles` width 800].
 pub(crate) const SUBTITLE_WIDTH: f32 = 800.0;
-/// The first line's base under the view's top [observed: the owner's screenshot].
-const SUBTITLE_BASE: f32 = 633.0;
 /// Lines are the font's size and this much apart [observed: 38 units on the screenshot].
 const SUBTITLE_LEADING: f32 = 2.0;
 /// Font 7, the HUD's text templates' [documented: menus\prefabs\hudtemplates.xml].
@@ -398,9 +396,13 @@ fn draw(
             let face = font.get_or_make(|| crate::interface::screen_face(SUBTITLE_FONT, plain_font(36.0, 17.0), data.as_deref(), &mut images, bc_supported(formats.as_deref())));
             let lines = subtitle_layout(&subs.on_screen, &face.font);
             // Centred by their ink (the sharp lines' start shift is for words set from their
-            // start), as high as the Subtitle Position row lifts them.
+            // start); their middle (the first line's capitals to the last line's foot) where
+            // the Subtitle Position row says, in the area's frame kept at the view's middle
+            // (`spawn`).
             let shift = face.vector.as_ref().map_or(0.0, |v| v.shift);
-            let top = SUBTITLE_BASE - crate::interface::subtitle_lift();
+            let cap = crate::quick_loot::cap(face);
+            let block = cap + (face.font.size + SUBTITLE_LEADING) * lines.len().saturating_sub(1) as f32;
+            let top = crate::interface::subtitle_top(block, 0.5, crate::interface::ui_scale()) + cap;
             for area in &areas {
                 commands.entity(area).despawn_related::<Children>().with_children(|a| {
                     for (line, x, base) in &lines {

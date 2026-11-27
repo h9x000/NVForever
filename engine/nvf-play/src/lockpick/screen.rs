@@ -298,6 +298,12 @@ impl Ctx<'_> {
     }
 }
 
+/// The information box's bracket with Sharp on: the left side down the box's height and the
+/// bottom across its width, meeting in the corner (the fading ends drawn to their end).
+fn info_lines() -> crate::vector_menu::Drawing {
+    crate::vector_menu::Drawing::new(INFO.x, INFO.y).vline(0.0, 0.0, INFO.y).hline_up(0.0, INFO.x, INFO.y)
+}
+
 fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockView>, view_w: f32) {
     let bright = amber(255.0);
     let full = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
@@ -325,10 +331,17 @@ fn spawn(commands: &mut Commands, c: &mut Ctx, s: &Session, view: Option<&LockVi
             // The information box.
             let info = Node { position_type: PositionType::Absolute, left: u(INFO_IN), bottom: u(INFO_IN), width: u(INFO.x), height: u(INFO.y), ..default() };
             m.spawn(info).with_children(|b| {
-                c.image(b, "interface\\shared\\line\\fade_to_top.dds", at(0.0, 0.0, THICK, FADE), bright);
-                c.image(b, "interface\\shared\\line\\solid.dds", at(0.0, FADE - THICK, THICK, INFO.y - FADE), bright);
-                c.image(b, "interface\\shared\\line\\solid.dds", at(0.0, INFO.y - THICK, INFO.x - FADE, THICK), bright);
-                c.image(b, "interface\\shared\\line\\fade_to_right.dds", at(INFO.x - FADE - THICK, INFO.y - THICK, FADE, THICK), bright);
+                if crate::vector_menu::on() {
+                    // Sharp: the bracket's two lines joined in the corner, ending square,
+                    // over the boxes' backing (`crate::vector_menu`).
+                    crate::vector_menu::backing(b, 0.0, 0.0, INFO.x, INFO.y);
+                    crate::vector_menu::spawn(b, &info_lines(), 0.0, 0.0, bright, c.images);
+                } else {
+                    c.image(b, "interface\\shared\\line\\fade_to_top.dds", at(0.0, 0.0, THICK, FADE), bright);
+                    c.image(b, "interface\\shared\\line\\solid.dds", at(0.0, FADE - THICK, THICK, INFO.y - FADE), bright);
+                    c.image(b, "interface\\shared\\line\\solid.dds", at(0.0, INFO.y - THICK, INFO.x - FADE, THICK), bright);
+                    c.image(b, "interface\\shared\\line\\fade_to_right.dds", at(INFO.x - FADE - THICK, INFO.y - THICK, FADE, THICK), bright);
+                }
                 // The rows' titles are the file's game settings (`Words`, from the game
                 // strings table) [documented: lockpick_menu.xml].
                 let words = &s.words;
@@ -509,6 +522,26 @@ pub fn fade(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A drawing's lines as rectangles.
+    pub(crate) fn rects(d: &crate::vector_menu::Drawing) -> Vec<Rect> {
+        d.parts
+            .iter()
+            .map(|p| match &p.form {
+                crate::vector_hud::Form::Rect(r) => *r,
+                _ => panic!("a line is a rectangle"),
+            })
+            .collect()
+    }
+
+    #[test]
+    fn the_info_bracket_meets_in_its_corner() {
+        use crate::vector_menu::LINE;
+        let d = info_lines();
+        assert_eq!(d.size, INFO);
+        // The side runs to the box's foot, the bottom from its left edge: one corner.
+        assert_eq!(rects(&d), vec![Rect::new(0.0, 0.0, LINE, INFO.y), Rect::new(0.0, INFO.y - LINE, INFO.x, INFO.y)]);
+    }
 
     #[test]
     fn the_pointer_hides_over_the_lock_only() {

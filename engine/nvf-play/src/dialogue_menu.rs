@@ -37,10 +37,6 @@ use nvf_assets::GameData;
 const BAND_WIDTH: f32 = 1080.0;
 /// The safe zone at each edge [documented: Fallout_default.ini `iSafeZoneY`, hud.md §3].
 const CROP_Y: f32 = 15.0;
-/// The line and the list are centred on this part of the height inside the safe zone,
-/// and kept this far above its bottom.
-const CENTRE: f32 = 0.8;
-const BOTTOM_ROOM: f32 = 40.0;
 /// The line starts this far into the band and wraps this much narrower than it.
 const TEXT_IN: f32 = 60.0;
 /// The band reaches this far above the line's top (less 5) and is this much taller.
@@ -238,17 +234,27 @@ fn text_height(lines: usize) -> f32 {
     LINE * lines as f32
 }
 
-/// Where a block `height` high starts: centred on the centring line, but not lower than
-/// the room the safe zone leaves under it.
+/// Where a block `height` high starts: its middle where the Subtitle Position row puts the
+/// subtitles (`crate::interface::subtitle_top`, a part of the view's height up from its foot),
+/// the room `extra` under it (the Goodbye hint's) and all of it on the view.
 fn centred(height: f32, extra: f32) -> f32 {
-    centred_lifted(height, extra, crate::interface::subtitle_lift())
+    centred_at(crate::interface::subtitle_place(), height, extra, crate::interface::menu_scale())
 }
 
-/// [`centred`], `lift` units higher (the Subtitle Position row, `crate::interface::subtitle_lift`;
-/// lower for less than 0), never above the safe zone's top nor lower than its foot allows.
-fn centred_lifted(height: f32, extra: f32, lift: f32) -> f32 {
-    let inside = 960.0 - 2.0 * CROP_Y;
-    (inside * CENTRE - height / 2.0 - lift).min(inside - height - BOTTOM_ROOM - extra).max(0.0)
+/// The band's reach past the block it holds, above and below (the list's: its brackets and
+/// the band past them; the line's band reaches less).
+const BAND_ABOVE: f32 = BRACKET_ABOVE + LIST_BAND_UP;
+const BAND_BELOW: f32 = BRACKET_BELOW + LIST_BAND_DOWN;
+
+/// [`centred`] at the Subtitle Position row's `place` and the menus' `scale`: the band and
+/// the room `extra` under it all on the view.
+fn centred_at(place: f32, height: f32, extra: f32, scale: f32) -> f32 {
+    let anchor = crate::interface::BOTTOM_MIDDLE.y;
+    // The highest and lowest it may stand: the band's top at the view's top, its foot with
+    // the room under it at the view's foot.
+    let highest = crate::interface::subtitle_top_at(1.0, height, anchor, scale) + BAND_ABOVE;
+    let lowest = crate::interface::subtitle_top_at(0.0, height + extra + BAND_BELOW, anchor, scale);
+    crate::interface::subtitle_top_at(place, height, anchor, scale).min(lowest).max(highest)
 }
 
 /// One past the last of the whole choices from `from` that fit in `room`, at least one.
@@ -467,6 +473,15 @@ pub(crate) fn load_kit(data: Option<&GameData>, images: &mut Assets<Image>, bc: 
 
 // ---- drawing ---------------------------------------------------------------------------
 
+/// A drawing's part moved by `by` units.
+fn shifted(mut part: crate::vector_hud::Part, by: Vec2) -> crate::vector_hud::Part {
+    part.form = match part.form {
+        crate::vector_hud::Form::Rect(r) => crate::vector_hud::Form::Rect(Rect::from_corners(r.min + by, r.max + by)),
+        crate::vector_hud::Form::Poly(v) => crate::vector_hud::Form::Poly(v.into_iter().map(|q| q + by).collect()),
+    };
+    part
+}
+
 pub struct DialogueMenuPlugin;
 
 impl Plugin for DialogueMenuPlugin {
@@ -512,17 +527,21 @@ fn image(p: Option<&Picture>, color: Color) -> Option<ImageNode> {
     p.map(|(image, rect)| ImageNode { rect: *rect, color, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) })
 }
 
-fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>, glyphs: &crate::pad::PadGlyphs) {
-    spawn_menu_on(commands, view, l, kit, selected, on_screen, glyphs, false, None, None);
+#[allow(clippy::too_many_arguments)]
+fn spawn_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>, glyphs: &crate::pad::PadGlyphs, images: &mut Assets<Image>) {
+    spawn_menu_on(commands, view, l, kit, selected, on_screen, glyphs, false, None, None, Some(images));
 }
 
 #[allow(clippy::too_many_arguments)]
 pub(crate) fn spawn_touch_menu(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>, glyphs: &crate::pad::PadGlyphs, confirm: Option<(&str,f32)>, camera: Entity) {
-    spawn_menu_on(commands, view, l, kit, selected, on_screen, glyphs, true, confirm, Some(camera));
+    spawn_menu_on(commands, view, l, kit, selected, on_screen, glyphs, true, confirm, Some(camera), None);
 }
 
 #[allow(clippy::too_many_arguments)]
-fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>, glyphs: &crate::pad::PadGlyphs, touch: bool, confirm: Option<(&str,f32)>, camera: Option<Entity>) {
+fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit, selected: usize, on_screen: Option<&ListId>, glyphs: &crate::pad::PadGlyphs, touch: bool, confirm: Option<(&str,f32)>, camera: Option<Entity>, mut images: Option<&mut Assets<Image>>) {
+    // The lines and marks in vector while the Menu Font row says Sharp (`crate::vector_menu`;
+    // the touch screen's own drawing keeps the pictures).
+    let vector = crate::vector_menu::on() && images.is_some();
     let screen = Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() };
     // At the UI scale the menu keeps to the view's bottom, in its middle (#1631).
     let screen = if touch { screen } else { crate::interface::framed_root(screen, crate::interface::BOTTOM_MIDDLE) };
@@ -531,17 +550,18 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
     if touch {root.insert((TouchNativeRoot,crate::dialogue_touch::PaletteRoot));} else {root.insert(MenuRoot);}
     if let Some(camera)=camera {root.insert(UiTargetCamera(camera));}
     root.with_children(|s| {
-        // The band plain and sharp-edged, as dark as the Box Background row, as Quick Loot's
-        // [design: owner 2026-11-27, "conversation prompts also need the same background as
-        // quickloot"; the game's soft dark picture read as blurred].
-        if let Some([x, y, w, h]) = l.band {
-            s.spawn((at(x, y, w, h), BackgroundColor(crate::interface::box_shade())));
+        // A backing only behind the choices, inside their brackets' lines, plain and
+        // sharp-edged as Quick Loot's at the Box Background row's darkness; none behind the
+        // line being said (subtitles), nor the Goodbye hint [design: owner 2026-11-27, "the
+        // conversation box goes outside the line limit - fix it and remove the box for the
+        // tab goodbye prompt", "remove the box from subtitles - box should be only behind the
+        // interaction boxes that have lines around their edges"].
+        if let Some(list) = &l.list {
+            let (x, y) = (list.bracket_x, list.top_line);
+            crate::vector_menu::backing(s, x, y, list.bracket_width, list.bottom_line + THICK - y);
         }
         if let Some(n) = &l.name {
             set_line(s, &kit.name, &n.line, n.x, n.base, bright);
-        }
-        if let Some([x, y, w, h]) = l.hint_back {
-            s.spawn((at(x, y, w, h), BackgroundColor(crate::interface::box_shade())));
         }
         if let Some(hint) = &l.hint {
             crate::pad::set_hint(s, &kit.body, &goodbye_hint(), hint.x, hint.base, bright, glyphs);
@@ -558,6 +578,24 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
         // The brackets: a line with an upright at each end that fades out, down from the
         // top one and up from the bottom one.
         let (bx, bw) = (list.bracket_x, list.bracket_width);
+        if let (true, Some(images)) = (vector, images.as_deref_mut()) {
+            // One drawing: the two brackets' lines and their uprights, square-ended and
+            // joined, with the scroll bar's arrows and marker (`crate::vector_menu`).
+            let (x0, y0) = (bx, list.top_line);
+            let h = list.bottom_line + THICK - y0;
+            let mut d = crate::vector_menu::Drawing::new(bw, h).bracket_down(0.0, bw, 0.0).bracket_up(0.0, bw, h);
+            if let Some(bar) = &list.scroll {
+                let [ux, uy, uw, _] = bar.up;
+                let [_, dy, _, dh] = bar.down;
+                let [_, my, _, mh] = bar.marker;
+                let track = (uy, dy + dh);
+                let sb = crate::vector_menu::scrollbar(uw, track.1 - track.0, Some((my - uy - crate::vector_menu::scroll_arrow(uw).1, mh)));
+                for part in sb.parts {
+                    d.parts.push(shifted(part, Vec2::new(ux - x0, track.0 - y0)));
+                }
+            }
+            crate::vector_menu::spawn(s, &d, x0, y0, bright, images);
+        } else {
         for (y, fade, ends_y) in [(list.top_line, &kit.fade_down, list.top_line), (list.bottom_line, &kit.fade_up, list.bottom_line + THICK - BRACKET_ENDS)] {
             s.spawn((at(bx, y, bw, THICK), BackgroundColor(bright)));
             for x in [bx, bx + bw - THICK] {
@@ -574,6 +612,7 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
                     None => s.spawn((at(x + w / 2.0 - THICK, y, 2.0 * THICK, h), BackgroundColor(bright))),
                 };
             }
+        }
         }
         if let Some((caption,minimum)) = confirm {
             let [x,_,w,_] = list.area;
@@ -609,8 +648,19 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
                     let (line, fill) = if row.short { (short_line(), Color::srgba_u8(62, 0, 0, 82)) } else { (amber(200.0), amber(128.0).with_alpha(0.1)) };
                     let shown = if c.index == selected { Visibility::Inherited } else { Visibility::Hidden };
                     // Its lines whole pixels thick, each from its own edge, so all four match
-                    // (`crate::message_menu::box_lines`).
-                    r.spawn((Frame(c.index), at(0.0, 0.0, cw, h), shown, BackgroundColor(fill))).with_children(|f| crate::message_menu::box_lines(f, line));
+                    // (`crate::message_menu::box_lines`); in vector with their glow while Sharp.
+                    let mut frame = r.spawn((Frame(c.index), at(0.0, 0.0, cw, h), shown, BackgroundColor(fill)));
+                    match (vector, images.as_deref_mut()) {
+                        (true, Some(images)) => {
+                            let d = crate::vector_menu::Drawing::new(cw, h).frame(0.0, 0.0, cw, h);
+                            frame.with_children(|f| {
+                                crate::vector_menu::spawn(f, &d, 0.0, 0.0, line, images);
+                            });
+                        }
+                        _ => {
+                            frame.with_children(|f| crate::message_menu::box_lines(f, line));
+                        }
+                    }
                     // Said before: as bright as the interface's disabled text (128 of 255).
                     let color = if row.darkened { amber(128.0) } else { bright };
                     for t in &c.lines {
@@ -693,7 +743,7 @@ fn draw(
                 (Some(false), was) if was != Some(false) => info!("dialogue menu: {} hidden by the Goodbye hint setting", goodbye_hint()),
                 _ => {}
             }
-            spawn_menu(&mut commands, view, &l, kit, selected, menu.list.as_ref(), &glyphs);
+            spawn_menu(&mut commands, view, &l, kit, selected, menu.list.as_ref(), &glyphs, &mut images);
         }
         *shown = key;
         return;
@@ -880,13 +930,13 @@ mod tests {
         assert!(on.hint.is_some() && off.hint.is_none());
         assert_eq!((on.list.as_ref(), on.name.as_ref()), (off.list.as_ref(), off.name.as_ref()));
         assert!(on.band.unwrap()[3] > off.band.unwrap()[3]);
-        // But a list at its tallest moves up for the room: turning the hint on moves it up
-        // by up to the room (19 for the stand-in's ink).
-        let long = "Tell me everything you know about the people who attacked the town last night";
-        let v = goodbye(&[long, long, long, long, long, "Goodbye."]);
-        let (on, off) = (lay(&v, 1280.0, true), lay(&v, 1280.0, false));
-        let shift = off.list.unwrap().area[1] - on.list.unwrap().area[1];
-        assert!(shift > 0.0 && shift <= hint_room(STAND_IN_INK), "moved up by {shift}");
+        // But a list at the view's foot (the Subtitle Position row at 0%) moves up for the
+        // room: by the room (19 for the stand-in's ink).
+        let room = hint_room(STAND_IN_INK);
+        let shift = centred_at(0.0, MAX_LIST, 0.0, 1.0) - centred_at(0.0, MAX_LIST, room, 1.0);
+        assert!((shift - room).abs() < 1e-3, "moved up by {shift}");
+        // Higher up there is room enough: it stays.
+        assert_eq!(centred_at(0.25, MAX_LIST, 0.0, 1.0), centred_at(0.25, MAX_LIST, room, 1.0));
     }
 
     #[test]
@@ -914,11 +964,18 @@ mod tests {
     }
 
     #[test]
-    fn the_subtitle_position_lifts_the_block_within_the_safe_zone() {
-        assert_eq!(centred_lifted(76.0, 0.0, 0.0), 706.0, "the original's place");
-        assert_eq!(centred_lifted(76.0, 0.0, 100.0), 606.0, "a hundred units up");
-        assert_eq!(centred_lifted(76.0, 0.0, -200.0), 960.0 - 30.0 - 76.0 - 40.0, "down to the foot's room, no further");
-        assert_eq!(centred_lifted(76.0, 0.0, 2000.0), 0.0, "never above the top");
+    fn the_subtitle_position_puts_the_block_anywhere_on_the_view() {
+        use crate::interface::subtitle_top_at as top;
+        // At 100%: a quarter up puts the middle 720 down; the middle at 480; the ends keep 15
+        // from the view's edges.
+        assert_eq!(top(0.25, 76.0, 1.0, 1.0), 720.0 - 38.0);
+        assert_eq!(top(0.5, 76.0, 1.0, 1.0), 480.0 - 38.0);
+        assert_eq!(top(0.0, 76.0, 1.0, 1.0), 960.0 - 15.0 - 76.0);
+        assert_eq!(top(1.0, 76.0, 1.0, 1.0), 15.0);
+        // At 50%, the menu's frame is the view's lower half: the view's middle is its top, and
+        // its top half above it.
+        assert_eq!(top(0.5, 76.0, 1.0, 0.5), -38.0);
+        assert_eq!(top(1.0, 76.0, 1.0, 0.5), -960.0 + 15.0);
     }
 
     #[test]
@@ -929,14 +986,15 @@ mod tests {
         let width = 960.0 * 16.0 / 9.0;
         let l = layout(&v, 0, 0, width, true, &font(34.0), &font(36.0), &no_glyphs());
         assert_eq!(l.text.len(), 2);
-        // The text's top at 706, its first line standing 23.3 under it, the next 38 lower.
-        assert!((l.text[0].base - 729.3).abs() < 1e-3);
-        assert!((l.text[1].base - 767.3).abs() < 1e-3);
+        // The text's top at 682 (its middle a quarter up the view, the Subtitle Position
+        // row's default), its first line standing 23.3 under it, the next 38 lower.
+        assert!((l.text[0].base - 705.3).abs() < 1e-3);
+        assert!((l.text[1].base - 743.3).abs() < 1e-3);
         // Starts 60 into the band, which is 1080 wide and centred.
         let band = l.band.unwrap();
         assert!((band[0] - (width - 1080.0) / 2.0).abs() < 1e-3);
         assert!((l.text[0].x - band[0] - 60.0).abs() < 1e-3);
-        assert_eq!((band[1], band[3]), (661.0, 156.0));
+        assert_eq!((band[1], band[3]), (637.0, 156.0));
         assert!(l.list.is_none());
         // The name stands right of the middle at the top, ending short of the edge.
         let n = l.name.unwrap();
@@ -953,25 +1011,25 @@ mod tests {
         let l = layout(&v, 0, 1, 1280.0, true, &font(34.0), &font(36.0), &no_glyphs());
         let list = l.list.unwrap();
         assert_eq!(list.choices.len(), 3);
-        // The list is 250 high, its top at 619 and the brackets' lines 20 above and 10
-        // below it.
-        assert_eq!(list.area, [120.0, 619.0, 1010.0, 250.0]);
-        assert_eq!((list.top_line, list.bottom_line, list.bracket_x), (599.0, 879.0, 135.0));
+        // The list is 250 high, its top at 595 (its middle a quarter up the view, the Subtitle
+        // Position row's default) and the brackets' lines 20 above and 10 below it.
+        assert_eq!(list.area, [120.0, 595.0, 1010.0, 250.0]);
+        assert_eq!((list.top_line, list.bottom_line, list.bracket_x), (575.0, 855.0, 135.0));
         // The rows: 96, 96 and 58 high, starting 7.2 above the list's top, from the right
         // of the scroll bar.
         let tops: Vec<f32> = list.choices.iter().map(|c| c.area[1]).collect();
-        assert!((tops[0] - 611.8).abs() < 1e-3 && (tops[1] - 707.8).abs() < 1e-3 && (tops[2] - 803.8).abs() < 1e-3);
+        assert!((tops[0] - 587.8).abs() < 1e-3 && (tops[1] - 683.8).abs() < 1e-3 && (tops[2] - 779.8).abs() < 1e-3);
         assert_eq!(list.choices[0].area[0], 152.0);
         assert_eq!(list.choices[0].area[2], 973.0);
         let first = &list.choices[0].lines;
-        assert!((first[0].base - (611.8 + 15.0 + 23.3)).abs() < 1e-3);
+        assert!((first[0].base - (587.8 + 15.0 + 23.3)).abs() < 1e-3);
         assert_eq!(first[0].x, 177.0);
         // The scroll bar shows because the fourth choice does not fit.
         let bar = list.scroll.unwrap();
         assert_eq!(bar.up[0], 120.0);
-        assert!((bar.up[1] + 8.0 - 650.0).abs() < 1e-3);
+        assert!((bar.up[1] + 8.0 - 626.0).abs() < 1e-3);
         // The band: 30 above and below the brackets.
-        assert_eq!(l.band.unwrap(), [100.0, 569.0, 1080.0, 340.0]);
+        assert_eq!(l.band.unwrap(), [100.0, 545.0, 1080.0, 340.0]);
     }
 
     #[test]

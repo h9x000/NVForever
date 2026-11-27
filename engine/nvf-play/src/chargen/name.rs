@@ -12,7 +12,8 @@ use fnv_game::chargen;
 
 /// The box: 720 × 180, centred on the screen.
 pub const BOX: Vec2 = Vec2::new(720.0, 180.0);
-/// The dark picture behind: 25 out on every side.
+/// The room kept round the box when it is fitted to the view: the file's dark picture
+/// behind reached 25 out on every side.
 const BEHIND: f32 = 25.0;
 /// The question, centred, 32 down.
 const PROMPT_Y: f32 = 32.0;
@@ -32,13 +33,15 @@ const TOP_CORNER: f32 = 50.0;
 /// `fnv_game::ui_loading::game_string`; LEGAL.md) [design, #1028].
 pub const PROMPT_SETTING: &str = "sEnterName";
 pub const OK_SETTING: &str = "sOk";
-/// The question and the name are in font 1, the glowing one [observed: their letters
-/// have the glow on the screenshot; hypothesis: font 1 is the default of a text the file
-/// gives no font]; Ok in font 2, a text box's default [documented: text_box.xml].
-///
-/// How dark the box makes what is behind it: by eye, about the message box's; darker
-/// since the owner's playtest list 7 item 2 (`crate::interface::TOP_MENU_SHADE`).
-const SHADE: f32 = crate::interface::TOP_MENU_SHADE;
+// The question and the name are in font 1, the glowing one [observed: their letters
+// have the glow on the screenshot; hypothesis: font 1 is the default of a text the file
+// gives no font]; Ok in font 2, a text box's default [documented: text_box.xml].
+//
+// Behind the box: the file's dark picture (`solid_black.dds`, soft edged, 25 out on every
+// side) is, in both Menu Font looks, the boxes' own backing over the box only
+// (`crate::vector_menu::backing`, the Box Background row's darkness, sharp edged) [design:
+// owner 2026-11-27, "make sure that all in-game boxes have the same non-blurred background
+// box"].
 
 /// The name menu's state.
 #[derive(Debug, Clone, PartialEq)]
@@ -211,11 +214,7 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &NameMenu, c: &mut Ctx) {
     let bright = amber(255.0);
     let size = m.size();
     root.spawn(Node { width: u(size.x), height: u(size.y), ..default() }).with_children(|p| {
-        let behind = at(-BEHIND, -BEHIND, size.x + 2.0 * BEHIND, size.y + 2.0 * BEHIND);
-        let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-        if c.image(p, "interface\\shared\\background\\solid_black.dds", behind.clone(), shade, ()).is_none() {
-            p.spawn((behind, BackgroundColor(shade)));
-        }
+        crate::vector_menu::backing(p, 0.0, 0.0, size.x, size.y);
         c.top_bracket(p, 0.0, 0.0, size.x, TOP_CORNER, bright);
         c.bottom_bracket(p, 0.0, size.y - THICK, size.x, bright);
         c.text(p, Which::Glow, &m.prompt, size.x / 2.0, PROMPT_Y, Align::Centre, bright);

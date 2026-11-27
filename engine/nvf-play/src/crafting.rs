@@ -38,6 +38,9 @@
 //! the menu 1024 by 800 in the middle of the screen, the list's box at (20, 20) 464 wide,
 //! the recipe's box 560 further right; the titles in font 6, the values in font 3, the
 //! rows in font 2; Accept and Exit at y 670; observed: the screenshots for the rest].
+//! With the Menu Font row at Sharp the brackets, the cards' lines, the highlight box, the
+//! title's arrows and the scroll bar are the shared kit's (`crate::vector_menu`); each box
+//! stands over its own backing in either font, the rest of the screen left as it is.
 //! With `[UI] TileMenus=RecipeMenu` the file itself draws the menu (`crate::tiles::recipe_menu`,
 //! crafting.md section 4): the rules here stay, what it asks comes as [`RecipeInput`], and
 //! [`draw`] spawns only a sheet that takes the pointer and the prompt.
@@ -55,6 +58,7 @@ use crate::script::ScriptState;
 use crate::sim::SimState;
 use crate::start_menu::{color, highlight_colors, Shade, LINE};
 use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
+use crate::vector_menu::{self, Dir, Drawing};
 use fnv_util::words::trf;
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
@@ -82,22 +86,62 @@ const BUTTONS_TOP: f32 = 670.0;
 /// 472, 256 square].
 const ICON_AT: Vec2 = Vec2::new(ITEMS_AT.x + 22.0, ITEMS_AT.y + 472.0);
 const ICON_SIZE: f32 = 256.0;
-/// The sheet behind the menu [documented: `RM_Background` solid black at brightness 128
-/// and the background fill alpha, 1144 by 970 from (-40, -105)]: faint, as the original's,
-/// which shows only the frame's lines over the world [observed: the owner's screenshot,
-/// 2026-10-19; the 0.75 of the other menus drew a dark box far past the frame]. The
-/// original also blurs the world behind the menu (not built). Ours darkens the whole
-/// screen as the character menus do: the owner found the world behind too bright for the
-/// text (playtest list 7 item 2, `crate::interface::top_menu_backing`) [design].
+// The sheet behind the menu [documented: `RM_Background` solid black at brightness 128
+// and the background fill alpha, 1144 by 970 from (-40, -105)]: faint, as the original's,
+// which shows only the frame's lines over the world [observed: the owner's screenshot,
+// 2026-10-19; the 0.75 of the other menus drew a dark box far past the frame]. The
+// original also blurs the world behind the menu (not built). Ours darkened the whole
+// screen as the character menus do (playtest list 7 item 2); now only the boxes are dark,
+// each framed box over its own backing (`crate::vector_menu::backing`, the Box Background
+// row's darkness), the rest of the screen as it is, in both fonts [design: owner
+// 2026-11-27, "crafting menus should not make the whole screen dark - standardize it with
+// the rest of the boxes - dark background behind the box only and normal background
+// elsewhere"].
+
 /// A recipe that cannot be made yet: a little dimmer than one that can [observed: the
 /// owner's screenshots, where no recipe could be made, show the rows a shade under the
 /// titles; the brightness is a guess].
 const NOT_READY: f32 = 190.0;
 
-/// Fonts by the number the menu file gives them [documented: Fallout_default.ini].
+/// Fonts by the number the menu file gives them [documented: Fallout_default.ini]. The
+/// file sets the recipe box's values (where it is made, the skill) in font 3; ours sets them
+/// in the rows' font as the ingredients under them [design: owner 2026-11-27, "fix the
+/// crafting menu text sizes and alignment"].
 const TITLE_FONT: usize = 6;
-const VALUE_FONT: usize = 3;
 const ROW_FONT: usize = 2;
+
+/// The list's title over its box's top line: its top this far over the line, its left
+/// arrow this far in from the box's left [the places the menu had].
+const TITLE_ABOVE: f32 = 28.0;
+const TITLE_ARROW_X: f32 = 30.0;
+/// Between each title arrow and the title's ink, the same on both sides, and between an
+/// arrow and the top line's end [design: owner 2026-11-27, "fix the recipe alignment and
+/// the arrows"].
+const ARROW_GAP: f32 = 6.0;
+const LINE_GAP: f32 = 5.0;
+
+/// The recipe box's words: the headings in the titles' font at `HEADING_X`; under each its
+/// entries (where it is made, the skill, the ingredients), all in the rows' font, from
+/// `VALUE_X` (and a ySI picture's room more when an ingredient has one), the first
+/// `UNDER_HEADING` under the heading's top, `ENTRY_GAP` between entries and `SECTION_GAP`
+/// from the last to the next heading [design: owner 2026-11-27, "fix the crafting menu
+/// text sizes and alignment"; the 60 and the 8 are the ingredients' places before].
+const HEADING_X: f32 = 50.0;
+const VALUE_X: f32 = 70.0;
+const VALUE_RIGHT: f32 = BOX_WIDTH - 14.0;
+const UNDER_HEADING: f32 = 60.0;
+const ENTRY_GAP: f32 = 8.0;
+const SECTION_GAP: f32 = 24.0;
+/// A ySI ingredient picture's room before the words.
+const YSI_ADVANCE: f32 = 32.0;
+/// The weight and value cards [the places the menu had]: their left, top, width, the short
+/// side at their right, and the room for their words under the line.
+const CARDS_X: f32 = 340.0;
+const CARDS_Y: f32 = 640.0;
+const CARD_W: f32 = 140.0;
+const CARD_STEP: f32 = 150.0;
+const CARD_SIDE: f32 = 30.0;
+const CARD_H: f32 = 50.0;
 
 pub struct CraftingPlugin;
 
@@ -822,7 +866,6 @@ fn make_recipe(rt: &mut crate::script::Runtime, sim: &mut SimState, recipe: &Rec
 #[derive(Resource)]
 struct RecipeLook {
     title: Face,
-    value: Face,
     row: Face,
     arrows: Option<(Handle<Image>, Handle<Image>)>,
     /// The letters it was made with (`crate::vector_font::letters`).
@@ -852,10 +895,27 @@ fn rule(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32) {
     p.spawn((at(x, y, w, h), BackgroundColor(amber(200.0))));
 }
 
-/// The two boxes' brackets: a line along the top with short sides going down, and one
-/// along the bottom with short sides going up [documented: recipe_menu.xml headline and
-/// footer lines, 40 high sides].
-fn brackets(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, bottom: f32, title_gap: (f32, f32)) {
+/// The frames' lines' colour.
+fn frame_color() -> Color {
+    amber(200.0)
+}
+
+/// How thick the frames' lines are: the kit's with the sharp letters
+/// (`crate::vector_menu::LINE`), else the menus' own.
+fn thick() -> f32 {
+    if vector_menu::on() { vector_menu::LINE } else { LINE }
+}
+
+/// The two boxes' brackets: a line along the top (open for the title from `title_gap.0` to
+/// `title_gap.1`) with short sides going down, and one along the bottom with short sides
+/// going up [documented: recipe_menu.xml headline and footer lines, 40 high sides]. With
+/// the sharp letters one drawing of the kit's lines, so its corners join
+/// (`crate::vector_menu`) [design: owner 2026-11-27, "make sure all corner lines connect"].
+fn brackets(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, bottom: f32, title_gap: (f32, f32), images: &mut Assets<Image>) {
+    if vector_menu::on() {
+        vector_menu::spawn(p, &bracket_drawing(w, bottom - y, title_gap), x, y, frame_color(), images);
+        return;
+    }
     rule(p, x, y, title_gap.0, LINE);
     rule(p, x + title_gap.1, y, w - title_gap.1, LINE);
     rule(p, x, y, LINE, 40.0);
@@ -863,6 +923,80 @@ fn brackets(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, bottom: f32, t
     rule(p, x, bottom - 40.0, LINE, 40.0);
     rule(p, x, bottom, w, LINE);
     rule(p, x + w - LINE, bottom - 40.0, LINE, 40.0);
+}
+
+/// [`brackets`] in the kit's lines: `w` wide, the bottom line's top edge `h` under the top
+/// line's, the top line open from `open.0` to `open.1`.
+fn bracket_drawing(w: f32, h: f32, open: (f32, f32)) -> Drawing {
+    let foot = h + vector_menu::LINE;
+    let (from, to) = (open.0.clamp(0.0, w), open.1.clamp(0.0, w));
+    let mut d = Drawing::new(w, foot);
+    if from > 0.0 {
+        d = d.hline(0.0, from, 0.0);
+    }
+    if to < w {
+        d = d.hline(to, w, 0.0);
+    }
+    d.vline(0.0, 0.0, vector_menu::STUB).vline_left(w, 0.0, vector_menu::STUB).bracket_up(0.0, w, foot)
+}
+
+/// A card's lines (the weight and value under the list): a line along its top, `w` long,
+/// and a short side `side` down at its right, the corner joined.
+fn card_drawing(w: f32, side: f32) -> Drawing {
+    Drawing::new(w, side).hline(0.0, w, 0.0).vline_left(w, 0.0, side)
+}
+
+/// The highlight box round a row `w` by `h`, in the kit's lines.
+fn highlight_drawing(w: f32, h: f32) -> Drawing {
+    Drawing::new(w, h).frame(0.0, 0.0, w, h)
+}
+
+/// Where the list's title and its arrows stand, from the box's left and its top line.
+#[derive(Debug, Clone, Copy, PartialEq)]
+struct TitlePlace {
+    /// Where the title is written from.
+    text_x: f32,
+    /// The arrows' left edges.
+    left: f32,
+    right: f32,
+    /// The arrows' top.
+    arrow_top: f32,
+}
+
+/// The list's title and its arrows: the left arrow `TITLE_ARROW_X` in, the title's ink
+/// `ARROW_GAP` after it and the right arrow `ARROW_GAP` after the ink, by the letters' ink
+/// in either font (`crate::chargen::draw::ink_span`), not their advances, which left the
+/// right arrow over the S; the arrows' middle on the capitals' (`cap_mid`) [design: owner
+/// 2026-11-27, "fix the recipe alignment and the arrows"].
+fn title_place(face: &Face, title: &str) -> TitlePlace {
+    let s = face.scale;
+    let line = face.font.lines(title, None).into_iter().next().unwrap_or_default();
+    let (l, r) = crate::chargen::draw::ink_span(face, &line);
+    let text_x = TITLE_ARROW_X + vector_menu::ARROW.x + ARROW_GAP - l * s;
+    // `text` stands the line `size × 0.8` under its top.
+    let base = -TITLE_ABOVE + face.font.size * 0.8 * s;
+    let mid = crate::chargen::draw::cap_mid(face, base, s);
+    TitlePlace { text_x, left: TITLE_ARROW_X, right: text_x + r * s + ARROW_GAP, arrow_top: mid - vector_menu::ARROW.y / 2.0 }
+}
+
+/// The recipe box's sections from its top: each heading's top and its entries' tops, the
+/// entries `lines` lines of `pitch` each, at text size `scale` (module constants).
+fn sections(lines: &[Vec<usize>], pitch: f32, scale: f32) -> Vec<(f32, Vec<f32>)> {
+    let mut heading = 0.0;
+    let mut out = Vec::new();
+    for entries in lines {
+        let mut top = heading + UNDER_HEADING * scale;
+        let mut tops = Vec::new();
+        let mut bottom = top;
+        for &n in entries {
+            tops.push(top);
+            bottom = top + n.max(1) as f32 * pitch;
+            top = bottom + ENTRY_GAP * scale;
+        }
+        out.push((heading, tops));
+        heading = bottom + SECTION_GAP * scale;
+    }
+    out
 }
 
 /// How wide a recipe row's name may run before it wraps.
@@ -907,25 +1041,39 @@ fn recipe_window(look:&RecipeLook,v:&View,follow:bool)->std::ops::Range<usize> {
 fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::menu::normal_services::Guard), words: &[String; 2], kit: &mut crate::menu::look::Kit, data: Option<&GameData>, images: &mut Assets<Image>, bc: bool, glyphs: &crate::pad::PadGlyphs) {
     let (v,guard)=presentation;
     let left = Node { position_type: PositionType::Absolute, left: Val::Percent(50.0), margin: UiRect::left(u(-MAIN.x / 2.0)), top: crate::interface::from_top((960.0 - MAIN.y) / 2.0, 0.5), width: u(MAIN.x), height: u(MAIN.y), ..default() };
-    commands.spawn((RecipeRoot, crate::menu::normal_services::Rendered::new(guard,look.row.scale), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(crate::interface::TOP_MENU_Z), crate::interface::top_menu_backing())).with_children(|root| {
+    commands.spawn((RecipeRoot, crate::menu::normal_services::Rendered::new(guard,look.row.scale), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(crate::interface::TOP_MENU_Z))).with_children(|root| {
         root.spawn(left).with_children(|m| {
             let bright = color(Shade::Bright);
+            let sharp = vector_menu::on();
+            // The boxes' backings first, under everything else (the sheet's note above).
+            vector_menu::backing(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, 480.0 + thick());
+            vector_menu::backing(m, RIGHT_AT.x, RIGHT_AT.y, BOX_WIDTH, 515.0 + thick());
+            for k in 0..2 {
+                vector_menu::backing(m, CARDS_X + k as f32 * CARD_STEP, CARDS_Y, CARD_W, CARD_H);
+            }
             // The list's box: "◀ RECIPES ▶" in the top line.
             let tw = look.title.width(&v.title);
-            brackets(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, ITEMS_AT.y + 480.0, (25.0, 50.0 + tw + 40.0));
+            let place = title_place(&look.title, &v.title);
+            let arrow = vector_menu::ARROW;
+            brackets(m, ITEMS_AT.x, ITEMS_AT.y, BOX_WIDTH, ITEMS_AT.y + 480.0, (place.left - LINE_GAP, place.right + arrow.x + LINE_GAP), images);
             // Spawn the title hit zone first so left/right arrow buttons sit above it in UiStack.
-            m.spawn((Button, RecipeButton::Title, at(ITEMS_AT.x + 50.0, ITEMS_AT.y - 28.0, (tw + 4.0).max(80.0), 56.0))).with_children(|t| text(t, &look.title, &v.title, 0.0, 0.0, bright));
-            if let Some((l, r)) = &look.arrows {
+            m.spawn((Button, RecipeButton::Title, at(ITEMS_AT.x + place.text_x, ITEMS_AT.y - TITLE_ABOVE, (tw + 4.0).max(80.0), 56.0))).with_children(|t| text(t, &look.title, &v.title, 0.0, 0.0, bright));
+            // The arrows: the kit's triangles with the sharp letters, else the game's pictures.
+            if sharp || look.arrows.is_some() {
                 let hit_w = 52.0;
                 let hit_h = 52.0;
-                let dx = (hit_w - 17.5) * 0.5;
-                let dy = (hit_h - 35.0) * 0.5;
-                m.spawn((Button, RecipeButton::Left, at(ITEMS_AT.x + 30.0 - dx, ITEMS_AT.y - 17.0 - dy, hit_w, hit_h))).with_children(|btn| {
-                    btn.spawn((at(dx, dy, 17.5, 35.0), ImageNode { color: amber(255.0), ..ImageNode::new(l.clone()) }));
-                });
-                m.spawn((Button, RecipeButton::Right, at(ITEMS_AT.x + 55.0 + tw - dx, ITEMS_AT.y - 17.0 - dy, hit_w, hit_h))).with_children(|btn| {
-                    btn.spawn((at(dx, dy, 17.5, 35.0), ImageNode { color: amber(255.0), ..ImageNode::new(r.clone()) }));
-                });
+                let dx = (hit_w - arrow.x) * 0.5;
+                let dy = (hit_h - arrow.y) * 0.5;
+                let pictures = look.arrows.as_ref().map(|(l, r)| [l.clone(), r.clone()]);
+                for (k, (b, x, dir)) in [(RecipeButton::Left, place.left, Dir::Left), (RecipeButton::Right, place.right, Dir::Right)].into_iter().enumerate() {
+                    m.spawn((Button, b, at(ITEMS_AT.x + x - dx, ITEMS_AT.y + place.arrow_top - dy, hit_w, hit_h))).with_children(|btn| {
+                        if sharp {
+                            vector_menu::spawn(btn, &Drawing::new(arrow.x, arrow.y).arrow(0.0, 0.0, arrow.x, arrow.y, dir), dx, dy, amber(255.0), images);
+                        } else if let Some(p) = &pictures {
+                            btn.spawn((at(dx, dy, arrow.x, arrow.y), ImageNode { color: amber(255.0), ..ImageNode::new(p[k].clone()) }));
+                        }
+                    });
+                }
             }
             // The rows from the first shown.
             let shown=recipe_window(look,v,false);
@@ -946,7 +1094,12 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
                         let full = format!("textures\\{}", path.trim_start_matches("textures\\").trim_start_matches("Textures\\"));
                         data.and_then(|d| crate::interface::texture(&full, d, images, bc)).map(|x| x.0)
                     });
-                list.spawn((Button, RecipeButton::Row(i), node, BorderColor::all(if chosen { line } else { Color::NONE }), BackgroundColor(if chosen { fill } else { Color::NONE }))).with_children(|row| {
+                // With the sharp letters the highlight's lines are the kit's, drawn over the
+                // border's place (the children stand inside it).
+                list.spawn((Button, RecipeButton::Row(i), node, BorderColor::all(if chosen && !sharp { line } else { Color::NONE }), BackgroundColor(if chosen { fill } else { Color::NONE }))).with_children(|row| {
+                    if chosen && sharp {
+                        vector_menu::spawn(row, &highlight_drawing(BOX_WIDTH - 15.0 - ROWS_BAR_W, height), -LINE, -LINE, line, images);
+                    }
                     let top = row_text_top(&look.row, &r.label, height);
                     if let Some(img) = row_icon {
                         // On the first line's capitals, as the text.
@@ -960,8 +1113,16 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             });
             // The scroll bar, right of the rows, when they do not all fit (owner's request
             // 2026-10-26; drawn as the container menu's).
+            // With the sharp letters the kit's bar (`crate::vector_menu::scrollbar`).
             let bar = (ITEMS_AT.x + BOX_WIDTH - 5.0 - ROWS_BAR_W, LIST_TOP, ROWS as f32 * ROW);
-            crate::menu::look::spawn_rows_bar(m, kit, data, images, bc, glyphs, bar, v.rows.len(), v.first, shown.len());
+            if sharp {
+                let (_, arrow_h) = vector_menu::scroll_arrow(ROWS_BAR_W);
+                if let Some(marker) = crate::menu::look::rows_marker(v.rows.len(), v.first, shown.len(), bar.2 - 2.0 * arrow_h) {
+                    vector_menu::spawn(m, &vector_menu::scrollbar(ROWS_BAR_W, bar.2, Some(marker)), bar.0, bar.1, amber(255.0), images);
+                }
+            } else {
+                crate::menu::look::spawn_rows_bar(m, kit, data, images, bc, glyphs, bar, v.rows.len(), v.first, shown.len());
+            }
             if v.rows.is_empty() {
                 m.spawn(at(ITEMS_AT.x + 5.0, LIST_TOP, BOX_WIDTH, ROW)).with_children(|t| text(t, &look.row, "No recipes", 40.0, 6.0, color(Shade::Dim)));
             }
@@ -987,10 +1148,15 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             // original's screen].
             let words = ["sInventoryWeightUpper", "sInventoryValue"].map(crate::pipboy::labels::built_in_label);
             for (k, (name, s)) in [(words[0], wg), (words[1], val)].into_iter().enumerate() {
-                let x = 340.0 + k as f32 * 150.0;
-                rule(m, x, 640.0, 140.0, LINE);
-                rule(m, x + 140.0 - LINE, 640.0, LINE, 30.0);
-                m.spawn(at(x, 645.0, 140.0, 50.0)).with_children(|t| {
+                let x = CARDS_X + k as f32 * CARD_STEP;
+                // With the sharp letters one drawing, its corner joined.
+                if sharp {
+                    vector_menu::spawn(m, &card_drawing(CARD_W, CARD_SIDE), x, CARDS_Y, frame_color(), images);
+                } else {
+                    rule(m, x, CARDS_Y, CARD_W, LINE);
+                    rule(m, x + CARD_W - LINE, CARDS_Y, LINE, CARD_SIDE);
+                }
+                m.spawn(at(x, CARDS_Y + 5.0, CARD_W, CARD_H)).with_children(|t| {
                     text(t, &look.row, name, 6.0, 0.0, bright);
                     let w = look.row.width(&s);
                     text(t, &look.row, &s, 130.0 - w, 0.0, bright);
@@ -1005,33 +1171,41 @@ fn spawn(commands: &mut Commands, look: &RecipeLook, presentation:(&View,crate::
             let [made_at, skill_needed, ingredients] =
                 ["sMadeAt", "sSkillRequirement", "sIngredients"].map(crate::pipboy::labels::built_in_label);
             let mw = look.title.width(made_at);
-            brackets(m, rx, RIGHT_AT.y, BOX_WIDTH, RIGHT_AT.y + 515.0, (25.0, 50.0 + mw + 20.0));
-            m.spawn(at(rx, RIGHT_AT.y - 28.0, BOX_WIDTH, 600.0)).with_children(|b| {
-                text(b, &look.title, made_at, 50.0, 0.0, bright);
-                text(b, &look.value, &v.made_at, 60.0, 78.0, bright);
-                if let Some((name, have, need)) = &v.skill {
-                    text(b, &look.title, skill_needed, 50.0, 128.0, bright);
-                    let ok = have >= need;
-                    text(b, &look.value, &format!("{name} ({have}/{need})"), 60.0, 188.0, if ok { bright } else { amber(NOT_READY) });
-                }
-                text(b, &look.title, ingredients, 50.0, 238.0, bright);
-                let mut y = 298.0;
-                for (idx, (_, name, have, need)) in v.ingredients.iter().enumerate() {
-                    let ok = have >= need;
-                    let tint = if ok { bright } else { amber(NOT_READY) };
-                    if let Some(img) = v
-                        .ingredient_ysi
-                        .get(idx)
-                        .and_then(|d| d.as_ref())
-                        .and_then(|d| d.icon.as_deref())
-                        .and_then(|path| {
-                            let full = format!("textures\\{}", path.trim_start_matches("textures\\").trim_start_matches("Textures\\"));
-                            data.and_then(|d| crate::interface::texture(&full, d, images, bc)).map(|x| x.0)
-                        })
-                    {
-                        b.spawn((at(78.0, y + 2.0, 24.0, 24.0), ImageNode { color: tint, ..ImageNode::new(img) }));
+            brackets(m, rx, RIGHT_AT.y, BOX_WIDTH, RIGHT_AT.y + 515.0, (25.0, HEADING_X + mw + 20.0), images);
+            // The headings and their entries (`sections`): every entry in the rows' font from
+            // the same left edge.
+            let dim = amber(NOT_READY);
+            let tint = |ok: bool| if ok { bright } else { dim };
+            let icons: Vec<Option<Handle<Image>>> = (0..v.ingredients.len())
+                .map(|idx| {
+                    v.ingredient_ysi.get(idx).and_then(|d| d.as_ref()).and_then(|d| d.icon.as_deref()).and_then(|path| {
+                        let full = format!("textures\\{}", path.trim_start_matches("textures\\").trim_start_matches("Textures\\"));
+                        data.and_then(|d| crate::interface::texture(&full, d, images, bc)).map(|x| x.0)
+                    })
+                })
+                .collect();
+            let value_x = VALUE_X + if icons.iter().any(Option::is_some) { YSI_ADVANCE } else { 0.0 };
+            let wrap = VALUE_RIGHT - value_x;
+            let mut parts: Vec<(&str, Vec<(String, Color)>)> = vec![(made_at, vec![(v.made_at.clone(), bright)])];
+            if let Some((name, have, need)) = &v.skill {
+                parts.push((skill_needed, vec![(format!("{name} ({have}/{need})"), tint(have >= need))]));
+            }
+            parts.push((ingredients, v.ingredients.iter().map(|(_, name, have, need)| (format!("{name} ({have}/{need})"), tint(have >= need))).collect()));
+            let scale = look.row.scale;
+            let lines: Vec<Vec<usize>> = parts.iter().map(|(_, entries)| entries.iter().map(|(s, _)| look.row.font.lines(s, Some(wrap / scale)).len().max(1)).collect()).collect();
+            let places = sections(&lines, look.row.font.size * 0.9 * scale, scale);
+            let ingredients_at = parts.len() - 1;
+            m.spawn(at(rx, RIGHT_AT.y - TITLE_ABOVE, BOX_WIDTH, 600.0)).with_children(|b| {
+                for (k, ((heading, entries), (top, tops))) in parts.iter().zip(&places).enumerate() {
+                    text(b, &look.title, heading, HEADING_X, *top, bright);
+                    for (idx, ((s, c), y)) in entries.iter().zip(tops).enumerate() {
+                        if let Some(img) = icons.get(idx).filter(|_| k == ingredients_at).cloned().flatten() {
+                            // On the first line's capitals, as the text.
+                            let base = y + look.row.font.size * 0.8 * scale;
+                            b.spawn((at(VALUE_X, crate::chargen::draw::cap_mid(&look.row, base, scale) - 12.0, 24.0, 24.0), ImageNode { color: *c, ..ImageNode::new(img) }));
+                        }
+                        wrapped(b, &look.row, s, value_x, *y, wrap, *c);
                     }
-                    y += wrapped(b, &look.row, &format!("{name} ({have}/{need})"), 110.0, y, 340.0, tint) + 8.0;
                 }
             });
             // Accept and Exit [observed: "Accept  A)", "Exit  X)"].
@@ -1122,13 +1296,13 @@ fn draw(
         let font = |n: usize, images: &mut Assets<Image>| crate::interface::screen_face(crate::pipboy::frame::FONTS[n - 1], plain_font(30.0, 14.0), data.as_deref(), images, bc);
         let pic = |p: &str, images: &mut Assets<Image>| data.as_deref().and_then(|d| crate::interface::texture(p, d, images, bc)).map(|x| x.0);
         let arrows = pic("textures\\interface\\main\\main_arrow_left.dds", &mut images).zip(pic("textures\\interface\\main\\main_arrow_right.dds", &mut images));
-        commands.insert_resource(RecipeLook { title: font(TITLE_FONT, &mut images).into(), value: font(VALUE_FONT, &mut images).into(), row: font(ROW_FONT, &mut images).into(), arrows, letters: crate::vector_font::letters() });
+        commands.insert_resource(RecipeLook { title: font(TITLE_FONT, &mut images).into(), row: font(ROW_FONT, &mut images).into(), arrows, letters: crate::vector_font::letters() });
         return;
     };
     let Some(rt) = script.and_then(|s| s.into_inner().rt.as_mut()) else { return };
     let text_size=crate::menu::readability::size(readability.as_deref(),crate::menu_readability::MenuKind::Workbench);
     let resized=*previous_size!=text_size;*previous_size=text_size;
-    if look.row.scale!=text_size {look.title.scale=text_size;look.value.scale=text_size;look.row.scale=text_size;}
+    if look.row.scale!=text_size {look.title.scale=text_size;look.row.scale=text_size;}
     // GetRecipeMenuCategory and GetRecipeMenuSelection (`fnv_game::nvse_jip12`), before
     // the tiled sheet may return.
     let mut shown = view(rt, &mut sim, open);
@@ -1306,6 +1480,101 @@ mod tests {
         let base = row_text_top(&f, long, height) + f.font.size * 0.8;
         let (top, bottom) = (base - 22.0, base + f.font.size * 0.9);
         assert!(((top + bottom) / 2.0 - (height / 2.0 - LINE)).abs() < 1e-4);
+    }
+
+    /// How many separate pieces `d`'s lines make at `scale` pixels a unit (pixels lit at least
+    /// half, joined side by side).
+    fn pieces(d: &Drawing, scale: f32) -> usize {
+        let shape = crate::vector_hud::Shape { size: d.size, parts: d.parts.clone(), glow: false, wrap: false };
+        let mask = crate::vector_hud::ink(&shape, scale);
+        let lit = |x: usize, y: usize| mask.at(x, y) >= 0.5;
+        let mut seen = vec![false; mask.width * mask.height];
+        let mut count = 0;
+        for start in 0..mask.width * mask.height {
+            if seen[start] || !lit(start % mask.width, start / mask.width) {
+                continue;
+            }
+            count += 1;
+            let mut todo = vec![start];
+            seen[start] = true;
+            while let Some(i) = todo.pop() {
+                let (x, y) = (i % mask.width, i / mask.width);
+                let near = [(x.wrapping_sub(1), y), (x + 1, y), (x, y.wrapping_sub(1)), (x, y + 1)];
+                for (nx, ny) in near {
+                    if nx < mask.width && ny < mask.height && !seen[ny * mask.width + nx] && lit(nx, ny) {
+                        seen[ny * mask.width + nx] = true;
+                        todo.push(ny * mask.width + nx);
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn the_brackets_cards_and_highlight_corners_join() {
+        // At 50% on a 4K view (1.125 pixels a unit) and at 1080p (1.125 / 2), with a title gap
+        // and a row height that fall between pixels.
+        for scale in [1.125, 0.5625, 2.25] {
+            // Top left, top right (round the title's gap) and the bottom bracket.
+            assert_eq!(pieces(&bracket_drawing(BOX_WIDTH, 480.0, (24.3, 171.7)), scale), 3, "{scale}");
+            assert_eq!(pieces(&bracket_drawing(BOX_WIDTH, 515.0, (25.0, 160.0)), scale), 3, "{scale}");
+            assert_eq!(pieces(&card_drawing(CARD_W, CARD_SIDE), scale), 1, "{scale}");
+            assert_eq!(pieces(&highlight_drawing(BOX_WIDTH - 15.0 - ROWS_BAR_W, 52.7), scale), 1, "{scale}");
+        }
+        // The bottom line's top edge where the menus' own stands.
+        let d = bracket_drawing(100.0, 480.0, (25.0, 60.0));
+        assert_eq!(d.size, Vec2::new(100.0, 480.0 + vector_menu::LINE));
+    }
+
+    #[test]
+    fn the_title_arrows_stand_an_equal_gap_from_its_ink_on_its_capitals() {
+        let face = |vector: Option<f32>, scale: f32| {
+            let mut font = plain_font(36.0, 14.0);
+            for &c in b"RECIPSH" {
+                font.glyphs[usize::from(c)] = fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 16.0, height: 30.0, before: 2.0, after: 2.0, ascent: 28.0 };
+            }
+            let vector = vector.map(|shift| crate::interface::VectorFace { font: Handle::default(), em: 36.0, weight: 400, base: 28.0, caps: false, shift });
+            let mut f = Face::from(crate::interface::Face { font, image: None, vector });
+            f.scale = scale;
+            f
+        };
+        for f in [face(None, 1.0), face(None, 1.5), face(Some(3.0), 1.0), face(Some(3.0), 0.75)] {
+            let p = title_place(&f, "RECIPES");
+            let line = f.font.lines("RECIPES", None).into_iter().next().unwrap();
+            let (l, r) = crate::chargen::draw::ink_span(&f, &line);
+            let (ink_l, ink_r) = (p.text_x + l * f.scale, p.text_x + r * f.scale);
+            let left_gap = ink_l - (p.left + vector_menu::ARROW.x);
+            let right_gap = p.right - ink_r;
+            assert!((left_gap - ARROW_GAP).abs() < 1e-4 && (right_gap - ARROW_GAP).abs() < 1e-4, "{left_gap} {right_gap}");
+            assert_eq!(p.left, TITLE_ARROW_X, "the left arrow stays");
+            // The arrows' middle on the capitals' middle.
+            let base = -TITLE_ABOVE + f.font.size * 0.8 * f.scale;
+            let mid = crate::chargen::draw::cap_mid(&f, base, f.scale);
+            assert!((p.arrow_top + vector_menu::ARROW.y / 2.0 - mid).abs() < 1e-4);
+        }
+    }
+
+    #[test]
+    fn the_recipe_boxs_entries_stand_alike_under_their_headings() {
+        // Where it is made (one line), the skill (one), three ingredients (the second wraps).
+        for scale in [1.0, 1.5] {
+            let pitch = 25.0 * scale;
+            let s = sections(&[vec![1], vec![1], vec![1, 2, 1]], pitch, scale);
+            assert_eq!(s.len(), 3);
+            assert_eq!(s[0].0, 0.0, "the first heading on the top line");
+            for (heading, tops) in &s {
+                assert!((tops[0] - heading - UNDER_HEADING * scale).abs() < 1e-4, "every first entry as far under its heading");
+            }
+            let ing = &s[2].1;
+            assert!((ing[1] - ing[0] - (pitch + ENTRY_GAP * scale)).abs() < 1e-4);
+            assert!((ing[2] - ing[1] - (2.0 * pitch + ENTRY_GAP * scale)).abs() < 1e-4, "a wrapped entry's lines");
+            assert!((s[1].0 - (s[0].1[0] + pitch + SECTION_GAP * scale)).abs() < 1e-4);
+            assert!((s[2].0 - (s[1].1[0] + pitch + SECTION_GAP * scale)).abs() < 1e-4);
+        }
+        // No skill, no ingredients: the headings follow on.
+        let s = sections(&[vec![1], vec![]], 25.0, 1.0);
+        assert!(s[1].1.is_empty() && s[1].0 > s[0].1[0]);
     }
 
     #[test]

@@ -120,9 +120,11 @@ impl Words {
         Words { buttons: BUTTONS.map(word), hints: hints(crate::pad::labels()), manual: word(MANUAL) }
     }
 }
-/// The background's darkness: the menus' (`crate::interface::MENU_BACKING`) [design: the
-/// file's fill alpha of 32 of 255 leaves the text hard to read over the Pip-Boy].
-const SHADE: f32 = crate::interface::MENU_BACKING;
+// The background: the file's picture (`solid_black.dds`, soft edged, 0.8 of the screen) is,
+// in both Menu Font looks, the boxes' own backing over the frame only
+// (`crate::vector_menu::backing`, the Box Background row's darkness, sharp edged) [design:
+// owner 2026-11-27, "make sure that all in-game boxes have the same non-blurred background
+// box"; the file's fill alpha of 32 of 255 left the text hard to read over the Pip-Boy].
 /// The picture's width when its file cannot be read.
 pub(crate) const SYMBOL_W: f32 = 64.0;
 
@@ -251,6 +253,62 @@ pub fn layout(w: f32, h: f32, widths: [f32; 3], text_h: f32) -> Layout {
     let x = EDGE_X + STUB + BUF;
     let column = [x, top, (prev[0] - x - TEXT_GAP).max(0.0), (bottom - top).max(0.0)];
     Layout { w, h, buttons: [next, prev, close], column }
+}
+
+/// The page's frame with Sharp on, over a background `w` by `h`: the top and bottom lines
+/// from corner to corner, open over `top_gaps` (the title, the page count) and from the
+/// bottom stub's end to `foot_from` (the symbol and the manual's words), and the corners'
+/// sides ending square, all `crate::vector_menu::LINE` thick and joined in the corners
+/// [design: owner 2026-11-27, "make sure all corner lines connect", "make the lines end
+/// sharply"]. One page: the top line runs on to the right corner (the file's room for the
+/// count is not left open).
+pub fn sharp_frame(w: f32, h: f32, top_gaps: &[(f32, f32)], foot_from: f32) -> crate::vector_menu::Drawing {
+    let (right, low) = (w - EDGE_X, h - EDGE_Y);
+    let mut d = crate::vector_menu::Drawing::new(w, h)
+        .vline(EDGE_X, EDGE_Y, EDGE_Y + FADE)
+        .vline_left(right, EDGE_Y, EDGE_Y + FADE)
+        .vline(EDGE_X, low - FADE, low)
+        .vline_left(right, low - FADE, low);
+    for (a, b) in open_runs(EDGE_X, right, top_gaps) {
+        d = d.hline(a, b, EDGE_Y);
+    }
+    for (a, b) in open_runs(EDGE_X, right, &[(EDGE_X + STUB, foot_from)]) {
+        d = d.hline_up(a, b, low);
+    }
+    d
+}
+
+/// The runs of a line from `from` to `to` outside `gaps` (each from, to), a stub at each
+/// end always kept.
+fn open_runs(from: f32, to: f32, gaps: &[(f32, f32)]) -> Vec<(f32, f32)> {
+    let mut runs = vec![(from, to)];
+    for &(g0, g1) in gaps {
+        let (g0, g1) = (g0.max(from + STUB), g1.min(to - STUB));
+        if g1 <= g0 {
+            continue;
+        }
+        runs = runs
+            .into_iter()
+            .flat_map(|(a, b)| [(a, g0.min(b)), (g1.max(a), b)])
+            .filter(|(a, b)| b > a)
+            .collect();
+    }
+    runs
+}
+
+/// The scroll bar with Sharp on: the menus' (`crate::vector_menu::scrollbar`), as wide as
+/// the lists' (32), in the room between the frame's left side and the text column.
+const SHARP_BAR_W: f32 = 32.0;
+
+/// Where the Sharp scroll bar stands (its left) and its marker (top in the track, height)
+/// for a column at `cx`, `ch` high, scrolled `scroll` of `max`.
+pub fn sharp_bar(cx: f32, ch: f32, scroll: f32, max: f32) -> (f32, (f32, f32)) {
+    let x = EDGE_X + crate::vector_menu::LINE + (cx - EDGE_X - crate::vector_menu::LINE - SHARP_BAR_W) / 2.0;
+    let (_, arrow_h) = crate::vector_menu::scroll_arrow(SHARP_BAR_W);
+    let track = (ch - 2.0 * arrow_h).max(0.0);
+    let thumb = (track * ch / (ch + max)).max(20.0).min(track);
+    let top = if max > 0.0 { (track - thumb) * (scroll / max).clamp(0.0, 1.0) } else { 0.0 };
+    (x, (top, thumb))
 }
 
 /// How far the text can scroll: its height less the column's, in whole steps.
@@ -525,19 +583,22 @@ fn draw(
 #[allow(clippy::too_many_arguments)]
 fn spawn_page(b: &mut ChildSpawnerCommands, c: &mut Ctx, l: &Layout, p: &Page, words: &Words, (n, of): (usize, usize), scroll: f32, max: f32, hover: Option<TmButton>) {
     let bright = amber(255.0);
-    let shade = Color::srgba(0.0, 0.0, 0.0, SHADE);
-    if c.image(b, "interface\\shared\\background\\solid_black.dds", at(0.0, 0.0, l.w, l.h), shade, ()).is_none() {
-        b.spawn((at(0.0, 0.0, l.w, l.h), BackgroundColor(shade)));
-    }
     let (w, h) = (l.w, l.h);
+    crate::vector_menu::backing(b, EDGE_X, EDGE_Y, w - 2.0 * EDGE_X, h - 2.0 * EDGE_Y);
     let right = w - EDGE_X;
+    // Sharp: the frame as one drawing (`sharp_frame`) once its gaps are known; Original:
+    // the game's pieces.
+    let sharp = c.sharp();
+    let t = if sharp { crate::vector_menu::LINE } else { THICK };
     // The top: a corner fading down at each end, a stub, the title, a line on to the
     // page count (or to the stub at the right with one page), the stub.
-    c.fade(b, EDGE_X, EDGE_Y, FADE, false, bright);
-    c.fade(b, right, EDGE_Y, FADE, false, bright);
-    c.line(b, EDGE_X, EDGE_Y, STUB, THICK, bright);
-    c.line(b, right - STUB, EDGE_Y, STUB, THICK, bright);
-    let title_top = EDGE_Y + (THICK - 38.0) / 2.0 + TITLE_DROP;
+    if !sharp {
+        c.fade(b, EDGE_X, EDGE_Y, FADE, false, bright);
+        c.fade(b, right, EDGE_Y, FADE, false, bright);
+        c.line(b, EDGE_X, EDGE_Y, STUB, THICK, bright);
+        c.line(b, right - STUB, EDGE_Y, STUB, THICK, bright);
+    }
+    let title_top = EDGE_Y + (t - 38.0) / 2.0 + TITLE_DROP;
     let title_x = EDGE_X + STUB + BUF;
     let tw = c.text(b, Which::Title, &p.title, title_x, title_top, Align::Left, bright);
     let mut line_end = right - STUB - BUF;
@@ -546,23 +607,31 @@ fn spawn_page(b: &mut ChildSpawnerCommands, c: &mut Ctx, l: &Layout, p: &Page, w
         line_end -= pw + BUF;
     }
     let line_from = title_x + tw + BUF;
-    if line_end > line_from {
+    if line_end > line_from && !sharp {
         c.line(b, line_from, EDGE_Y, line_end - line_from, THICK, bright);
     }
     // The bottom: the corners fading up, a stub, the VDSG symbol and words, a line on
     // to the right corner.
     let low = h - EDGE_Y;
-    c.fade(b, EDGE_X, low - FADE, FADE, true, bright);
-    c.fade(b, right, low - FADE, FADE, true, bright);
-    c.line(b, EDGE_X, low - THICK, STUB, THICK, bright);
+    if !sharp {
+        c.fade(b, EDGE_X, low - FADE, FADE, true, bright);
+        c.fade(b, right, low - FADE, FADE, true, bright);
+        c.line(b, EDGE_X, low - THICK, STUB, THICK, bright);
+    }
     let sx = EDGE_X + STUB + BUF - SYMBOL_DEAD;
     let sw = c.picture(SYMBOL).and_then(|(_, rect)| rect.map(|r| r.width())).unwrap_or(SYMBOL_W + SYMBOL_DEAD) - SYMBOL_DEAD;
-    let sy = low - THICK + (THICK - SYMBOL_H) / 2.0;
+    let sy = low - t + (t - SYMBOL_H) / 2.0;
     c.image(b, SYMBOL, at(sx, sy, sw.max(1.0), SYMBOL_H), bright, ());
     let vx = sx + sw + BUF;
-    let vw = c.text(b, Which::Body, &words.manual, vx, low - THICK + (THICK - crate::chargen::draw::BODY_H) / 2.0 + VDSG_DROP, Align::Left, bright);
+    let vw = c.text(b, Which::Body, &words.manual, vx, low - t + (t - crate::chargen::draw::BODY_H) / 2.0 + VDSG_DROP, Align::Left, bright);
     let from = vx + vw + BUF;
-    if right > from {
+    if sharp {
+        let mut gaps = vec![(EDGE_X + STUB, line_from)];
+        if of > 1 {
+            gaps.push((line_end, right - STUB));
+        }
+        c.drawing(b, &sharp_frame(w, h, &gaps, from), 0.0, 0.0, bright);
+    } else if right > from {
         c.line(b, from, low - THICK, right - from, THICK, bright);
     }
     // The text, clipped to its column and moved up by the scroll.
@@ -575,7 +644,11 @@ fn spawn_page(b: &mut ChildSpawnerCommands, c: &mut Ctx, l: &Layout, p: &Page, w
     });
     // A scroll mark beside the column while the text is longer than it [design: the
     // file's scroll bar is a prefab not drawn here].
-    if max > 0.0 {
+    if max > 0.0 && sharp {
+        // Sharp: the menus' scroll bar between the frame's side and the column.
+        let (x, marker) = sharp_bar(cx, ch, scroll, max);
+        c.drawing(b, &crate::vector_menu::scrollbar(SHARP_BAR_W, ch, Some(marker)), x, cy, bright);
+    } else if max > 0.0 {
         let track = ch - THICK;
         let thumb = (track * ch / (ch + max)).max(20.0);
         let y = cy + (track - thumb) * scroll / max;
@@ -748,6 +821,43 @@ mod tests {
         assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Scroll(40.0)]), (1, 40.0, false));
         assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Next, Command::ScrollTo(60.0)]), (1, 60.0, false));
         assert_eq!(one_frame(0, Some(KeyA), None, &[Command::Previous, Command::Close]), (1, 0.0, true));
+    }
+
+    #[test]
+    fn the_sharp_frame_joins_its_corners_round_the_titles_room() {
+        use crate::vector_menu::LINE;
+        let (w, h) = (1280.0, 768.0);
+        let rects = crate::chargen::draw::tests::rects;
+        let meet = crate::chargen::draw::tests::meet;
+        let (right, low) = (w - EDGE_X, h - EDGE_Y);
+        // One page: the title's room open, the line on to the right corner.
+        let r = rects(&sharp_frame(w, h, &[(EDGE_X + STUB, 400.0)], 500.0));
+        assert_eq!(r.len(), 8);
+        let (sides, lines) = r.split_at(4);
+        let top: Vec<_> = lines[..2].iter().map(|q| (q.min.x, q.max.x)).collect();
+        assert_eq!(top, vec![(EDGE_X, EDGE_X + STUB), (400.0, right)]);
+        let foot: Vec<_> = lines[2..].iter().map(|q| (q.min.x, q.max.x, q.max.y)).collect();
+        assert_eq!(foot, vec![(EDGE_X, EDGE_X + STUB, low), (500.0, right, low)]);
+        // Every side meets its line; all the kit's thickness.
+        assert!(meet(sides[0], lines[0]) && meet(sides[1], lines[1]) && meet(sides[2], lines[2]) && meet(sides[3], lines[3]));
+        assert!(r.iter().all(|q| (q.width().min(q.height()) - LINE).abs() < 1e-4));
+        // Pages: the count's room open too, the right stub kept; a title past it leaves the
+        // stubs alone.
+        let r = rects(&sharp_frame(w, h, &[(EDGE_X + STUB, 400.0), (1000.0, right - STUB)], 500.0));
+        let top: Vec<_> = r[4..].iter().filter(|q| q.min.y == EDGE_Y).map(|q| (q.min.x, q.max.x)).collect();
+        assert_eq!(top, vec![(EDGE_X, EDGE_X + STUB), (400.0, 1000.0), (right - STUB, right)]);
+        let r = rects(&sharp_frame(w, h, &[(EDGE_X + STUB, 2000.0)], 500.0));
+        let top: Vec<_> = r[4..].iter().filter(|q| q.min.y == EDGE_Y).map(|q| (q.min.x, q.max.x)).collect();
+        assert_eq!(top, vec![(EDGE_X, EDGE_X + STUB), (right - STUB, right)]);
+        // The scroll bar between the side and the column, its marker in the track.
+        let l = layout(w, h, [80.0, 120.0, 90.0], crate::chargen::draw::BODY_H);
+        let [cx, _, _, ch] = l.column;
+        let (x, (top0, len)) = sharp_bar(cx, ch, 0.0, 300.0);
+        assert!(x > EDGE_X + LINE && x + SHARP_BAR_W < cx, "{x} {cx}");
+        let (_, (top1, len1)) = sharp_bar(cx, ch, 300.0, 300.0);
+        let (_, arrow_h) = crate::vector_menu::scroll_arrow(SHARP_BAR_W);
+        assert_eq!((top0, len), (0.0, len1));
+        assert!((top1 + len1 - (ch - 2.0 * arrow_h)).abs() < 1e-3, "the marker ends at the track's foot");
     }
 
     #[test]

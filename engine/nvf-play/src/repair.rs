@@ -24,7 +24,9 @@
 //! square at (223, 50), the gains in font 4 centred at 120 and 400, 90 down, the cards
 //! after the repair 140 down and the cost in font 6 230 down; the buttons right-aligned at
 //! 1010 from 75 down, 47 apart; the bottom bracket at 680. Observed: the screenshots for
-//! the words and how dim the dim rows are].
+//! the words and how dim the dim rows are]. With the Menu Font row at Sharp the headline,
+//! the cards' lines, the highlight box and the bottom bracket are the shared kit's
+//! (`crate::vector_menu`), their corners joined.
 //!
 //! Test aid `NVF_PLAY_TEST_REPAIR=<seconds>:<action>[,…]`: `down`, `up`, `repair` (the
 //! chosen row), `all` (Repair All), `done`, `shot` (a screenshot `repair_menu.png` in the
@@ -43,6 +45,7 @@ use crate::script::ScriptState;
 use crate::sim::SimState;
 use crate::start_menu::{color, highlight_colors, Shade, LINE};
 use crate::ui_sounds::{UiEvent, UiMenu, UiSound};
+use crate::vector_menu::{self, Drawing, STUB};
 use crate::{PlaySet, PlayState};
 use bevy::image::CompressedImageFormatSupport;
 use bevy::input::mouse::AccumulatedMouseScroll;
@@ -90,13 +93,18 @@ const METER: Rect = Rect { min: Vec2::new(85.0, 17.0), max: Vec2::new(235.0, 37.
 /// The buttons' right end, top and spacing [documented: `RSM_ButtonRect`].
 const BUTTONS: Vec2 = Vec2::new(1010.0, 75.0);
 const BUTTON_STEP: f32 = 47.0;
-/// The sheet behind the menu [documented: `RSM_Background`, solid black at brightness 128
-/// and the background fill alpha, 1134 by 910 from (-55, -115)]: faint, as the original's,
-/// whose edge cannot be seen [observed: the owner's screenshot, 2026-10-19; the 0.75 of
-/// the other menus drew a dark box far past the frame]. The original also blurs the world
-/// behind the menu (not built). Ours darkens the whole screen as the character menus do:
-/// the owner found the world behind too bright for the text (playtest list 7 item 2,
-/// `crate::interface::top_menu_backing`) [design].
+// The sheet behind the menu [documented: `RSM_Background`, solid black at brightness 128
+// and the background fill alpha, 1134 by 910 from (-55, -115)]: faint, as the original's,
+// whose edge cannot be seen [observed: the owner's screenshot, 2026-10-19; the 0.75 of
+// the other menus drew a dark box far past the frame]. The original also blurs the world
+// behind the menu (not built). Ours darkened the whole screen as the character menus do
+// (playtest list 7 item 2); now only the menu's box is dark, from its headline to its
+// bottom bracket (`crate::vector_menu::backing`, the Box Background row's darkness), the
+// rest of the screen as it is, in both fonts [design: owner 2026-11-27, of the recipe menu,
+// whose look this one shares: "crafting menus should not make the whole screen dark -
+// standardize it with the rest of the boxes - dark background behind the box only and
+// normal background elsewhere"].
+
 /// A row or a figure that cannot be had: dimmer than the rest [observed: the dim rows of
 /// the owner's screenshots stand at about two thirds of the bright ones].
 const DIM: f32 = 165.0;
@@ -656,11 +664,56 @@ fn bar(p: &mut ChildSpawnerCommands, r: Rect, fill: f32, c: Color) {
     p.spawn((at(r.min.x, r.min.y, r.width() * fill.clamp(0.0, 1.0), r.height()), BackgroundColor(c)));
 }
 
+/// The frames' lines' colour.
+fn frame_color() -> Color {
+    amber(200.0)
+}
+
+/// How thick the frames' lines are: the kit's with the sharp letters
+/// (`crate::vector_menu::LINE`), else the menus' own.
+fn thick() -> f32 {
+    if vector_menu::on() { vector_menu::LINE } else { LINE }
+}
+
+/// The headline in the kit's lines: along the top, open for the title from 50 to
+/// `title_end`, a short side down at its left, one at the right end of its middle part (at
+/// `v2`, before the caps) and one at its right; the corners joined.
+fn headline_drawing(title_end: f32, v2: f32) -> Drawing {
+    let l = vector_menu::LINE;
+    let mut d = Drawing::new(MAIN.x, STUB).hline(0.0, 50.0, 0.0).vline(0.0, 0.0, STUB);
+    if v2 + l > title_end {
+        d = d.hline(title_end, v2 + l, 0.0);
+    }
+    d.vline_left(v2 + l, 0.0, STUB).hline(v2 + 10.0, MAIN.x, 0.0).vline_left(MAIN.x, 0.0, STUB)
+}
+
+/// The bottom bracket in the kit's lines, from `STUB` over the bottom line's top edge.
+fn bottom_drawing() -> Drawing {
+    let h = STUB + vector_menu::LINE;
+    Drawing::new(MAIN.x, h).bracket_up(0.0, MAIN.x, h)
+}
+
+/// A card's lines in the kit's: a line along its top and a short side down at its right.
+fn card_drawing() -> Drawing {
+    Drawing::new(CARD.x, STUB).hline(0.0, CARD.x, 0.0).vline_left(CARD.x, 0.0, STUB)
+}
+
+/// The highlight box round a row `w` by `h`, in the kit's lines.
+fn highlight_drawing(w: f32, h: f32) -> Drawing {
+    Drawing::new(w, h).frame(0.0, 0.0, w, h)
+}
+
 /// A card as `card_info.xml`: a line along its top, a short side fading down at its
-/// right, the title at 5 and the value right-aligned 10 before the end, 20 down.
-fn card(p: &mut ChildSpawnerCommands, f: &Face, x: f32, y: f32, title: &str, value: &str, c: Color) {
-    rule(p, x, y, CARD.x, LINE);
-    rule(p, x + CARD.x - LINE, y, LINE, 40.0);
+/// right, the title at 5 and the value right-aligned 10 before the end, 20 down. With the
+/// sharp letters its lines are the kit's, one drawing, the corner joined.
+#[allow(clippy::too_many_arguments)]
+fn card(p: &mut ChildSpawnerCommands, f: &Face, x: f32, y: f32, title: &str, value: &str, c: Color, images: &mut Assets<Image>) {
+    if vector_menu::on() {
+        vector_menu::spawn(p, &card_drawing(), x, y, frame_color(), images);
+    } else {
+        rule(p, x, y, CARD.x, LINE);
+        rule(p, x + CARD.x - LINE, y, LINE, 40.0);
+    }
     text(p, f, title, x + 5.0, y + 8.0, c);
     if !value.is_empty() {
         right(p, f, value, x + CARD.x - 10.0, y + 8.0, c);
@@ -710,8 +763,11 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
                 .and_then(|p| look.pictures.picture(p, data, images, bc))
         })
         .collect();
-    commands.spawn((RepairRoot, crate::menu::normal_services::Rendered::new(guard,look.row.scale), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(crate::interface::TOP_MENU_Z), crate::interface::top_menu_backing())).with_children(|root| {
+    commands.spawn((RepairRoot, crate::menu::normal_services::Rendered::new(guard,look.row.scale), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(crate::interface::TOP_MENU_Z))).with_children(|root| {
         root.spawn(node).with_children(|m| {
+            let sharp = vector_menu::on();
+            // The box's backing first, under everything else (the sheet's note above).
+            vector_menu::backing(m, 0.0, 0.0, MAIN.x, MAIN.y + thick());
             // The headline: the title, the vendor's skill and the player's caps, each part
             // closed by a short side fading down [documented]. The words here and on the
             // buttons are the settings the menu files name (`sRepairServicesTitle`,
@@ -723,11 +779,15 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
             let tw = look.title.width(title);
             let caps = format!("{}  {}", word("sInventoryCaps"), v.caps);
             let v2 = (1010.0 - look.row.width(&caps) - 35.0).max(860.0);
-            rule(m, 0.0, 0.0, 50.0, LINE);
-            rule(m, tw + 90.0, 0.0, (v2 - tw - 90.0).max(0.0), LINE);
-            rule(m, v2 + 10.0, 0.0, (MAIN.x - v2 - 10.0).max(0.0), LINE);
-            for x in [0.0, v2, MAIN.x - LINE] {
-                rule(m, x, 0.0, LINE, 40.0);
+            if sharp {
+                vector_menu::spawn(m, &headline_drawing(tw + 90.0, v2), 0.0, 0.0, frame_color(), images);
+            } else {
+                rule(m, 0.0, 0.0, 50.0, LINE);
+                rule(m, tw + 90.0, 0.0, (v2 - tw - 90.0).max(0.0), LINE);
+                rule(m, v2 + 10.0, 0.0, (MAIN.x - v2 - 10.0).max(0.0), LINE);
+                for x in [0.0, v2, MAIN.x - LINE] {
+                    rule(m, x, 0.0, LINE, 40.0);
+                }
             }
             text(m, &look.title, title, 70.0, -13.0, bright);
             right(m, &look.row, &format!("{}  {}", word("sRepairSkill"), v.skill), v2 - 15.0, 20.0, bright);
@@ -743,7 +803,12 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
                 let c = if r.ready { bright } else { dim };
                 let ysi_pic = &row_icons[slot];
                 let n = Node { border: UiRect::all(u(LINE)), ..at(0.0, y, ROW_WIDTH + 30.0, h) };
-                list.spawn((Button, RepairButton::Row(i), n, BorderColor::all(if on { line } else { Color::NONE }), BackgroundColor(if on { fill } else { Color::NONE }))).with_children(|row| {
+                // With the sharp letters the highlight's lines are the kit's, drawn over the
+                // border's place (the children stand inside it).
+                list.spawn((Button, RepairButton::Row(i), n, BorderColor::all(if on && !sharp { line } else { Color::NONE }), BackgroundColor(if on { fill } else { Color::NONE }))).with_children(|row| {
+                    if on && sharp {
+                        vector_menu::spawn(row, &highlight_drawing(ROW_WIDTH + 30.0, h), -LINE, -LINE, line, images);
+                    }
                     if let Some((img, rect)) = ysi_pic {
                         row.spawn((at(NAME_X, 15.0*look.row.scale, 24.0, 24.0), ImageNode { rect: *rect, color: c, image_mode: NodeImageMode::Stretch, ..ImageNode::new(img.clone()) }));
                     }
@@ -785,9 +850,9 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
                     if k == 1 && r.quote == Quote::Beyond {
                         break;
                     }
-                    card(m, &look.row, sx, sy + y, "CND", "", bright);
+                    card(m, &look.row, sx, sy + y, "CND", "", bright, images);
                     bar(m, Rect::from_corners(Vec2::new(sx, sy + y) + METER.min, Vec2::new(sx, sy + y) + METER.max), cnd, bright);
-                    card(m, &look.row, sx + STAT_X, sy + y, stat_title, &stat(k), bright);
+                    card(m, &look.row, sx + STAT_X, sy + y, stat_title, &stat(k), bright, images);
                 }
                 match r.quote {
                     Quote::Repair { to, cost } => {
@@ -828,9 +893,13 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
                 });
             }
             // The bottom bracket: a line along 680 with short sides fading up.
-            rule(m, 0.0, MAIN.y, MAIN.x, LINE);
-            rule(m, 0.0, MAIN.y - 40.0, LINE, 40.0);
-            rule(m, MAIN.x - LINE, MAIN.y - 40.0, LINE, 40.0);
+            if sharp {
+                vector_menu::spawn(m, &bottom_drawing(), 0.0, MAIN.y - STUB, frame_color(), images);
+            } else {
+                rule(m, 0.0, MAIN.y, MAIN.x, LINE);
+                rule(m, 0.0, MAIN.y - 40.0, LINE, 40.0);
+                rule(m, MAIN.x - LINE, MAIN.y - 40.0, LINE, 40.0);
+            }
         });
     });
 }
@@ -1005,6 +1074,49 @@ mod tests {
         let mut o = open();
         o.chosen_on_tiles(&[RepairServicesInput::Select(1), RepairServicesInput::Repair, RepairServicesInput::Hover(2)], 3);
         assert_eq!(o.selected, 1, "a pointer step after it in the frame moves nothing");
+    }
+
+    /// How many separate pieces `d`'s lines make at `scale` pixels a unit (pixels lit at least
+    /// half, joined side by side).
+    fn pieces(d: &Drawing, scale: f32) -> usize {
+        let shape = crate::vector_hud::Shape { size: d.size, parts: d.parts.clone(), glow: false, wrap: false };
+        let mask = crate::vector_hud::ink(&shape, scale);
+        let (w, h) = (mask.width, mask.height);
+        let mut seen = vec![false; w * h];
+        let mut count = 0;
+        for start in 0..w * h {
+            if seen[start] || mask.alpha[start] < 0.5 {
+                continue;
+            }
+            count += 1;
+            let mut todo = vec![start];
+            seen[start] = true;
+            while let Some(i) = todo.pop() {
+                let (x, y) = (i % w, i / w);
+                for (nx, ny) in [(x.wrapping_sub(1), y), (x + 1, y), (x, y.wrapping_sub(1)), (x, y + 1)] {
+                    if nx < w && ny < h && !seen[ny * w + nx] && mask.alpha[ny * w + nx] >= 0.5 {
+                        seen[ny * w + nx] = true;
+                        todo.push(ny * w + nx);
+                    }
+                }
+            }
+        }
+        count
+    }
+
+    #[test]
+    fn the_sharp_lines_corners_join() {
+        // 50% on a 4K view (1.125 pixels a unit), 1080p, and a title and caps that end
+        // between pixels.
+        for scale in [1.125, 0.5625, 2.25] {
+            // The left corner, the middle part with the side before the caps, the right corner.
+            assert_eq!(pieces(&headline_drawing(213.7, 861.3), scale), 3, "{scale}");
+            assert_eq!(pieces(&bottom_drawing(), scale), 1, "{scale}");
+            assert_eq!(pieces(&card_drawing(), scale), 1, "{scale}");
+            assert_eq!(pieces(&highlight_drawing(ROW_WIDTH + 30.0, 61.3), scale), 1, "{scale}");
+        }
+        // A title running up to the caps' side: no middle line, the side alone.
+        assert_eq!(headline_drawing(900.0, 861.3).parts.len(), 5);
     }
 
     #[test]

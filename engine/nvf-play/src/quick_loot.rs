@@ -365,6 +365,9 @@ pub enum Ink {
     Fill,
     /// The dark backing.
     Backing,
+    /// The frame's lines: the HUD colour, full; with Sharp on drawn as one vector drawing with
+    /// the letters' dark glow (`crate::vector_menu`), their places as laid out.
+    Frame,
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -621,11 +624,11 @@ pub fn layout_on(spec: &Spec, fonts: &Fonts, max_w: f32, px: f32) -> Laid {
     // The frame: the backing, top and bottom lines with ticks down and up at their ends.
     let mut frame_bars = vec![
         Bar { rect: Rect::new(0.0, 0.0, w, box_h), ink: Ink::Backing },
-        Bar { rect: Rect::new(0.0, 0.0, w, frame), ink: Ink::Hud },
-        Bar { rect: Rect::new(0.0, box_h - frame, w, box_h), ink: Ink::Hud },
+        Bar { rect: Rect::new(0.0, 0.0, w, frame), ink: Ink::Frame },
+        Bar { rect: Rect::new(0.0, box_h - frame, w, box_h), ink: Ink::Frame },
     ];
     for (x, y0) in [(0.0, 0.0), (w - frame, 0.0), (0.0, box_h - tick), (w - frame, box_h - tick)] {
-        frame_bars.push(Bar { rect: Rect::new(x, y0, x + frame, y0 + tick), ink: Ink::Hud });
+        frame_bars.push(Bar { rect: Rect::new(x, y0, x + frame, y0 + tick), ink: Ink::Frame });
     }
     frame_bars.extend(bars);
     // The keys under the box, centred on it; the box at least as wide as they are with the
@@ -934,7 +937,7 @@ fn colour(ink: Ink, crime: bool) -> Color {
         }
     };
     match ink {
-        Ink::Hud => amber(255.0),
+        Ink::Hud | Ink::Frame => amber(255.0),
         Ink::Head => amber(255.0).with_alpha(0.5),
         Ink::Dim => amber(255.0).with_alpha(0.6),
         Ink::Row(full) => row(full),
@@ -943,8 +946,26 @@ fn colour(ink: Ink, crime: bool) -> Color {
     }
 }
 
-fn spawn_panel(p: &mut ChildSpawnerCommands, laid: &Laid, faces: &Fonts, crime: bool) {
+/// The frame's lines as one vector drawing over the box (Sharp): each laid-out line a block at
+/// its place, so the geometry is the plain bars' and the corners stay joined.
+pub fn frame_drawing(laid: &Laid) -> crate::vector_menu::Drawing {
+    laid.bars
+        .iter()
+        .filter(|b| b.ink == Ink::Frame)
+        .fold(crate::vector_menu::Drawing::new(laid.size.x, laid.box_h), |d, b| d.block(b.rect.min.x, b.rect.min.y, b.rect.max.x, b.rect.max.y))
+}
+
+fn spawn_panel(p: &mut ChildSpawnerCommands, laid: &Laid, faces: &Fonts, crime: bool, sharp: bool, images: &mut Assets<Image>) {
+    let mut framed = false;
     for b in &laid.bars {
+        if sharp && b.ink == Ink::Frame {
+            // The frame's lines with the letters' dark glow, over the backing, under the rest.
+            if !framed {
+                crate::vector_menu::spawn(p, &frame_drawing(laid), 0.0, 0.0, colour(Ink::Frame, crime), images);
+                framed = true;
+            }
+            continue;
+        }
         p.spawn((at(b.rect.min.x, b.rect.min.y, b.rect.width(), b.rect.height()), BackgroundColor(colour(b.ink, crime)), Pickable::IGNORE));
     }
     for piece in &laid.pieces {
@@ -1059,7 +1080,7 @@ fn draw(
         commands.entity(e).despawn_related::<Children>();
         let crime = spec.crime;
         let (laid, faces) = (laid.clone(), faces.clone());
-        commands.entity(e).with_children(|p| spawn_panel(p, &laid, &faces, crime));
+        commands.entity(e).with_children(|p| spawn_panel(p, &laid, &faces, crime, sharp, &mut images));
     }
     *drawn = now;
 }
@@ -1305,6 +1326,28 @@ mod tests {
             assert_eq!((place.which, head.which), (Which::Head, Which::Head), "{font}");
             assert!(l.pieces.iter().filter(|p| p.text == "225").all(|p| p.which == Which::Small), "{font}: the figures in the small face");
             assert_eq!(fonts.head.font.size, fonts.small.font.size, "{font}: heads and figures one size");
+        }
+    }
+
+    /// With Sharp on the frame is one vector drawing of the laid-out lines: the same
+    /// rectangles, the corners' ticks sharing the lines' corners.
+    #[test]
+    fn the_sharp_frame_is_the_laid_out_lines() {
+        for (font, fonts) in both_fonts() {
+            let l = layout_on(&spec(ALL, rows()), &fonts, room(), 960.0 / (2160.0 * 0.5));
+            let d = frame_drawing(&l);
+            let lines: Vec<Rect> = l.bars.iter().filter(|b| b.ink == Ink::Frame).map(|b| b.rect).collect();
+            assert_eq!(lines.len(), 6, "{font}");
+            let drawn: Vec<Rect> = d.parts.iter().map(|p| match &p.form {
+                crate::vector_hud::Form::Rect(r) => *r,
+                _ => panic!("a line is a rectangle"),
+            }).collect();
+            assert_eq!(drawn, lines, "{font}: the geometry is the bars'");
+            assert_eq!(d.size, Vec2::new(l.size.x, l.box_h));
+            // Each tick starts on its line's corner.
+            let (top, bottom) = (lines[0], lines[1]);
+            assert_eq!((lines[2].min, lines[3].max.x, lines[3].min.y), (top.min, top.max.x, top.min.y), "{font}");
+            assert_eq!((lines[4].max.y, lines[5].max), (bottom.max.y, bottom.max), "{font}");
         }
     }
 

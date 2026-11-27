@@ -89,8 +89,6 @@ pub struct HelpScroll {
     lines: usize,
     shown: usize,
     pitch: f32,
-    /// The window's height, the bar's.
-    room: f32,
 }
 
 /// The scroll bar's thumb (`top`: the bar's), and the strip along the bar that is
@@ -98,6 +96,9 @@ pub struct HelpScroll {
 #[derive(Component)]
 pub struct HelpThumb {
     top: f32,
+    /// How far the thumb travels from the first line to past the last: the bar's height
+    /// (Original) or its track between the arrows (Sharp).
+    travel: f32,
 }
 #[derive(Component)]
 pub struct HelpTrack;
@@ -152,9 +153,8 @@ pub fn scroll(
     }
     s.first = first;
     node.top = u(-(first as f32) * s.pitch);
-    let top = s.room * first as f32 / s.lines as f32;
     for (mut t, thumb) in &mut thumbs {
-        t.top = u(thumb.top + top);
+        t.top = u(thumb.top + thumb.travel * first as f32 / s.lines as f32);
     }
 }
 
@@ -331,10 +331,37 @@ pub fn frame_lines((left, top, w, h): (f32, f32, f32, f32)) -> (f32, f32) {
     (top + h - TOP, left + w - SIDE)
 }
 
+/// The box's frame with Sharp on, in a background `w` by `h`: the top and bottom lines
+/// from corner to corner, open where the title (`title`: from, to) and the symbol with the
+/// manual's words (`foot`) stand, and the corners' short sides ending square, all
+/// [`crate::vector_menu::LINE`] thick, joined in the corners and inside the lines
+/// [`frame_lines`] names [design: owner 2026-11-27, "make sure all corner lines connect"].
+pub fn frame_drawing(w: f32, h: f32, title: (f32, f32), foot: (f32, f32)) -> crate::vector_menu::Drawing {
+    let (right, bottom) = (w - SIDE, h - TOP);
+    crate::vector_menu::Drawing::new(w, h)
+        .hline(SIDE, title.0, TOP)
+        .hline(title.1.min(right - CORNER), right, TOP)
+        .vline(SIDE, TOP, TOP + FADE)
+        .vline_left(right, TOP, TOP + FADE)
+        .hline_up(SIDE, foot.0, bottom)
+        .hline_up(foot.1.min(right), right, bottom)
+        .vline(SIDE, bottom - FADE, bottom)
+        .vline_left(right, bottom - FADE, bottom)
+}
+
+/// The scroll bar's width with Sharp on: the menus' bar ([`crate::vector_menu::scrollbar`])
+/// as wide as the dialogue's and the lists' (their `SCROLL_WIDTH`, `BAR_W`: 32).
+const SHARP_BAR_W: f32 = 32.0;
+
 /// [`spawn`], the box kept clear of a menu's words and buttons ([`box_rect`]).
 pub fn spawn_clear(r: &mut ChildSpawnerCommands, c: &mut Ctx, help: &Help, view_w: f32, clear: Clear) {
     let (left, top, w, h) = box_rect(view_w, clear);
     let bright = amber(255.0);
+    // Sharp: the frame and scroll bar in vector (`crate::vector_menu`), the boxes' backing
+    // behind the frame only; Original: the game's line pictures over the faint fill.
+    let sharp = crate::vector_menu::on();
+    let t = if sharp { crate::vector_menu::LINE } else { THICK };
+    let fill = if sharp { Color::NONE } else { Color::srgba(0.0, 0.0, 0.0, FILL_ALPHA) };
     let bg = Node {
         position_type: PositionType::Absolute,
         left: u(left),
@@ -343,25 +370,30 @@ pub fn spawn_clear(r: &mut ChildSpawnerCommands, c: &mut Ctx, help: &Help, view_
         height: u(h),
         ..default()
     };
-    r.spawn((bg, BackgroundColor(Color::srgba(0.0, 0.0, 0.0, FILL_ALPHA)))).with_children(|b| {
+    r.spawn((bg, BackgroundColor(fill))).with_children(|b| {
         let solid = "interface\\shared\\line\\solid.dds";
         let down = "interface\\shared\\line\\fade_to_bottom.dds";
         let up = "interface\\shared\\line\\fade_to_top.dds";
+        let bottom = h - TOP;
+        if sharp {
+            crate::vector_menu::backing(b, SIDE, TOP, w - 2.0 * SIDE, bottom - TOP);
+        }
         // The top: corners, title, the line on to the right corner.
-        c.image(b, down, at(SIDE, TOP, THICK, FADE), bright);
-        c.image(b, solid, at(SIDE, TOP, CORNER, THICK), bright);
         let title_x = SIDE + CORNER + BUFFER;
         let title_h = c.font_size(FontKind::Title);
-        let title_w = c.text_in(b, FontKind::Title, &help.title, title_x, TOP + THICK / 2.0 - title_h / 2.0 + 5.0, false, bright);
+        let title_w = c.text_in(b, FontKind::Title, &help.title, title_x, TOP + t / 2.0 - title_h / 2.0 + 5.0, false, bright);
         let after = title_x + title_w + BUFFER;
         let right_corner = w - SIDE - CORNER;
-        c.image(b, solid, at(after, TOP, (right_corner - after).max(0.0), THICK), bright);
-        c.image(b, solid, at(right_corner, TOP, CORNER, THICK), bright);
-        c.image(b, down, at(w - SIDE, TOP, THICK, FADE), bright);
+        if !sharp {
+            c.image(b, down, at(SIDE, TOP, THICK, FADE), bright);
+            c.image(b, solid, at(SIDE, TOP, CORNER, THICK), bright);
+            c.image(b, solid, at(after, TOP, (right_corner - after).max(0.0), THICK), bright);
+            c.image(b, solid, at(right_corner, TOP, CORNER, THICK), bright);
+            c.image(b, down, at(w - SIDE, TOP, THICK, FADE), bright);
+        }
         // The text, in a window of whole lines down to the bottom corners' fading lines;
         // a longer text scrolls, a bar beside it showing where [design: the owner's
         // request, 2026-10-18; the original pages long texts with Next/Previous].
-        let bottom = h - TOP;
         let text_x = title_x + TEXT_IN;
         let text_top = TOP + FADE + TEXT_DOWN;
         let wrap = (w - BUTTONS_FROM_RIGHT - BUTTON_COLUMN - BEFORE_BUTTONS - title_x - TEXT_IN).max(100.0);
@@ -378,26 +410,46 @@ pub fn spawn_clear(r: &mut ChildSpawnerCommands, c: &mut Ctx, help: &Help, view_
             window
                 .spawn(at(0.0, 0.0, wrap + CLIP_SPARE, room))
                 .with_children(|t| lines = c.paragraph(t, FontKind::Body, &help.text, 0.0, rise, wrap, 0.0, bright))
-                .insert(HelpScroll { first: 0, lines, shown, pitch, room });
+                .insert(HelpScroll { first: 0, lines, shown, pitch });
         });
         if lines > shown {
             let bar_x = text_x + wrap + BAR_GAP;
-            b.spawn((at(bar_x + (BAR_W - THICK) / 2.0, window_top, THICK, room), BackgroundColor(amber(BUTTON_DIM))));
-            b.spawn((HelpThumb { top: window_top }, at(bar_x, window_top, BAR_W, room * shown as f32 / lines as f32), BackgroundColor(bright)));
+            if sharp {
+                // The menus' scroll bar centred where the thin one stands; its marker a node
+                // of its own moving down the track between the arrows.
+                let x = bar_x + BAR_W / 2.0 - SHARP_BAR_W / 2.0;
+                let (_, arrow_h) = crate::vector_menu::scroll_arrow(SHARP_BAR_W);
+                crate::vector_menu::spawn(b, &crate::vector_menu::scrollbar(SHARP_BAR_W, room, None), x, window_top, bright, c.images);
+                let track = (room - 2.0 * arrow_h).max(0.0);
+                let len = (track * shown as f32 / lines as f32).max(crate::vector_menu::LINE);
+                let mx = (SHARP_BAR_W - crate::vector_menu::LINE) / 2.0;
+                let marker = crate::vector_menu::Drawing::new(SHARP_BAR_W, len).block(mx, 0.0, mx + crate::vector_menu::LINE, len);
+                b.spawn((HelpThumb { top: window_top + arrow_h, travel: track }, at(x, window_top + arrow_h, SHARP_BAR_W, len))).with_children(|m| {
+                    crate::vector_menu::spawn(m, &marker, 0.0, 0.0, bright, c.images);
+                });
+            } else {
+                b.spawn((at(bar_x + (BAR_W - THICK) / 2.0, window_top, THICK, room), BackgroundColor(amber(BUTTON_DIM))));
+                b.spawn((HelpThumb { top: window_top, travel: room }, at(bar_x, window_top, BAR_W, room * shown as f32 / lines as f32), BackgroundColor(bright)));
+            }
             b.spawn((HelpTrack, PointerState::default(), RelativeCursorPosition::default(), at(bar_x - BAR_GAP / 2.0, window_top, BAR_W + BAR_GAP, room)));
         }
         // The bottom: corners, the VDSG symbol and the manual's words, the line on.
-        c.image(b, up, at(SIDE, bottom - FADE, THICK, FADE), bright);
-        c.image(b, solid, at(SIDE, bottom - THICK, CORNER, THICK), bright);
         let symbol_x = SIDE + CORNER + BUFFER - DEAD_SPACE;
-        let symbol_y = bottom - THICK + (THICK - SYMBOL_H) / 2.0;
+        let symbol_y = bottom - t + (t - SYMBOL_H) / 2.0;
         c.image(b, SYMBOL, at(symbol_x, symbol_y, SYMBOL_FILE_W, SYMBOL_H), bright);
         let vdsg_x = symbol_x + SYMBOL_FILE_W - DEAD_SPACE + BUFFER;
         let body_h = c.font_size(FontKind::Body);
         let vdsg_w = c.text_in(b, FontKind::Body, &help.words.manual, vdsg_x, symbol_y + (SYMBOL_H - body_h) / 2.0 + VDSG_DOWN, false, bright);
         let line_x = vdsg_x + vdsg_w + BUFFER;
-        c.image(b, solid, at(line_x, bottom - THICK, (w - SIDE - line_x).max(0.0), THICK), bright);
-        c.image(b, up, at(w - SIDE, bottom - FADE, THICK, FADE), bright);
+        if sharp {
+            let frame = frame_drawing(w, h, (SIDE + CORNER, after), (SIDE + CORNER, line_x));
+            crate::vector_menu::spawn(b, &frame, 0.0, 0.0, bright, c.images);
+        } else {
+            c.image(b, up, at(SIDE, bottom - FADE, THICK, FADE), bright);
+            c.image(b, solid, at(SIDE, bottom - THICK, CORNER, THICK), bright);
+            c.image(b, solid, at(line_x, bottom - THICK, (w - SIDE - line_x).max(0.0), THICK), bright);
+            c.image(b, up, at(w - SIDE, bottom - FADE, THICK, FADE), bright);
+        }
         // Close, its foot on the right corner's fading line.
         let dim = amber(BUTTON_DIM);
         let right = w - BUTTONS_FROM_RIGHT;
@@ -426,6 +478,42 @@ mod tests {
         assert_eq!(box_rect(1600.0, Clear { bottom: 900.0, right: 1500.0 }), (160.0, 96.0, 1280.0, 768.0));
         let (_, _, w, h) = box_rect(1600.0, Clear { bottom: 0.0, right: 0.0 });
         assert_eq!((w, h), (800.0, 480.0));
+    }
+
+    #[test]
+    fn the_sharp_frames_corners_join_inside_its_lines() {
+        use crate::vector_menu::LINE;
+        let (_, _, w, h) = box_rect(1600.0, Clear::NONE);
+        let d = frame_drawing(w, h, (SIDE + CORNER, 300.0), (SIDE + CORNER, 400.0));
+        let r: Vec<Rect> = d
+            .parts
+            .iter()
+            .map(|p| match &p.form {
+                crate::vector_hud::Form::Rect(r) => *r,
+                _ => panic!("a line is a rectangle"),
+            })
+            .collect();
+        let (bottom, right) = frame_lines((0.0, 0.0, w, h));
+        // Top left: the line and the side start on the same corner; top right: the line
+        // ends on the side's right edge, on the frame's right line.
+        assert_eq!((r[0].min, r[2].min), (Vec2::new(SIDE, TOP), Vec2::new(SIDE, TOP)));
+        assert_eq!((r[1].max.x, r[3].max.x, r[3].min.y), (right, right, TOP));
+        // Bottom: the lines' feet on the frame's bottom line, the sides reaching it.
+        for i in [4, 5, 6, 7] {
+            assert_eq!(r[i].max.y, bottom, "part {i}");
+        }
+        assert_eq!((r[4].min.x, r[5].max.x, r[7].max.x), (SIDE, right, right));
+        // Every line LINE thick.
+        for (i, q) in r.iter().enumerate() {
+            assert!((q.width().min(q.height()) - LINE).abs() < 1e-4, "part {i}: {q:?}");
+        }
+        // A title running past the right corner leaves the corner's own line.
+        let d = frame_drawing(w, h, (SIDE + CORNER, w), (SIDE + CORNER, w));
+        let top = match &d.parts[1].form {
+            crate::vector_hud::Form::Rect(r) => *r,
+            _ => unreachable!(),
+        };
+        assert_eq!(top.min.x, w - SIDE - CORNER);
     }
 
     #[test]

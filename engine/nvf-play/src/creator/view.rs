@@ -50,17 +50,12 @@ pub fn highlight() -> Color {
     amber(128.0).with_alpha(0.25)
 }
 
-/// The dark backing when the game's picture cannot be read (the text must stay readable
-/// over a bright room).
-const PANEL: Color = Color::srgba(0.0, 0.0, 0.0, 0.8);
-/// The panel's backing: the Pip-Boy and terminal screens' picture, a grey vignette, in
-/// amber at the Pip-Boy page's brightness (`crate::pipboy::device_screen`), nearly opaque
-/// so that the text reads over a bright room [design]. Transparency mixes in linear light,
-/// so little of it goes a long way: at 0.9 a wall of 152 showed through as 58 and the wall
-/// could be read behind the text [observed: the first shots at 1280 x 800].
-const BACKING: &str = "interface\\shared\\background\\pipboy.dds";
-const BACKING_BRIGHTNESS: f32 = 120.0;
-const BACKING_ALPHA: f32 = 0.98;
+// The panel's backing, and the look-round hint's: in both Menu Font looks the boxes' own
+// backing (`crate::vector_menu::backing`, the Box Background row's darkness, sharp edged)
+// [design: owner 2026-11-27, "make sure that all in-game boxes have the same non-blurred
+// background box", "same gray background opacity"]. It was the Pip-Boy screens' picture, a
+// grey vignette in amber, at 0.98 so the text read over a bright room [observed: the first
+// shots at 1280 x 800, at 0.9 a wall of 152 showed through as 58]; the row darkens it.
 
 /// The faintest text on the panel, and the line saying what a page is for: a contrast of
 /// about 4 with the text's background over a white wall [design: worked out from the
@@ -298,7 +293,6 @@ struct Pieces {
     arrow_left: Option<Picture>,
     arrow_right: Option<Picture>,
     square: Option<Picture>,
-    backing: Option<Picture>,
 }
 
 pub struct Kit {
@@ -318,7 +312,6 @@ impl Kit {
             arrow_left: piece("arrow_left.dds"),
             arrow_right: piece("arrow_right.dds"),
             square: piece("square_filled.dds"),
-            backing: piece(BACKING),
         };
         Kit { head, body, pieces }
     }
@@ -416,9 +409,44 @@ pub fn fill(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, color:
 }
 
 /// A box's four sides in one bordered node, so they always close
-/// (`crate::chargen::draw::outline`).
+/// (`crate::chargen::draw::outline`); Sharp: the kit's box (`crate::chargen::draw::box_drawing`,
+/// its lines `crate::vector_menu::LINE` thick).
 fn outline(p: &mut ChildSpawnerCommands, x: f32, y: f32, w: f32, h: f32, t: f32, color: Color) {
+    if crate::vector_menu::on() {
+        vector(p, crate::chargen::draw::box_drawing(w, h), x, y, color);
+        return;
+    }
     crate::chargen::draw::outline(p, x, y, w, h, t, color);
+}
+
+/// A vector drawing (`crate::vector_menu::spawn`) with its top left at `x, y`, tinted
+/// `color`. The panel is drawn without the images, so its picture is made as the commands
+/// run, in a node of its own at that place (none without the images: a test's world).
+fn vector(p: &mut ChildSpawnerCommands, d: crate::vector_menu::Drawing, x: f32, y: f32, color: Color) {
+    let node = p.spawn((at(x, y, d.size.x, d.size.y), Pickable::IGNORE)).id();
+    p.commands().queue(move |world: &mut World| {
+        let made = world.try_resource_scope(|world, mut images: Mut<Assets<Image>>| {
+            world.commands().entity(node).with_children(|n| {
+                crate::vector_menu::spawn(n, &d, 0.0, 0.0, color, &mut images);
+            });
+        });
+        if made.is_some() {
+            world.flush();
+        }
+    });
+}
+
+/// The panel's frame with Sharp on, over the panel `panel_h` high: the top and bottom lines
+/// across it and the sides from their ends ([`TOP_CORNER`] down, [`BOTTOM_CORNER`] up)
+/// ending square, joined in the corners, `crate::vector_menu::LINE` thick.
+fn sharp_frame(panel_h: f32) -> crate::vector_menu::Drawing {
+    crate::vector_menu::Drawing::new(PANEL_W, panel_h)
+        .hline(0.0, PANEL_W, 0.0)
+        .vline(0.0, 0.0, TOP_CORNER)
+        .vline_left(PANEL_W, 0.0, TOP_CORNER)
+        .hline_up(0.0, PANEL_W, panel_h)
+        .vline(0.0, panel_h - BOTTOM_CORNER, panel_h)
+        .vline_left(PANEL_W, panel_h - BOTTOM_CORNER, panel_h)
 }
 
 /// A piece of the game's, tinted `color` and stretched, or a plain fill without it.
@@ -435,6 +463,10 @@ fn piece(p: &mut ChildSpawnerCommands, picture: &Option<Picture>, [x, y, w, h]: 
 /// along the top and the bottom, and a line fading away from each of their ends.
 fn frame(p: &mut ChildSpawnerCommands, pieces: &Pieces, panel_y: f32, panel_h: f32) {
     let color = accent(1.0);
+    if crate::vector_menu::on() {
+        vector(p, sharp_frame(panel_h), 0.0, panel_y, color);
+        return;
+    }
     let bottom = panel_y + panel_h - THICK;
     fill(p, 0.0, panel_y, PANEL_W, THICK, color);
     fill(p, 0.0, bottom, PANEL_W, THICK, color);
@@ -447,6 +479,19 @@ fn frame(p: &mut ChildSpawnerCommands, pieces: &Pieces, panel_y: f32, panel_h: f
 /// The scrollbar beside the rows, in the panel's right margin.
 const BAR_X: f32 = PANEL_W - 14.0;
 const BAR_W: f32 = 6.0;
+/// With Sharp on the menus' scroll bar (`crate::vector_menu::scrollbar`), as wide as the
+/// margin between the values' right end and the frame's side allows, centred in it.
+const SHARP_BAR_W: f32 = 16.0;
+const SHARP_BAR_X: f32 = (RIGHT + PANEL_W - crate::vector_menu::LINE - SHARP_BAR_W) / 2.0;
+
+/// The Sharp scroll bar's marker (top in its track, height) for `above` of the rows' `total`
+/// height scrolled past and `shown` of it shown, in a bar `room` high.
+fn sharp_marker(room: f32, above: f32, shown: f32, total: f32) -> (f32, f32) {
+    let (_, arrow_h) = crate::vector_menu::scroll_arrow(SHARP_BAR_W);
+    let track = (room - 2.0 * arrow_h).max(0.0);
+    let len = (track * shown / total).max(24.0).min(track);
+    ((track * above / total).min(track - len), len)
+}
 
 /// A row's height.
 fn height(v: &RowView) -> f32 {
@@ -540,7 +585,7 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
     };
     if layout.use_menu_frame {
         let wide = lines.iter().map(|l| width(&kit.body, l, 0.6)).fold(0.0, f32::max);
-        piece(p, &kit.pieces.backing, [28.0, 866.0, wide + 24.0, 60.0], amber(BACKING_BRIGHTNESS).with_alpha(BACKING_ALPHA), PANEL);
+        crate::vector_menu::backing(p, 28.0, 866.0, wide + 24.0, 60.0);
         for (k, line) in lines.iter().enumerate() {
             text(p, &kit.body, line, 40.0, 872.0 + 28.0 * k as f32, 0.6, Align::Left, bone(0.9));
         }
@@ -556,7 +601,7 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
             let hint_y = (layout.panel_y + layout.panel_h - hint_h).max(layout.safe_t);
             let line_step = 28.0 * ratio;
             let text_pad_y = 6.0 * ratio;
-            piece(p, &kit.pieces.backing, [hint_x, hint_y, wide + 24.0, hint_h], amber(BACKING_BRIGHTNESS).with_alpha(BACKING_ALPHA), PANEL);
+            crate::vector_menu::backing(p, hint_x, hint_y, wide + 24.0, hint_h);
             for (k, line) in lines.iter().enumerate() {
                 text(p, &kit.body, line, hint_x + 12.0, hint_y + text_pad_y + line_step * k as f32, hint_scale, Align::Left, bone(0.9));
             }
@@ -568,7 +613,7 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
 /// The panel, from its left edge; the rectangles it returns are too.
 fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout) -> Vec<Hit> {
     let mut hits = vec![Hit { rect: [0.0, layout.panel_y, PANEL_W, layout.panel_h], what: HitWhat::Panel }];
-    piece(p, &kit.pieces.backing, [0.0, layout.panel_y, PANEL_W, layout.panel_h], amber(BACKING_BRIGHTNESS).with_alpha(BACKING_ALPHA), PANEL);
+    crate::vector_menu::backing(p, 0.0, layout.panel_y, PANEL_W, layout.panel_h);
     frame(p, &kit.pieces, layout.panel_y, layout.panel_h);
     // The title and what the look is, and what the page is for.
     text(p, &kit.head, m.title(), LEFT, layout.panel_y + 14.0, 1.0, Align::Left, bone(1.0));
@@ -670,10 +715,15 @@ fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layou
             *used += h;
             (*used <= room + 0.5).then_some(*h)
         }).sum();
-        fill(p, BAR_X, layout.rows_top, BAR_W, room, bone(0.15));
-        let top = layout.rows_top + room * above / total;
-        let len = (room * shown / total).max(24.0).min(room);
-        fill(p, BAR_X, top.min(layout.rows_bottom - len), BAR_W, len, accent(0.8));
+        if crate::vector_menu::on() {
+            let bar = crate::vector_menu::scrollbar(SHARP_BAR_W, room, Some(sharp_marker(room, above, shown, total)));
+            vector(p, bar, SHARP_BAR_X, layout.rows_top, accent(0.8));
+        } else {
+            fill(p, BAR_X, layout.rows_top, BAR_W, room, bone(0.15));
+            let top = layout.rows_top + room * above / total;
+            let len = (room * shown / total).max(24.0).min(room);
+            fill(p, BAR_X, top.min(layout.rows_bottom - len), BAR_W, len, accent(0.8));
+        }
         hits.push(Hit { rect: [BAR_X - 8.0, layout.rows_top, BAR_W + 14.0, room], what: HitWhat::Scrollbar });
     }
     // The pages, along the bottom over the buttons (the original's page lamps stand along
@@ -718,6 +768,27 @@ mod tests {
         assert_eq!(hit_at(&hits, Vec2::new(15.0, 15.0)), Some(HitWhat::Row(2)));
         assert_eq!(hit_at(&hits, Vec2::new(50.0, 50.0)), Some(HitWhat::Panel));
         assert_eq!(hit_at(&hits, Vec2::new(150.0, 50.0)), None);
+    }
+
+    #[test]
+    fn the_sharp_frame_joins_and_its_bar_fits_the_margin() {
+        use crate::chargen::draw::tests::{meet, rects};
+        use crate::vector_menu::LINE;
+        let r = rects(&sharp_frame(PANEL_H));
+        assert_eq!(r.len(), 6);
+        // Top: the line across, the sides down from its ends; bottom: up from the foot.
+        assert_eq!(r[0], Rect::new(0.0, 0.0, PANEL_W, LINE));
+        assert!(meet(r[0], r[1]) && meet(r[0], r[2]) && meet(r[3], r[4]) && meet(r[3], r[5]));
+        assert_eq!((r[1].height(), r[4].height(), r[3].max.y, r[5].max.x), (TOP_CORNER, BOTTOM_CORNER, PANEL_H, PANEL_W));
+        // The bar between the values' right end and the frame's side.
+        const { assert!(SHARP_BAR_X > RIGHT && SHARP_BAR_X + SHARP_BAR_W < PANEL_W - LINE) };
+        // The marker: at the track's top unscrolled, at its foot scrolled to the end.
+        let room = ROWS_BOTTOM - ROWS_TOP;
+        let (_, arrow_h) = crate::vector_menu::scroll_arrow(SHARP_BAR_W);
+        let track = room - 2.0 * arrow_h;
+        assert_eq!(sharp_marker(room, 0.0, 300.0, 900.0).0, 0.0);
+        let (top, len) = sharp_marker(room, 600.0, 300.0, 900.0);
+        assert!((top + len - track).abs() < 1e-3, "{top} {len} {track}");
     }
 
     #[test]

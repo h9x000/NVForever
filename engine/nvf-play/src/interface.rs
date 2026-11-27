@@ -386,6 +386,12 @@ pub fn line(units: f32) -> Val {
     Val::Px(line_pixels(units, unit_scale(), h) / sf)
 }
 
+/// The view's height in physical pixels as [`follow_view`] last saw it (0 before), and its
+/// physical pixels to a logical one.
+pub fn view_px() -> (f32, f32) {
+    (f32::from_bits(VIEW_PX.load(Ordering::Relaxed)), f32::from_bits(VIEW_SCALE.load(Ordering::Relaxed)))
+}
+
 /// [`line`]'s physical pixels for `units` at `scale` on a view `view_px` high.
 pub fn line_pixels(units: f32, scale: f32, view_px: f32) -> f32 {
     (units * scale / 960.0 * view_px).round().max(1.0)
@@ -412,13 +418,12 @@ pub fn box_shade() -> Color {
     Color::BLACK.with_alpha(box_backing())
 }
 
-/// Where the subtitles stand (the Subtitle Position row, 0 to 1, the bits of an `f32`): 0.5,
-/// the original's place, by default [design: owner 2026-11-27, "so players can move
-/// subtitles more up/down"].
-static SUBTITLE_PLACE: AtomicU32 = AtomicU32::new(0x3F00_0000);
-
-/// How far a whole slider of Subtitle Position moves them, in interface units each way.
-pub const SUBTITLE_TRAVEL: f32 = 200.0;
+/// Where the subtitles stand (the Subtitle Position row, 0 to 1, the bits of an `f32`): the
+/// middle of their lines that part of the view's height up from its foot, 0 the foot, 0.5 the
+/// middle, 1 the top; a quarter up by default [design: owner 2026-11-27, "make it 1-100% while
+/// 50% is the exact middle of the screen, 0 is bottom 100 is top spanning the whole height of
+/// the screen - set 25% as the default"].
+static SUBTITLE_PLACE: AtomicU32 = AtomicU32::new(0x3E80_0000);
 
 /// The Subtitle Position row, 0 to 1.
 pub fn subtitle_place() -> f32 {
@@ -430,26 +435,26 @@ pub fn set_subtitle_place(v: f32) {
     SUBTITLE_PLACE.store(v.clamp(0.0, 1.0).to_bits(), Ordering::Relaxed);
 }
 
-/// How far above their place the subtitles (the HUD's and the dialogue's line and choices)
-/// stand, in interface units; below for less than 0.
-pub fn subtitle_lift() -> f32 {
-    subtitle_lift_of(subtitle_place())
+/// The room kept between the subtitles and the view's top or foot, in interface units: the
+/// safe zone's [documented: Fallout_default.ini `iSafeZoneY`, 15].
+pub const SUBTITLE_EDGE: f32 = 15.0;
+
+/// Where a block `height` units high (at `scale`) stands in a frame kept at `anchor_y` of the
+/// view (`menu_frame`: 0.5 its middle, 1 its foot): its top, in the frame's units, so that its
+/// middle is at [`subtitle_place`], and the whole block inside the view, [`SUBTITLE_EDGE`]
+/// from its top and foot.
+pub fn subtitle_top(height: f32, anchor_y: f32, scale: f32) -> f32 {
+    subtitle_top_at(subtitle_place(), height, anchor_y, scale)
 }
 
-/// [`subtitle_lift`] for a row value.
-pub fn subtitle_lift_of(place: f32) -> f32 {
-    (place.clamp(0.0, 1.0) - 0.5) * 2.0 * SUBTITLE_TRAVEL
-}
-
-/// The Subtitle Position row's value as shown: the lift as a part of the view's height,
-/// "+5%" up, "-5%" down.
-pub fn subtitle_place_text(place: f32) -> String {
-    let p = subtitle_lift_of(place) / 960.0 * 100.0;
-    if p.abs() < 0.5 {
-        "0%".to_string()
-    } else {
-        format!("{p:+.0}%")
-    }
+/// [`subtitle_top`] for a row value `place`.
+pub fn subtitle_top_at(place: f32, height: f32, anchor_y: f32, scale: f32) -> f32 {
+    let s = scale.max(0.01);
+    // A part of the view's height, from its top, in the frame's units.
+    let units = |part: f32| (part - anchor_y * (1.0 - s)) * 960.0 / s;
+    let middle = units(1.0 - place.clamp(0.0, 1.0));
+    let (lowest, highest) = (units(0.0) + SUBTITLE_EDGE, units(1.0) - SUBTITLE_EDGE - height);
+    (middle - height / 2.0).min(highest).max(lowest)
 }
 
 /// The settings page's rows of [`box_backing`] and [`subtitle_place`], in `group`.
@@ -473,11 +478,11 @@ pub fn box_rows(app: &mut App, group: &'static str) {
             key: "subtitle-position",
             group,
             label: "Subtitle position",
-            note: "Moves the subtitles and the dialogue's words up or down the screen. 0% is the original's place.",
+            note: "Where the subtitles and the dialogue's words stand: 0% the bottom of the screen, 50% the middle, 100% the top.",
             switches: "",
             get: |_| false,
             set: |_, _| {},
-            slider: Some(crate::settings::Slider { get: |_| subtitle_place(), set: |_, v| set_subtitle_place(v), min: 0.0, step: 0.025, shown: Some(subtitle_place_text) }),
+            slider: Some(crate::settings::Slider { get: |_| subtitle_place(), set: |_, v| set_subtitle_place(v), min: 0.0, step: 0.01, shown: None }),
         },
     );
 }

@@ -288,9 +288,23 @@ pub(crate) fn box_lines(f: &mut ChildSpawnerCommands, colour: Color) {
 /// The box's backing and outline: the top line round the title, the bottom line, and at
 /// each corner a short line that fades out, all set from the edges of one node over the
 /// frame (down to the bottom line's foot).
-fn outline(b: &mut ChildSpawnerCommands, faces: &Faces, l: &Layout, bright: Color) {
+fn outline(b: &mut ChildSpawnerCommands, faces: &Faces, l: &Layout, bright: Color, images: &mut Assets<Image>) {
     let (t, auto, zero, full) = (crate::interface::line(THICK), Val::Auto, Val::Px(0.0), Val::Percent(100.0));
     let frame = Node { position_type: PositionType::Absolute, left: zero, top: zero, width: u(l.width), height: u(l.height + THICK), ..default() };
+    if crate::vector_menu::on() {
+        // While Sharp: the lines in vector, square-ended, with the letters' glow, the top line
+        // round the title and a short upright at each corner (`crate::vector_menu`).
+        let h = l.height + THICK;
+        let mut d = crate::vector_menu::Drawing::new(l.width, h).hline_up(0.0, l.width, h);
+        for &(x, len) in &l.top {
+            d = d.hline(x, x + len, 0.0);
+        }
+        d = d.vline(0.0, 0.0, CORNER).vline_left(l.width, 0.0, CORNER).vline(0.0, h - CORNER, h).vline_left(l.width, h - CORNER, h);
+        b.spawn((frame, BackgroundColor(crate::interface::box_shade()), Pickable::IGNORE)).with_children(|f| {
+            crate::vector_menu::spawn(f, &d, 0.0, 0.0, bright, images);
+        });
+        return;
+    }
     b.spawn((frame, BackgroundColor(crate::interface::box_shade()), Pickable::IGNORE)).with_children(|f| {
         for &(x, len) in &l.top {
             f.spawn((edge(u(x), zero, auto, auto, u(len), t), BackgroundColor(bright)));
@@ -334,6 +348,7 @@ fn spawn_box(
     selected: usize,
     icon: Option<Handle<Image>>,
     (view_px, safe, menu_scale): BoxFrame,
+    images: &mut Assets<Image>,
 ) {
     let l = layout(view, &faces.body.font, &faces.title.font);
     let fit = crate::interface::fit_centered_box(menu_scale, view_px, safe, l.width + 48.0, l.height + 48.0);
@@ -358,7 +373,7 @@ fn spawn_box(
             // as dark as the Box Background row [design: owner 2026-11-27, "the grey
             // background is same as for our quickloot menu"; the game's soft dark picture,
             // wider than the box, read as blurred and out of place].
-            outline(b, faces, &l, bright);
+            outline(b, faces, &l, bright, images);
             if let Some(t) = &l.title {
                 set_text(b, &faces.title, t, Vec2::ZERO, bright, ());
             }
@@ -377,7 +392,14 @@ fn spawn_box(
                     let shown = if i == selected { Visibility::Inherited } else { Visibility::Hidden };
                     // 40 of 255, as dark as it reads where the game mixes it in.
                     let fill = BackgroundColor(amber(128.0).with_alpha((40.0f32 / 255.0).powf(2.2)));
-                    r.spawn((Frame(i), at(0.0, 0.0, frame_w, h), fill, shown)).with_children(|f| box_lines(f, amber(200.0)));
+                    r.spawn((Frame(i), at(0.0, 0.0, frame_w, h), fill, shown)).with_children(|f| {
+                        if crate::vector_menu::on() {
+                            let d = crate::vector_menu::Drawing::new(frame_w, h).frame(0.0, 0.0, frame_w, h);
+                            crate::vector_menu::spawn(f, &d, 0.0, 0.0, amber(200.0), images);
+                        } else {
+                            box_lines(f, amber(200.0));
+                        }
+                    });
                     // Centred on the frame by their ink: the sharp lines' start shift
                     // (`VectorFace::shift`) is for words set from their start.
                     let shift = faces.body.vector.as_ref().map_or(0.0, |v| v.shift);
@@ -416,7 +438,9 @@ fn draw(
 ) {
     // T15a: the box drawn from its tiles spawns nothing here.
     let tiled = script.as_ref().and_then(|s| s.rt.as_ref()).is_some_and(|rt| crate::tiles::menus::message_tiled(menus.as_ref().is_some_and(|m| m.message), &rt.game));
-    let revision = crate::cjk_font::revision();
+    // A CJK letter's picture made, other letters (the Menu Font row) or the Box Background
+    // row moved: drawn again.
+    let revision = crate::cjk_font::revision().wrapping_add(crate::vector_font::letters() << 12).wrapping_add(((crate::interface::box_backing() * 100.0).round() as u32) << 24);
     let view_px = windows.single().map_or(Vec2::new(1280.0, 720.0), |w| Vec2::new(w.width(), w.height()));
     let safe_insets = safe.as_deref().copied().unwrap_or_default();
     let frame_key = (view_px, safe_insets, crate::interface::unit_scale());
@@ -441,7 +465,7 @@ fn draw(
                 load_faces(data.as_deref(), &mut images, bc_supported(formats.as_deref()))
             });
             let icon = view.icon.as_deref().and_then(|p| data.as_deref().and_then(|d| texture(p, d, &mut images, bc_supported(formats.as_deref())))).map(|t| t.0);
-            spawn_box(&mut commands, view, faces, panel.selected, icon, frame_key);
+            spawn_box(&mut commands, view, faces, panel.selected, icon, frame_key, &mut images);
         }
         shown.clone_from(&panel.view);
         return;
