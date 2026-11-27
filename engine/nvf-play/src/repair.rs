@@ -1079,7 +1079,7 @@ mod tests {
     /// How many separate pieces `d`'s lines make at `scale` pixels a unit (pixels lit at least
     /// half, joined side by side).
     fn pieces(d: &Drawing, scale: f32) -> usize {
-        let shape = crate::vector_hud::Shape { size: d.size, parts: d.parts.clone(), glow: false, wrap: false };
+        let shape = crate::vector_hud::Shape { glow: false, ..crate::vector_hud::Shape::new(d.size, d.parts.clone()) };
         let mask = crate::vector_hud::ink(&shape, scale);
         let (w, h) = (mask.width, mask.height);
         let mut seen = vec![false; w * h];

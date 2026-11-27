@@ -154,7 +154,7 @@ impl Drawing {
                 p
             })
             .collect();
-        Shape { size: self.size + 2.0 * d, parts, glow: true, wrap: false }
+        Shape::new(self.size + 2.0 * d, parts)
     }
 }
 

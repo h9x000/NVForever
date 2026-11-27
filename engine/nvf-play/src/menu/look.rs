@@ -1150,7 +1150,7 @@ mod tests {
 
     #[test]
     fn the_caps_arrows_are_mirrors_and_their_shaft_meets_the_head() {
-        let shape = |d: &Drawing| crate::vector_hud::Shape { size: d.size, parts: d.parts.clone(), glow: false, wrap: false };
+        let shape = |d: &Drawing| crate::vector_hud::Shape { glow: false, ..crate::vector_hud::Shape::new(d.size, d.parts.clone()) };
         let (sell, buy) = (caps_arrow(Flow::Sell), caps_arrow(Flow::Buy));
         let (ms, mb) = (crate::vector_hud::ink(&shape(&sell), 2.0), crate::vector_hud::ink(&shape(&buy), 2.0));
         for y in 0..ms.height {
