@@ -584,7 +584,15 @@ fn draw(
 fn spawn_page(b: &mut ChildSpawnerCommands, c: &mut Ctx, l: &Layout, p: &Page, words: &Words, (n, of): (usize, usize), scroll: f32, max: f32, hover: Option<TmButton>) {
     let bright = amber(255.0);
     let (w, h) = (l.w, l.h);
-    crate::vector_menu::backing(b, EDGE_X, EDGE_Y, w - 2.0 * EDGE_X, h - 2.0 * EDGE_Y);
+    // The backing first, under the words: in vector on the frame's own pixels (its outer
+    // lines do not move with the gaps) [owner 2026-11-27, "background always ends with the
+    // lines"].
+    if c.sharp() {
+        let probe = sharp_frame(w, h, &[], w).fill(EDGE_X, EDGE_Y, w - EDGE_X, h - EDGE_Y);
+        crate::vector_menu::spawn_backing(b, &probe, 0.0, 0.0, c.images);
+    } else {
+        crate::vector_menu::backing(b, EDGE_X, EDGE_Y, w - 2.0 * EDGE_X, h - 2.0 * EDGE_Y);
+    }
     let right = w - EDGE_X;
     // Sharp: the frame as one drawing (`sharp_frame`) once its gaps are known; Original:
     // the game's pieces.

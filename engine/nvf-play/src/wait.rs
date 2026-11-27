@@ -1081,8 +1081,7 @@ fn spawn_menu(commands: &mut Commands, images: &mut Assets<Image>) {
         let fill = if sharp { Color::NONE } else { SHADE };
         root.spawn((Node { width: u(BOX.x), height: u(BOX.y), ..default() }, BackgroundColor(fill))).with_children(|b| {
             if sharp {
-                crate::vector_menu::backing(b, 0.0, 0.0, BOX.x * IU, BOX.y * IU);
-                crate::vector_menu::spawn(b, &sharp_frame(), 0.0, 0.0, hud(), images);
+                crate::vector_menu::spawn(b, &sharp_frame().fill(0.0, 0.0, BOX.x * IU, BOX.y * IU), 0.0, 0.0, hud(), images);
                 crate::vector_menu::spawn(b, &sharp_slider(), 0.0, 0.0, hud(), images);
             } else {
                 // The outline: a line along the top and the bottom, and at each corner a

@@ -473,8 +473,11 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
     root.spawn(main).with_children(|p| {
         // The boxes' backing in place of the original's soft picture behind ([`backings`]):
         // each half's frame, and the area from under the footers to the bottom bracket.
-        for (x, y, w, h) in backings(sharp) {
-            vector_menu::backing(p, x, y, w, h);
+        // In vector each is baked with its frame's lines instead, so it ends where they end.
+        if !sharp {
+            for (x, y, w, h) in backings(sharp) {
+                vector_menu::backing(p, x, y, w, h);
+            }
         }
         for side in [Side::Player, Side::Container] {
             half(p, &mut c, m, side);
@@ -482,7 +485,10 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &MenuModel, note: Option<&str>,
         // The bottom bracket: a line with a short line fading up at each end (Sharp: square
         // ends, one drawing).
         if sharp {
-            c.vector(p, &bottom_bracket(), LEFT_X, BRACKET_Y + LINE - STUB, bright);
+            // With the area's backing from under the halves' footers ([`backings`]'s third).
+            let (bx, by, bw, bh) = backings(true)[2];
+            let d = bottom_bracket(bh).fill(0.0, 0.0, bw, bh);
+            c.vector(p, &d, bx, by, bright);
         } else {
             c.line(p, LEFT_X, BRACKET_Y, MAIN.x, THICK, bright);
             for x in [LEFT_X, LEFT_X + MAIN.x - THICK] {
@@ -557,8 +563,8 @@ pub fn half_frame(line_x: f32, line_len: f32) -> Drawing {
 /// The bottom bracket in vector, from its stubs' top: a line along the menu's width with a
 /// [`STUB`] up at each end, the line's top on [`BRACKET_Y`] when drawn [`STUB`] less
 /// [`LINE`] above it.
-pub fn bottom_bracket() -> Drawing {
-    Drawing::new(MAIN.x, STUB).bracket_up(0.0, MAIN.x, STUB)
+pub fn bottom_bracket(h: f32) -> Drawing {
+    Drawing::new(MAIN.x, h).bracket_up(0.0, MAIN.x, h)
 }
 
 /// A heading's ◀ or ▶ in vector: the kit's triangle in the pictures' 17.5 by 35.
@@ -595,7 +601,7 @@ fn half(p: &mut ChildSpawnerCommands, c: &mut Ctx, m: &MenuModel, side: Side) {
     let (left_arrow, title_x, right_arrow, (line_x, line_len)) = heading(title_w);
     // The heading (Sharp: the whole frame, footer too, one drawing).
     if sharp {
-        c.vector(p, &half_frame(line_x, line_len), x0, TOP, bright);
+        c.vector(p, &half_frame(line_x, line_len).fill(0.0, 0.0, HALF_W, FOOTER_Y + LINE), x0, TOP, bright);
     } else {
         c.fade(p, x0, TOP, false, bright);
         c.line(p, x0, TOP, 25.0, THICK, bright);
@@ -927,11 +933,14 @@ pub(super) fn spawn_quantity_reusing(root:&mut ChildSpawnerCommands,q:&Quantity,
     let boxed = Node { width: crate::interface::u(Q_BOX.x), height: crate::interface::u(Q_BOX.y), ..default() };
     let sharp = vector_menu::on();
     root.spawn((boxed, FocusPolicy::Block)).with_children(|b| {
-        // The boxes' backing, sharp edged, in both looks ([`backings`]).
-        vector_menu::backing(b, 0.0, 0.0, Q_BOX.x, Q_BOX.y);
+        // The box's backing, sharp edged, over its frame only, as every box's ([`backings`]):
+        // in vector baked with the frame's lines.
+        if !sharp {
+            vector_menu::backing(b, Q_IN.x, Q_IN.y, Q_W, Q_BOTTOM + THICK);
+        }
         b.spawn(at(Q_IN.x, Q_IN.y, Q_W, Q_BOTTOM + THICK)).with_children(|p| {
             if sharp {
-                c.vector(p, &quantity_frame(), 0.0, 0.0, bright);
+                c.vector(p, &quantity_frame().fill(0.0, 0.0, Q_W, Q_BOTTOM + LINE), 0.0, 0.0, bright);
             } else {
                 for (y, up) in [(0.0, false), (Q_BOTTOM, true)] {
                     c.line(p, 0.0, y, Q_W, THICK, bright);
@@ -1143,7 +1152,7 @@ mod tests {
             assert_eq!(bottom.1 + bottom.3, BRACKET_Y + thick);
         }
         // The bracket drawn STUB less LINE above BRACKET_Y has its line's top on BRACKET_Y.
-        let b = rects(&bottom_bracket());
+        let b = rects(&bottom_bracket(STUB));
         assert_eq!(b[0], [0.0, STUB - LINE, MAIN.x, STUB]);
         assert_eq!((b[1][1], b[1][3], b[2][2]), (0.0, STUB, MAIN.x));
     }

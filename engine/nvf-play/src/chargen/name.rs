@@ -214,9 +214,23 @@ pub fn spawn(root: &mut ChildSpawnerCommands, m: &NameMenu, c: &mut Ctx) {
     let bright = amber(255.0);
     let size = m.size();
     root.spawn(Node { width: u(size.x), height: u(size.y), ..default() }).with_children(|p| {
-        crate::vector_menu::backing(p, 0.0, 0.0, size.x, size.y);
-        c.top_bracket(p, 0.0, 0.0, size.x, TOP_CORNER, bright);
-        c.bottom_bracket(p, 0.0, size.y - THICK, size.x, bright);
+        if c.sharp() {
+            // Both brackets and the backing in one drawing, the backing on their pixels.
+            let (w, h, k) = (size.x, size.y, crate::chargen::draw::CORNER);
+            let d = crate::vector_menu::Drawing::new(w, h)
+                .hline(0.0, w, 0.0)
+                .vline(0.0, 0.0, TOP_CORNER)
+                .vline_left(w, 0.0, TOP_CORNER)
+                .hline_up(0.0, w, h)
+                .vline(0.0, h - k, h)
+                .vline_left(w, h - k, h)
+                .fill(0.0, 0.0, w, h);
+            c.drawing(p, &d, 0.0, 0.0, bright);
+        } else {
+            crate::vector_menu::backing(p, 0.0, 0.0, size.x, size.y);
+            c.top_bracket(p, 0.0, 0.0, size.x, TOP_CORNER, bright);
+            c.bottom_bracket(p, 0.0, size.y - THICK, size.x, bright);
+        }
         c.text(p, Which::Glow, &m.prompt, size.x / 2.0, PROMPT_Y, Align::Centre, bright);
         // The name, each line centred, the whole in the middle of the box's height (a
         // script's text wraps at the box's width less the margins [hypothesis]).

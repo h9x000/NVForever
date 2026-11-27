@@ -35,8 +35,6 @@ use nvf_assets::GameData;
 
 /// The dark band's width, centred on the screen.
 const BAND_WIDTH: f32 = 1080.0;
-/// The safe zone at each edge [documented: Fallout_default.ini `iSafeZoneY`, hud.md §3].
-const CROP_Y: f32 = 15.0;
 /// The line starts this far into the band and wraps this much narrower than it.
 const TEXT_IN: f32 = 60.0;
 /// The band reaches this far above the line's top (less 5) and is this much taller.
@@ -68,10 +66,12 @@ const CHOICE_PAD: f32 = 20.0;
 const ARROW: Vec2 = Vec2::new(32.0, 16.0);
 const MARKER_WIDTH: f32 = 6.0;
 const MARKER_X: f32 = 12.0;
-/// The name: this far left of the safe zone's right edge, and its top this far under the
-/// safe zone's top (with the safe zone counted twice, as the file does).
-const NAME_RIGHT: f32 = 50.0;
-const NAME_TOP: f32 = 170.0;
+/// The speaker's name and the Goodbye hint stand this far over the box's top line (their
+/// letters' foot), the name from the box's left end, the hint to its right end [design:
+/// owner 2026-11-27, "align the NPC name to the start of the box and a small space above
+/// it", "align the tab good bye prompt to the top end of the box - same spacing as the NPC
+/// name"].
+const OVER_BOX: f32 = 12.0;
 /// The thickness of every line [documented: menus\globals.xml, on a PC].
 const THICK: f32 = 2.0;
 
@@ -80,8 +80,6 @@ const THICK: f32 = 2.0;
 /// The height of a line of font 6, and how far its letters stand under its top.
 const LINE: f32 = 38.0;
 const TEXT_BASE: f32 = 23.3;
-/// How far font 7's letters stand under its top.
-const NAME_BASE: f32 = 19.5;
 /// The choices stand this much higher in the list than the file puts them.
 const LIFT: f32 = 7.2;
 /// The tallest the list grows before it scrolls [hypothesis, §3].
@@ -109,23 +107,6 @@ pub fn goodbye_hint() -> String {
     let at = crate::pad::at_menu(fnv_game::game::menus::DIALOGUE);
     format!("{} Goodbye", crate::pad::hint_bracketed(&[KeyCode::Tab], at))
 }
-/// The hint's backing (the band's shade, flush against the band's left edge) reaches this
-/// far left of the words and this far above and below their ink (the pictures of their
-/// glyphs); the words' right end stands as far from the band [design].
-const HINT_PAD_X: f32 = 10.0;
-const HINT_PAD_Y: f32 = 8.0;
-/// Where the screen has no room at the side, the words stand under the bottom bracket in a
-/// strip of the band: this much clear room between their ink and the bracket's line, and
-/// between their ink and the band's lower edge, the band growing under the bracket as far
-/// as that takes; their left end is this far in from the band's edge (as the line of text
-/// starts) [design].
-const HINT_CLEAR: f32 = 15.0;
-const HINT_IN: f32 = TEXT_IN;
-/// How far the words' ink reaches above and below their baseline when the font has no
-/// pictures (the stand-in text): a capital's height in font 6, and nothing below
-/// [design].
-const STAND_IN_INK: (f32, f32) = (17.0, 0.0);
-
 /// The settings page's "Goodbye hint" switch (key `dialogue-goodbye-hint`): on by
 /// default [owner, list 5 item 62]; off hides the words, their backing and the narrow screens' strip; a tall list moves back down, Tab still says goodbye.
 #[derive(Resource, Debug, Clone, Copy, PartialEq, Eq)]
@@ -313,77 +294,28 @@ fn choice_heights(lines: &[Vec<Line>]) -> Vec<f32> {
     lines.iter().map(|l| text_height(l.len().max(1)) + CHOICE_PAD).collect()
 }
 
-/// The safe zone at the sides: as the height's in a 4:3 screen, narrower in units on a
-/// wider one [hypothesis, §3].
-fn crop_x(width: f32) -> f32 {
-    CROP_Y * 1280.0 / width
-}
-
-/// How far the pictures of `line`'s glyphs reach above and below the baseline they stand
-/// on: the greatest ascent, and the greatest of height less ascent (the glyph's own
-/// numbers, `fnv_font::Glyph`); [`STAND_IN_INK`] where none is drawn.
-fn glyph_ink(line: &Line, font: &Font) -> (f32, f32) {
-    let drawn: Vec<_> = line.glyphs.iter().map(|p| font.bitmap_glyph(p)).filter(|g| g.drawn()).collect();
-    if drawn.is_empty() {
-        return STAND_IN_INK;
-    }
-    let up = drawn.iter().map(|g| g.ascent).fold(f32::MIN, f32::max);
-    let down = drawn.iter().map(|g| g.height - g.ascent).fold(f32::MIN, f32::max);
-    (up.max(0.0), down.max(0.0))
-}
-
-/// How much the band grows under its bottom bracket for words whose ink is `ink`: what the
-/// ink and [`HINT_CLEAR`] above and below it need beyond the band's own strip there.
-fn hint_room(ink: (f32, f32)) -> f32 {
-    (ink.0 + ink.1 + 2.0 * HINT_CLEAR - (LIST_BAND_DOWN - THICK)).max(0.0)
-}
-
-/// Whether "[Tab] Goodbye", `words` wide, stands left of the band with its backing inside
-/// the safe zone.
-fn hint_at_side(words: f32, width: f32, band_x: f32) -> bool {
-    band_x - HINT_PAD_X - words - HINT_PAD_X >= crop_x(width)
-}
-
-/// Where "[Tab] Goodbye" stands, its letters on `base`, and its backing; `ink` is the words'
-/// [`glyph_ink`]. At the band's side: the words' right end [`HINT_PAD_X`] from the band's
-/// edge, their ink centred on the bottom bracket's line, on a backing flush against the
-/// band. Else (the screen is too narrow for that: it depends on the screen's width and the
-/// words', not on one aspect) inside the band, in the strip under the bottom bracket that
-/// [`hint_room`] makes tall enough, [`HINT_IN`] from the band's left edge (kept inside the
-/// safe zone), the ink centred in the strip: [`HINT_CLEAR`] clear of the bracket's line and
-/// corner, under the choices and the scroll bar [design].
-fn hint_place(line: Line, words: f32, ink: (f32, f32), width: f32, band_x: f32, bottom_line: f32) -> (Placed, Option<Area>) {
-    let (up, down) = ink;
-    if hint_at_side(words, width, band_x) {
-        let x = band_x - HINT_PAD_X - words;
-        let base = bottom_line + THICK / 2.0 + (up - down) / 2.0;
-        let back = [x - HINT_PAD_X, base - up - HINT_PAD_Y, words + 2.0 * HINT_PAD_X, up + down + 2.0 * HINT_PAD_Y];
-        return (Placed { x, base, line }, Some(back));
-    }
-    let right = band_x + BAND_WIDTH - HINT_IN - words;
-    let x = (band_x + HINT_IN).min(right).max(crop_x(width));
-    let strip = LIST_BAND_DOWN - THICK + hint_room(ink);
-    let base = bottom_line + THICK + (strip - up - down) / 2.0 + up;
-    (Placed { x, base, line }, None)
-}
-
 /// `hint`: whether the "Goodbye hint" switch is on.
 #[allow(clippy::too_many_arguments)]
 pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: bool, body: &Font, name_font: &Font, glyphs: &crate::pad::PadGlyphs) -> Layout {
     let band_x = (width - BAND_WIDTH) / 2.0;
-    let name = Some(view.speaker.trim()).filter(|s| !s.is_empty()).map(|s| {
-        let line = name_font.lines(s, None).remove(0);
-        let right = width - 2.0 * crop_x(width) - NAME_RIGHT;
-        Placed { x: right - line.width, base: 2.0 * CROP_Y + NAME_TOP + NAME_BASE, line }
-    });
-    let mut out = Layout { name, band: None, text: Vec::new(), list: None, hint: None, hint_back: None, first: 0 };
+    // The name over the box's (or the line's) left end ([`OVER_BOX`]), its letters' start on it.
+    let name_line = Some(view.speaker.trim()).filter(|s| !s.is_empty()).map(|s| name_font.lines(s, None).remove(0));
+    let name_at = |line: Line, left: f32, top: f32| Placed { x: left - lead(&line, name_font), base: top - OVER_BOX, line };
+    let mut out = Layout { name: None, band: None, text: Vec::new(), list: None, hint: None, hint_back: None, first: 0 };
     if view.choices.is_empty() {
         let Some(text) = view.line.as_deref().map(str::trim).filter(|t| !t.is_empty()) else { return out };
         let lines = body.lines(text, Some(BAND_WIDTH - 2.0 * TEXT_IN));
         let height = text_height(lines.len());
         let top = centred(height, 0.0);
         out.band = Some([band_x, top - TEXT_BAND_UP, BAND_WIDTH, height + TEXT_BAND_MORE]);
-        out.text = lines.into_iter().enumerate().map(|(i, line)| Placed { line, x: band_x + TEXT_IN, base: top + TEXT_BASE + LINE * i as f32 }).collect();
+        // Each line centred on the band, as the HUD's subtitles are [design: owner 2026-11-27,
+        // "make sure subtitles are always centered"]; the name over the first line's capitals
+        // from the widest line's start.
+        let middle = band_x + BAND_WIDTH / 2.0;
+        out.text = lines.into_iter().enumerate().map(|(i, line)| Placed { x: middle - line.width / 2.0, base: top + TEXT_BASE + LINE * i as f32, line }).collect();
+        let left = out.text.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        let cap_top = out.text.first().map_or(top, |t| t.base - rise(body));
+        out.name = name_line.map(|l| name_at(l, left, cap_top));
         return out;
     }
 
@@ -393,12 +325,11 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     let heights = choice_heights(&lines);
     let (first, end) = window(first, selected, &heights);
     let height = list_room(&heights).max(MIN_LIST);
-    // The hint's own words, and the room under the band they need where they stand in it.
+    // The hint's words; they stand over the box (no room under it).
     let hint_text = hint_shown(view, hint).then(goodbye_hint);
     let hint_line = hint_text.as_deref().map(|t| body.lines(t, None).remove(0));
-    let ink = hint_line.as_ref().map_or(STAND_IN_INK, |l| glyph_ink(l, body));
     let words = hint_text.as_deref().map_or(0.0, |t| crate::pad::hint_width_font(body, t, glyphs));
-    let room = hint_text.as_deref().map_or(0.0, |_| if hint_at_side(words, width, band_x) { 0.0 } else { hint_room(ink) });
+    let room = 0.0;
     let top = centred(height, room);
     let mut y = top - LIFT;
     let mut choices = Vec::new();
@@ -427,11 +358,27 @@ pub fn layout(view: &MenuView, first: usize, selected: usize, width: f32, hint: 
     out.band = Some([band_x, top_line - LIST_BAND_UP, BAND_WIDTH, bottom_line - top_line + LIST_BAND_UP + LIST_BAND_DOWN + room]);
     out.list = Some(ListPlace { area: [list_x, top, LIST_WIDTH, height], top_line, bottom_line, bracket_x: list_x + BRACKET_IN, bracket_width: LIST_WIDTH, choices, scroll });
     out.first = first;
+    let (box_x, box_w) = (list_x + BRACKET_IN, LIST_WIDTH);
+    out.name = name_line.map(|l| name_at(l, box_x, top_line));
+    // The hint over the box's right end, on the name's line.
     if let Some(line) = hint_line {
-        let (placed, back) = hint_place(line, words, ink, width, band_x, bottom_line);
-        (out.hint, out.hint_back) = (Some(placed), back);
+        out.hint = Some(Placed { x: box_x + box_w - words, base: top_line - OVER_BOX, line });
     }
     out
+}
+
+/// How far a line's first picture starts after its place (the game font's room before it);
+/// nothing for a font without pictures.
+fn lead(line: &Line, font: &Font) -> f32 {
+    line.glyphs.first().map_or(0.0, |p| font.bitmap_glyph(p).before)
+}
+
+/// How far a font's capitals rise over their line: its 'H', else three fifths of its size.
+fn rise(font: &Font) -> f32 {
+    match font.glyph(b'H').ascent {
+        a if a > 0.0 => a,
+        _ => font.size * 0.6,
+    }
 }
 
 // ---- the game's fonts and pictures ---------------------------------------------------
@@ -472,15 +419,6 @@ pub(crate) fn load_kit(data: Option<&GameData>, images: &mut Assets<Image>, bc: 
 }
 
 // ---- drawing ---------------------------------------------------------------------------
-
-/// A drawing's part moved by `by` units.
-fn shifted(mut part: crate::vector_hud::Part, by: Vec2) -> crate::vector_hud::Part {
-    part.form = match part.form {
-        crate::vector_hud::Form::Rect(r) => crate::vector_hud::Form::Rect(Rect::from_corners(r.min + by, r.max + by)),
-        crate::vector_hud::Form::Poly(v) => crate::vector_hud::Form::Poly(v.into_iter().map(|q| q + by).collect()),
-    };
-    part
-}
 
 pub struct DialogueMenuPlugin;
 
@@ -556,18 +494,19 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
         // conversation box goes outside the line limit - fix it and remove the box for the
         // tab goodbye prompt", "remove the box from subtitles - box should be only behind the
         // interaction boxes that have lines around their edges"].
-        if let Some(list) = &l.list {
-            let (x, y) = (list.bracket_x, list.top_line);
-            crate::vector_menu::backing(s, x, y, list.bracket_width, list.bottom_line + THICK - y);
-        }
+        // (Drawn with the brackets below: in vector baked with their lines, so it ends where
+        // they end.)
+        // The sharp lines' start shift (`VectorFace::shift`) taken back where words are set by
+        // their ink: the name's start on the box's, the hint's end on it, the spoken line centred.
+        let shift = |f: &Face| f.vector.as_ref().map_or(0.0, |v| v.shift);
         if let Some(n) = &l.name {
-            set_line(s, &kit.name, &n.line, n.x, n.base, bright);
+            set_line(s, &kit.name, &n.line, n.x - shift(&kit.name), n.base, bright);
         }
         if let Some(hint) = &l.hint {
-            crate::pad::set_hint(s, &kit.body, &goodbye_hint(), hint.x, hint.base, bright, glyphs);
+            crate::pad::set_hint(s, &kit.body, &goodbye_hint(), hint.x - shift(&kit.body), hint.base, bright, glyphs);
         }
         for t in &l.text {
-            set_line(s, &kit.body, &t.line, t.x, t.base, bright);
+            set_line(s, &kit.body, &t.line, t.x - shift(&kit.body), t.base, bright);
         }
         if touch && view.choices.is_empty() {
             if let Some([x,y,w,h]) = l.band {
@@ -583,19 +522,20 @@ fn spawn_menu_on(commands: &mut Commands, view: &MenuView, l: &Layout, kit: &Kit
             // joined, with the scroll bar's arrows and marker (`crate::vector_menu`).
             let (x0, y0) = (bx, list.top_line);
             let h = list.bottom_line + THICK - y0;
-            let mut d = crate::vector_menu::Drawing::new(bw, h).bracket_down(0.0, bw, 0.0).bracket_up(0.0, bw, h);
+            let d = crate::vector_menu::Drawing::new(bw, h).bracket_down(0.0, bw, 0.0).bracket_up(0.0, bw, h).fill(0.0, 0.0, bw, h);
+            crate::vector_menu::spawn(s, &d, x0, y0, bright, images);
+            // The scroll bar a drawing of its own: it stands left of the brackets, outside
+            // their drawing's box, which cut its arrows [owner 2026-11-27, "part of the arrow is
+            // cut out"].
             if let Some(bar) = &list.scroll {
                 let [ux, uy, uw, _] = bar.up;
                 let [_, dy, _, dh] = bar.down;
                 let [_, my, _, mh] = bar.marker;
-                let track = (uy, dy + dh);
-                let sb = crate::vector_menu::scrollbar(uw, track.1 - track.0, Some((my - uy - crate::vector_menu::scroll_arrow(uw).1, mh)));
-                for part in sb.parts {
-                    d.parts.push(shifted(part, Vec2::new(ux - x0, track.0 - y0)));
-                }
+                let sb = crate::vector_menu::scrollbar(uw, dy + dh - uy, Some((my - uy - crate::vector_menu::scroll_arrow(uw).1, mh)));
+                crate::vector_menu::spawn(s, &sb, ux, uy, bright, images);
             }
-            crate::vector_menu::spawn(s, &d, x0, y0, bright, images);
         } else {
+        crate::vector_menu::backing(s, bx, list.top_line, bw, list.bottom_line + THICK - list.top_line);
         for (y, fade, ends_y) in [(list.top_line, &kit.fade_down, list.top_line), (list.bottom_line, &kit.fade_up, list.bottom_line + THICK - BRACKET_ENDS)] {
             s.spawn((at(bx, y, bw, THICK), BackgroundColor(bright)));
             for x in [bx, bx + bw - THICK] {
@@ -784,159 +724,45 @@ mod tests {
         crate::pad::PadGlyphs::default()
     }
 
-    /// A font of the test's own numbers: the letters of the hint are pictures 10 wide (as
-    /// 17 on with the 7 after them, so the words are as wide as in `font`) whose top stands
-    /// 24 above their baseline and which are 24 high, except the brackets (top 40 above, 52 high:
-    /// they reach 12 below) and "y" (top 17 above, 29 high: it reaches 12 below).
-    fn pictured() -> Font {
-        let mut f = font(34.0);
-        let glyph = |ascent: f32, height: f32| fnv_font::Glyph { uv: [0.0, 0.0, 1.0, 1.0], width: 10.0, height, before: 0.0, after: 7.0, ascent };
-        for c in "TabGodye".bytes() {
-            f.glyphs[c as usize] = glyph(24.0, 24.0);
-        }
-        f.glyphs[b'[' as usize] = glyph(40.0, 52.0);
-        f.glyphs[b']' as usize] = glyph(40.0, 52.0);
-        f.glyphs[b'y' as usize] = glyph(17.0, 29.0);
-        f
-    }
-
-    fn lay_with(v: &MenuView, width: f32, hint: bool, body: &Font) -> Layout {
-        layout(v, 0, 0, width, hint, body, &font(36.0), &no_glyphs())
-    }
-
-    /// The hint's ink: left, top, right, bottom, from the numbers `up` above and `down`
-    /// below its baseline.
-    fn ink_box(h: &Placed, up: f32, down: f32) -> [f32; 4] {
-        [h.x, h.base - up, h.x + h.line.width, h.base + down]
-    }
-
-    fn meets(a: [f32; 4], b: Area) -> bool {
-        a[0] < b[0] + b[2] && b[0] < a[2] && a[1] < b[1] + b[3] && b[1] < a[3]
-    }
-
     fn goodbye(labels: &[&str]) -> MenuView {
         MenuView { goodbye: true, ..choices(labels) }
     }
 
     #[test]
-    fn the_hint_ink_is_read_from_the_glyphs() {
-        let line = pictured().lines(GOODBYE_HINT, None).remove(0);
-        // "[" and "]" reach 40 above and 12 below; "y" 12 below.
-        assert_eq!(glyph_ink(&line, &pictured()), (40.0, 12.0));
-        // A font with no pictures: the stand-in's numbers.
-        assert_eq!(glyph_ink(&font(34.0).lines(GOODBYE_HINT, None).remove(0), &font(34.0)), STAND_IN_INK);
-        // 52 of ink and 15 clear above and below it need 82 under the line, 54 more than the
-        // band has there; the stand-in's 17 need 19 more.
-        assert_eq!(hint_room((40.0, 12.0)), 54.0);
-        assert_eq!(hint_room(STAND_IN_INK), 19.0);
-        assert_eq!(hint_room((5.0, 0.0)), 7.0);
-        assert_eq!(hint_room((0.0, 0.0)), 2.0);
-    }
-
-    #[test]
-    fn the_goodbye_hint_stands_left_of_the_band_on_a_backing() {
-        let mut v = choices(&["What happened here?", "Goodbye."]);
-        assert!(lay(&v, 1707.0, true).hint.is_none(), "no hint without a Goodbye choice");
-        v.goodbye = true;
-        // With the tall, descending glyphs: ink 40 above the baseline, 12 below.
-        let body = pictured();
-        let l = lay_with(&v, 1707.0, true, &body);
-        let hint = l.hint.expect("the hint");
-        let (band, list, back) = (l.band.unwrap(), l.list.unwrap(), l.hint_back.expect("its backing"));
-        // The words end HINT_PAD_X from the band; their ink (28 high) is centred on the
-        // bottom bracket's line, 14 above the baseline.
-        assert!((hint.x + hint.line.width - (band[0] - HINT_PAD_X)).abs() < 0.01);
-        assert!((hint.base - 14.0 - (list.bottom_line + THICK / 2.0)).abs() < 0.01);
-        // The backing is flush against the band and reaches 10 and 8 round the ink.
-        let ink = ink_box(&hint, 40.0, 12.0);
-        assert!((back[0] + back[2] - band[0]).abs() < 0.01);
-        assert!((ink[0] - back[0] - 10.0).abs() < 0.01 && (ink[1] - back[1] - 8.0).abs() < 0.01);
-        assert!((back[1] + back[3] - ink[3] - 8.0).abs() < 0.01);
-        assert!(back[0] >= crop_x(1707.0));
-        // The band is the height it is without the hint.
-        assert_eq!(l.band, lay_with(&v, 1707.0, false, &body).band);
-        // A font with no pictures: the stand-in's 17 above, none below, centred the same way.
-        let l = lay(&v, 1707.0, true);
-        let hint = l.hint.expect("the hint");
-        assert!((hint.base - 8.5 - (l.list.unwrap().bottom_line + THICK / 2.0)).abs() < 0.01);
-    }
-
-    #[test]
-    fn the_goodbye_hint_moves_into_the_band_where_the_side_is_too_narrow() {
-        let v = goodbye(&["One", "Two", "Goodbye."]);
-        // 1280 units wide is 4:3 (1024x768 too); 1200 is 5:4; 1100 narrower. The band's left
-        // edge is 100, 60 and 10 from the screen's, the words 218 wide: no room at the side.
-        for width in [1280.0, 1200.0, 1100.0] {
-            for (body, up, down, room) in [(pictured(), 40.0, 12.0, 54.0), (font(34.0), 17.0, 0.0, 19.0)] {
-                let l = lay_with(&v, width, true, &body);
-                let hint = l.hint.expect("the hint");
-                let (band, list) = (l.band.unwrap(), l.list.unwrap());
-                assert!(l.hint_back.is_none(), "width {width}: no backing inside the band");
-                let [left, top, right, bottom] = ink_box(&hint, up, down);
-                // The strip under the bracket's line is 28 + room high, the ink centred in it:
-                // 15 clear above and below.
-                assert!((band[3] - lay_with(&v, width, false, &body).band.unwrap()[3] - room).abs() < 0.01, "width {width}: the band grew by {room}");
-                assert!((top - (list.bottom_line + THICK) - HINT_CLEAR).abs() < 0.01, "width {width}: clear of the bracket");
-                assert!((band[1] + band[3] - bottom - HINT_CLEAR).abs() < 0.01, "width {width}: clear of the band's bottom");
-                // HINT_IN from the band's left edge (or the safe zone's), inside the safe zone.
-                assert!((left - (band[0] + HINT_IN).max(crop_x(width))).abs() < 0.01, "width {width}");
-                assert!(left >= crop_x(width) && right <= width - crop_x(width), "width {width}: inside the safe zone");
-                assert!(band[1] + band[3] <= 960.0 - CROP_Y, "width {width}: the band ends inside the safe zone");
-            }
-        }
-    }
-
-    #[test]
-    fn the_goodbye_hint_never_covers_a_choice_or_the_scroll_bar() {
-        // Six long choices scroll (the list at its tallest); 5:4, 4:3, wider screens, the
-        // selection at both ends, the tall glyphs and the stand-in.
-        let long = "Tell me everything you know about the people who attacked the town last night";
-        let v = goodbye(&[long, long, long, long, long, "Goodbye."]);
-        for (body, up, down) in [(pictured(), 40.0, 12.0), (font(34.0), 17.0, 0.0)] {
-            for width in [1200.0, 1280.0, 1440.0, 1707.0, 2560.0] {
-                for selected in [0, 5] {
-                    let l = layout(&v, 0, selected, width, true, &body, &font(36.0), &no_glyphs());
-                    let hint = l.hint.expect("the hint");
-                    let ink = ink_box(&hint, up, down);
-                    let (band, list) = (l.band.unwrap(), l.list.unwrap());
-                    assert!(list.scroll.is_some());
-                    for c in &list.choices {
-                        assert!(!meets(ink, c.area), "width {width}: over choice {}", c.index);
-                    }
-                    let bar = list.scroll.as_ref().unwrap();
-                    for a in [bar.up, bar.down, bar.marker] {
-                        assert!(!meets(ink, a), "width {width}: over the scroll bar");
-                    }
-                    if let Some(back) = l.hint_back {
-                        assert!(!meets(ink, band) && back[0] >= crop_x(width), "width {width}: the side's backing is outside the band");
-                    }
-                    assert!(ink[0] >= crop_x(width) && ink[2] <= width - crop_x(width), "width {width}: inside the safe zone");
-                    assert!(band[1] + band[3] <= 960.0 - CROP_Y, "width {width}: the band ends inside the safe zone");
-                }
-            }
-        }
-    }
-
-    #[test]
-    fn the_goodbye_hint_switch_changes_the_words_and_where_they_need_room() {
+    fn the_name_and_the_hint_stand_over_the_box_at_its_ends() {
         let v = goodbye(&["What happened here?", "Goodbye."]);
-        // At the side the words and their backing are all that change.
-        let (on, off) = (lay(&v, 1707.0, true), lay(&v, 1707.0, false));
-        assert!(on.hint.is_some() && on.hint_back.is_some());
-        assert!(off.hint.is_none() && off.hint_back.is_none());
-        assert_eq!((on.band, on.list, on.name), (off.band, off.list, off.name));
-        // Where they stand in the band, a short list stays and the band shrinks to its own.
-        let (on, off) = (lay(&v, 1280.0, true), lay(&v, 1280.0, false));
-        assert!(on.hint.is_some() && off.hint.is_none());
-        assert_eq!((on.list.as_ref(), on.name.as_ref()), (off.list.as_ref(), off.name.as_ref()));
-        assert!(on.band.unwrap()[3] > off.band.unwrap()[3]);
-        // But a list at the view's foot (the Subtitle Position row at 0%) moves up for the
-        // room: by the room (19 for the stand-in's ink).
-        let room = hint_room(STAND_IN_INK);
-        let shift = centred_at(0.0, MAX_LIST, 0.0, 1.0) - centred_at(0.0, MAX_LIST, room, 1.0);
-        assert!((shift - room).abs() < 1e-3, "moved up by {shift}");
-        // Higher up there is room enough: it stays.
-        assert_eq!(centred_at(0.25, MAX_LIST, 0.0, 1.0), centred_at(0.25, MAX_LIST, room, 1.0));
+        for width in [1280.0, 1707.0] {
+            let l = lay(&v, width, true);
+            let list = l.list.as_ref().unwrap();
+            let (name, hint) = (l.name.as_ref().unwrap(), l.hint.as_ref().unwrap());
+            // Both OVER_BOX over the top line, the name from the box's left end, the hint's
+            // words ending on its right end; no backing for the hint.
+            assert_eq!((name.base, hint.base), (list.top_line - OVER_BOX, list.top_line - OVER_BOX));
+            assert_eq!(name.x, list.bracket_x);
+            let words = crate::pad::hint_width_font(&font(34.0), &goodbye_hint(), &no_glyphs());
+            assert!((hint.x + words - (list.bracket_x + list.bracket_width)).abs() < 1e-3);
+            assert!(l.hint_back.is_none());
+            // The switch off: the words go, nothing else moves.
+            let off = lay(&v, width, false);
+            assert!(off.hint.is_none());
+            assert_eq!((off.list.as_ref(), off.name.as_ref()), (l.list.as_ref(), l.name.as_ref()));
+        }
+    }
+
+    #[test]
+    fn the_spoken_line_is_centred_with_the_name_over_it() {
+        let text = format!("{} {}", "a".repeat(55), "b".repeat(5));
+        let v = MenuView { speaker: "Bruce Isaac".into(), line: Some(text), choices: Vec::new(), goodbye: false };
+        let width = 960.0 * 16.0 / 9.0;
+        let l = layout(&v, 0, 0, width, true, &font(34.0), &font(36.0), &no_glyphs());
+        let middle = width / 2.0;
+        for t in &l.text {
+            assert!((t.x + t.line.width / 2.0 - middle).abs() < 1e-3, "every line centred");
+        }
+        let name = l.name.unwrap();
+        let left = l.text.iter().map(|t| t.x).fold(f32::MAX, f32::min);
+        assert_eq!(name.x, left);
+        assert!(name.base < l.text[0].base - rise(&font(34.0)), "over the first line's capitals");
     }
 
     #[test]
@@ -986,20 +812,16 @@ mod tests {
         let width = 960.0 * 16.0 / 9.0;
         let l = layout(&v, 0, 0, width, true, &font(34.0), &font(36.0), &no_glyphs());
         assert_eq!(l.text.len(), 2);
-        // The text's top at 682 (its middle a quarter up the view, the Subtitle Position
-        // row's default), its first line standing 23.3 under it, the next 38 lower.
-        assert!((l.text[0].base - 705.3).abs() < 1e-3);
-        assert!((l.text[1].base - 743.3).abs() < 1e-3);
-        // Starts 60 into the band, which is 1080 wide and centred.
+        // The text's top at 730 (its middle a fifth up the view, the Subtitle Position row's
+        // default), its first line standing 23.3 under it, the next 38 lower.
+        assert!((l.text[0].base - 753.3).abs() < 1e-3);
+        assert!((l.text[1].base - 791.3).abs() < 1e-3);
+        // The band 1080 wide and centred; each line centred on it.
         let band = l.band.unwrap();
         assert!((band[0] - (width - 1080.0) / 2.0).abs() < 1e-3);
-        assert!((l.text[0].x - band[0] - 60.0).abs() < 1e-3);
-        assert_eq!((band[1], band[3]), (637.0, 156.0));
+        assert!((l.text[0].x + l.text[0].line.width / 2.0 - width / 2.0).abs() < 1e-3);
+        assert_eq!((band[1], band[3]), (685.0, 156.0));
         assert!(l.list.is_none());
-        // The name stands right of the middle at the top, ending short of the edge.
-        let n = l.name.unwrap();
-        assert!((n.x + n.line.width - (width - 2.0 * crop_x(width) - 50.0)).abs() < 1e-3);
-        assert_eq!(n.base, 219.5);
     }
 
     #[test]
@@ -1011,25 +833,25 @@ mod tests {
         let l = layout(&v, 0, 1, 1280.0, true, &font(34.0), &font(36.0), &no_glyphs());
         let list = l.list.unwrap();
         assert_eq!(list.choices.len(), 3);
-        // The list is 250 high, its top at 595 (its middle a quarter up the view, the Subtitle
+        // The list is 250 high, its top at 643 (its middle a fifth up the view, the Subtitle
         // Position row's default) and the brackets' lines 20 above and 10 below it.
-        assert_eq!(list.area, [120.0, 595.0, 1010.0, 250.0]);
-        assert_eq!((list.top_line, list.bottom_line, list.bracket_x), (575.0, 855.0, 135.0));
+        assert_eq!(list.area, [120.0, 643.0, 1010.0, 250.0]);
+        assert_eq!((list.top_line, list.bottom_line, list.bracket_x), (623.0, 903.0, 135.0));
         // The rows: 96, 96 and 58 high, starting 7.2 above the list's top, from the right
         // of the scroll bar.
         let tops: Vec<f32> = list.choices.iter().map(|c| c.area[1]).collect();
-        assert!((tops[0] - 587.8).abs() < 1e-3 && (tops[1] - 683.8).abs() < 1e-3 && (tops[2] - 779.8).abs() < 1e-3);
+        assert!((tops[0] - 635.8).abs() < 1e-3 && (tops[1] - 731.8).abs() < 1e-3 && (tops[2] - 827.8).abs() < 1e-3);
         assert_eq!(list.choices[0].area[0], 152.0);
         assert_eq!(list.choices[0].area[2], 973.0);
         let first = &list.choices[0].lines;
-        assert!((first[0].base - (587.8 + 15.0 + 23.3)).abs() < 1e-3);
+        assert!((first[0].base - (635.8 + 15.0 + 23.3)).abs() < 1e-3);
         assert_eq!(first[0].x, 177.0);
         // The scroll bar shows because the fourth choice does not fit.
         let bar = list.scroll.unwrap();
         assert_eq!(bar.up[0], 120.0);
-        assert!((bar.up[1] + 8.0 - 626.0).abs() < 1e-3);
+        assert!((bar.up[1] + 8.0 - 674.0).abs() < 1e-3);
         // The band: 30 above and below the brackets.
-        assert_eq!(l.band.unwrap(), [100.0, 545.0, 1080.0, 340.0]);
+        assert_eq!(l.band.unwrap(), [100.0, 593.0, 1080.0, 340.0]);
     }
 
     #[test]

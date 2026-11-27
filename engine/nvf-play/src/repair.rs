@@ -687,10 +687,13 @@ fn headline_drawing(title_end: f32, v2: f32) -> Drawing {
     d.vline_left(v2 + l, 0.0, STUB).hline(v2 + 10.0, MAIN.x, 0.0).vline_left(MAIN.x, 0.0, STUB)
 }
 
-/// The bottom bracket in the kit's lines, from `STUB` over the bottom line's top edge.
-fn bottom_drawing() -> Drawing {
-    let h = STUB + vector_menu::LINE;
-    Drawing::new(MAIN.x, h).bracket_up(0.0, MAIN.x, h)
+/// The headline and the bottom bracket (its line's top on `MAIN.y`, a `STUB` up at each end) in
+/// one drawing over the box's backing, so the backing ends on both lines' pixels.
+fn box_drawing(title_end: f32, v2: f32) -> Drawing {
+    let foot = MAIN.y + vector_menu::LINE;
+    let mut d = headline_drawing(title_end, v2);
+    d.size.y = foot;
+    d.bracket_up(0.0, MAIN.x, foot).fill(0.0, 0.0, MAIN.x, foot)
 }
 
 /// A card's lines in the kit's: a line along its top and a short side down at its right.
@@ -766,8 +769,12 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
     commands.spawn((RepairRoot, crate::menu::normal_services::Rendered::new(guard,look.row.scale), Node { position_type: PositionType::Absolute, width: Val::Percent(100.0), height: Val::Percent(100.0), ..default() }, GlobalZIndex(crate::interface::TOP_MENU_Z))).with_children(|root| {
         root.spawn(node).with_children(|m| {
             let sharp = vector_menu::on();
-            // The box's backing first, under everything else (the sheet's note above).
-            vector_menu::backing(m, 0.0, 0.0, MAIN.x, MAIN.y + thick());
+            // The box's backing first, under everything else (the sheet's note above); in
+            // vector baked with the headline's and the bottom bracket's lines (`box_drawing`),
+            // so it ends where they end.
+            if !sharp {
+                vector_menu::backing(m, 0.0, 0.0, MAIN.x, MAIN.y + thick());
+            }
             // The headline: the title, the vendor's skill and the player's caps, each part
             // closed by a short side fading down [documented]. The words here and on the
             // buttons are the settings the menu files name (`sRepairServicesTitle`,
@@ -780,7 +787,7 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
             let caps = format!("{}  {}", word("sInventoryCaps"), v.caps);
             let v2 = (1010.0 - look.row.width(&caps) - 35.0).max(860.0);
             if sharp {
-                vector_menu::spawn(m, &headline_drawing(tw + 90.0, v2), 0.0, 0.0, frame_color(), images);
+                vector_menu::spawn(m, &box_drawing(tw + 90.0, v2), 0.0, 0.0, frame_color(), images);
             } else {
                 rule(m, 0.0, 0.0, 50.0, LINE);
                 rule(m, tw + 90.0, 0.0, (v2 - tw - 90.0).max(0.0), LINE);
@@ -893,9 +900,8 @@ fn spawn(commands: &mut Commands, look: &mut RepairLook, presentation:(&View,cra
                 });
             }
             // The bottom bracket: a line along 680 with short sides fading up.
-            if sharp {
-                vector_menu::spawn(m, &bottom_drawing(), 0.0, MAIN.y - STUB, frame_color(), images);
-            } else {
+            // (In vector it is drawn with the headline, `box_drawing`.)
+            if !sharp {
                 rule(m, 0.0, MAIN.y, MAIN.x, LINE);
                 rule(m, 0.0, MAIN.y - 40.0, LINE, 40.0);
                 rule(m, MAIN.x - LINE, MAIN.y - 40.0, LINE, 40.0);
@@ -1111,7 +1117,8 @@ mod tests {
         for scale in [1.125, 0.5625, 2.25] {
             // The left corner, the middle part with the side before the caps, the right corner.
             assert_eq!(pieces(&headline_drawing(213.7, 861.3), scale), 3, "{scale}");
-            assert_eq!(pieces(&bottom_drawing(), scale), 1, "{scale}");
+            // With the bottom bracket in the same drawing: its line and sides one piece more.
+            assert_eq!(pieces(&box_drawing(213.7, 861.3), scale), 4, "{scale}");
             assert_eq!(pieces(&card_drawing(), scale), 1, "{scale}");
             assert_eq!(pieces(&highlight_drawing(ROW_WIDTH + 30.0, 61.3), scale), 1, "{scale}");
         }

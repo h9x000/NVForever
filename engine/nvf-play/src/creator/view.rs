@@ -464,7 +464,8 @@ fn piece(p: &mut ChildSpawnerCommands, picture: &Option<Picture>, [x, y, w, h]: 
 fn frame(p: &mut ChildSpawnerCommands, pieces: &Pieces, panel_y: f32, panel_h: f32) {
     let color = accent(1.0);
     if crate::vector_menu::on() {
-        vector(p, sharp_frame(panel_h), 0.0, panel_y, color);
+        // With the panel's backing on the frame's own pixels.
+        vector(p, sharp_frame(panel_h).fill(0.0, 0.0, PANEL_W, panel_h), 0.0, panel_y, color);
         return;
     }
     let bottom = panel_y + panel_h - THICK;
@@ -585,7 +586,9 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
     };
     if layout.use_menu_frame {
         let wide = lines.iter().map(|l| width(&kit.body, l, 0.6)).fold(0.0, f32::max);
-        crate::vector_menu::backing(p, 28.0, 866.0, wide + 24.0, 60.0);
+        // No backing: only boxes with lines round them have one [design: owner 2026-11-27, "box
+        // should be only behind the interaction boxes that have lines around their edges"].
+        let _ = wide;
         for (k, line) in lines.iter().enumerate() {
             text(p, &kit.body, line, 40.0, 872.0 + 28.0 * k as f32, 0.6, Align::Left, bone(0.9));
         }
@@ -601,7 +604,8 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
             let hint_y = (layout.panel_y + layout.panel_h - hint_h).max(layout.safe_t);
             let line_step = 28.0 * ratio;
             let text_pad_y = 6.0 * ratio;
-            crate::vector_menu::backing(p, hint_x, hint_y, wide + 24.0, hint_h);
+            // No backing, as above.
+            let _ = (wide, hint_h);
             for (k, line) in lines.iter().enumerate() {
                 text(p, &kit.body, line, hint_x + 12.0, hint_y + text_pad_y + line_step * k as f32, hint_scale, Align::Left, bone(0.9));
             }
@@ -613,7 +617,10 @@ pub fn spawn(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout)
 /// The panel, from its left edge; the rectangles it returns are too.
 fn spawn_panel(p: &mut ChildSpawnerCommands, m: &Model, kit: &Kit, layout: Layout) -> Vec<Hit> {
     let mut hits = vec![Hit { rect: [0.0, layout.panel_y, PANEL_W, layout.panel_h], what: HitWhat::Panel }];
-    crate::vector_menu::backing(p, 0.0, layout.panel_y, PANEL_W, layout.panel_h);
+    // The backing over the frame only; in vector baked with its lines (`frame`).
+    if !crate::vector_menu::on() {
+        crate::vector_menu::backing(p, 0.0, layout.panel_y, PANEL_W, layout.panel_h);
+    }
     frame(p, &kit.pieces, layout.panel_y, layout.panel_h);
     // The title and what the look is, and what the page is for.
     text(p, &kit.head, m.title(), LEFT, layout.panel_y + 14.0, 1.0, Align::Left, bone(1.0));

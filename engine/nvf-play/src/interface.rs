@@ -420,10 +420,10 @@ pub fn box_shade() -> Color {
 
 /// Where the subtitles stand (the Subtitle Position row, 0 to 1, the bits of an `f32`): the
 /// middle of their lines that part of the view's height up from its foot, 0 the foot, 0.5 the
-/// middle, 1 the top; a quarter up by default [design: owner 2026-11-27, "make it 1-100% while
+/// middle, 1 the top; a fifth up by default [design: owner 2026-11-27, "make it 1-100% while
 /// 50% is the exact middle of the screen, 0 is bottom 100 is top spanning the whole height of
-/// the screen - set 25% as the default"].
-static SUBTITLE_PLACE: AtomicU32 = AtomicU32::new(0x3E80_0000);
+/// the screen"; then "subtitle position 20 should be the new default"].
+static SUBTITLE_PLACE: AtomicU32 = AtomicU32::new(0x3E4C_CCCD);
 
 /// The Subtitle Position row, 0 to 1.
 pub fn subtitle_place() -> f32 {
