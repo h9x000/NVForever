@@ -387,7 +387,9 @@ fn spawn_area(commands: &mut Commands, n: &QuestNotice, kit: &mut Kit, data: Opt
                     let file = if *completed { DONE_BOX_FILE } else { OPEN_BOX_FILE };
                     match kit.pictures.picture(file, data, images, bc) {
                         Some((image, rect)) => {
-                            a.spawn((at(*x, *y, *w, *h), ImageNode { rect, color: clear, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, Part(0.0)));
+                            // In vector while Sharp (`crate::vector_hud`).
+                            let shape = if *completed { crate::vector_hud::Decoration::QuestBoxDone } else { crate::vector_hud::Decoration::QuestBoxOpen };
+                            a.spawn((at(*x, *y, *w, *h), ImageNode { rect, color: clear, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image) }, Part(0.0), crate::vector_hud::Decor::new(shape)));
                         }
                         // Without the game's picture: a small square where its square is,
                         // faint when open.

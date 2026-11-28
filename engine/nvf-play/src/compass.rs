@@ -818,24 +818,55 @@ fn left_fade(x: f32) -> f32 {
 /// width, height)`. The actor ticks (also hostile and companion) stand by the original's
 /// tick box (#3310); the other marks in the map marker's box [hypothesis: the quest and
 /// player pictures laid out as the landmark's, the same 40 x 50 at y 5 in the HUD file].
-fn mark_box(mark: Mark, left: f32) -> (f32, f32, f32, f32) {
+fn mark_box(mark: Mark, left: f32, sharp: bool) -> (f32, f32, f32, f32) {
     match mark {
         Mark::Actor | Mark::Hostile | Mark::Companion => (left, TICK_TOP, TICK_SIZE, TICK_SIZE),
-        Mark::Place | Mark::Found | Mark::Quest | Mark::Player | Mark::Door => {
-            (left, LANDMARK_Y - LANDMARK_MIDDLE.y * LANDMARK_SIZE, LANDMARK_SIZE, LANDMARK_SIZE)
-        }
+        Mark::Place | Mark::Found | Mark::Quest | Mark::Player | Mark::Door => (left, landmark_top(mark, sharp), LANDMARK_SIZE, LANDMARK_SIZE),
+    }
+}
+
+/// The vector shape of a mark's picture while Sharp (`crate::vector_hud`).
+fn vector_shape(mark: Mark) -> crate::vector_hud::Decoration {
+    use crate::vector_hud::Decoration as D;
+    match mark {
+        Mark::Actor | Mark::Hostile | Mark::Companion => D::ActorTick,
+        Mark::Quest => D::QuestMark,
+        Mark::Place => D::PlaceMark,
+        Mark::Found => D::FoundMark,
+        Mark::Player => D::PlayerMark,
+        Mark::Door => D::DoorMark,
+    }
+}
+
+/// A map, quest, player or door mark's box's top in the window: while Sharp its shape's top
+/// a line's width under the letters' baseline (`crate::vector_hud::MARK_TOP`) [design: the
+/// owner's review of the vector HUD, "only location/quest markers should be on the bottom"].
+fn landmark_top(mark: Mark, sharp: bool) -> f32 {
+    if sharp {
+        crate::vector_hud::MARK_TOP - crate::vector_hud::mark_anchor(vector_shape(mark)).y
+    } else {
+        LANDMARK_Y - LANDMARK_MIDDLE.y * LANDMARK_SIZE
+    }
+}
+
+/// How far right of its box's left a mark's picture's middle stands (on the bearing).
+fn mark_middle(mark: Mark, sharp: bool) -> f32 {
+    match (mark, sharp) {
+        (_, true) => crate::vector_hud::mark_anchor(vector_shape(mark)).x,
+        (Mark::Actor | Mark::Hostile | Mark::Companion, false) => TICK_MIDDLE * TICK_SIZE,
+        _ => LANDMARK_MIDDLE.x * LANDMARK_SIZE,
     }
 }
 
 /// A mark's node's left edge in the compass window for a mark `x` right of the heading
 /// point: the tick's bar's middle, the triangle's middle on the bearing; without the
 /// game's pictures a 4-unit block's middle.
-fn mark_left(mark: Mark, x: f32, picture: bool) -> f32 {
+fn mark_left(mark: Mark, x: f32, picture: bool, sharp: bool) -> f32 {
     let x = COMPASS_HEADING + x;
-    match (mark, picture) {
-        (_, false) => x - 2.0,
-        (Mark::Actor | Mark::Hostile | Mark::Companion, true) => x - TICK_MIDDLE * TICK_SIZE,
-        _ => x - LANDMARK_MIDDLE.x * LANDMARK_SIZE,
+    if picture {
+        x - mark_middle(mark, sharp)
+    } else {
+        x - 2.0
     }
 }
 
@@ -849,14 +880,14 @@ type RiseBar = (i8, Entity);
 
 /// The above-or-below bar of a mark whose picture's box has its left edge at `left`:
 /// its left and top in the compass window.
-fn rise_bar_at(left: f32, rise: i8) -> (f32, f32) {
-    let top = LANDMARK_Y - LANDMARK_MIDDLE.y * LANDMARK_SIZE;
-    let x = left + LANDMARK_MIDDLE.x * LANDMARK_SIZE - RISE_BAR.x / 2.0;
+fn rise_bar_at(left: f32, rise: i8, mark: Mark, sharp: bool) -> (f32, f32) {
+    let top = landmark_top(mark, sharp);
+    let x = left + mark_middle(mark, sharp) - RISE_BAR.x / 2.0;
     let y = if rise > 0 { top - RISE_GAP - RISE_BAR.y } else { top + LANDMARK_SIZE + RISE_GAP };
     (x, y)
 }
 
-#[allow(clippy::too_many_arguments)]
+#[allow(clippy::too_many_arguments, clippy::type_complexity)]
 fn draw(
     mut commands: Commands,
     view: Res<CompassView>,
@@ -870,7 +901,7 @@ fn draw(
     mut art: Local<Option<Art>>,
     mut spawned: Local<Spawned>,
     tweaks: Option<Res<crate::tweaks::TweakSettings>>,
-    (alpha, rise): (Option<Res<CompassAlpha>>, Option<Res<CompassRise>>),
+    (alpha, rise, mut was_sharp): (Option<Res<CompassAlpha>>, Option<Res<CompassRise>>, Local<Option<bool>>),
     mut ticks_logged: Local<[bool; 3]>,
 ) {
     let rise_of_mark = |k: usize| rise.as_ref().and_then(|r| r.0.get(k)).copied().unwrap_or(0);
@@ -878,7 +909,11 @@ fn draw(
     // The HUD's lengths at the UI scale (`crate::interface::hud_units`, #1631).
     let _hud = crate::interface::hud_units();
     let (Ok(layer), Ok(under)) = (layers.single(), under.single()) else { return };
-    let fresh = added.get(layer).is_ok();
+    // Drawn again when the Menu Font switch changes: the vector marks stand by their own
+    // shapes (`crate::vector_hud::mark_anchor`).
+    let sharp = crate::vector_font::sharp();
+    let switched = was_sharp.replace(sharp).is_some_and(|w| w != sharp);
+    let fresh = added.get(layer).is_ok() || switched;
     let alpha_changed = alpha.as_ref().is_some_and(|a| a.is_changed()) || rise.as_ref().is_some_and(|r| r.is_changed());
     if !view.is_changed() && !fresh && !alpha_changed {
         return;
@@ -903,13 +938,14 @@ fn draw(
     let fade_left = tweaks.as_ref().is_some_and(|t| t.compass_fade_left);
     if !fade_left && !alpha_changed && !fresh && spawned.0.len() == view.0.len() && spawned.0.iter().zip(&view.0).all(|(a, b)| a.0 == b.0) {
         for (&(mark, entity, bar), &(_, x)) in spawned.0.iter().zip(&view.0) {
-            let left = mark_left(mark, x, image_of(mark).is_some());
+            let picture = image_of(mark).is_some();
+            let left = mark_left(mark, x, picture, sharp);
             if let Ok(mut node) = nodes.get_mut(entity) {
                 node.left = u(left);
             }
             if let Some((r, bar)) = bar {
                 if let Ok(mut node) = nodes.get_mut(bar) {
-                    node.left = u(rise_bar_at(left, r).0);
+                    node.left = u(rise_bar_at(left, r, mark, sharp && picture).0);
                 }
             }
         }
@@ -922,8 +958,8 @@ fn draw(
         let image = image_of(mark);
         let layer = if matches!(mark, Mark::Actor | Mark::Hostile | Mark::Companion) { under } else { layer };
         commands.entity(layer).with_children(|p| {
-            let left = mark_left(mark, x, image.is_some());
-            let (bx, by, bw, bh) = mark_box(mark, left);
+            let left = mark_left(mark, x, image.is_some(), sharp);
+            let (bx, by, bw, bh) = mark_box(mark, left, sharp && image.is_some());
             let node = at(bx, by, bw, bh);
             let colour = match mark {
                 Mark::Hostile => crime_colour(),
@@ -952,19 +988,8 @@ fn draw(
                 Some(image) => {
                     let mut e = p.spawn((node, ImageNode { color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }));
                     // In vector while Sharp (`crate::vector_hud`): the actors' ticks and the
-                    // quest, place and player marks; a door's icon is kept.
-                    use crate::vector_hud::Decoration as D;
-                    let shape = match mark {
-                        Mark::Actor | Mark::Hostile | Mark::Companion => Some(D::ActorTick),
-                        Mark::Quest => Some(D::QuestMark),
-                        Mark::Place => Some(D::PlaceMark),
-                        Mark::Found => Some(D::FoundMark),
-                        Mark::Player => Some(D::PlayerMark),
-                        Mark::Door => None,
-                    };
-                    if let Some(shape) = shape {
-                        e.insert(crate::vector_hud::Decor::new(shape));
-                    }
+                    // quest, place, player and door marks.
+                    e.insert(crate::vector_hud::Decor::new(vector_shape(mark)));
                     e.id()
                 }
                 // Without the game's pictures: a small block.
@@ -973,7 +998,7 @@ fn draw(
             // The height tweaks' bar over or under the picture.
             let r = rise_of_mark(k);
             let bar = (r != 0).then(|| {
-                let (bx, by) = rise_bar_at(left, r);
+                let (bx, by) = rise_bar_at(left, r, mark, sharp && image.is_some());
                 (r, p.spawn((at(bx, by, RISE_BAR.x, RISE_BAR.y), BackgroundColor(colour))).id())
             });
             out.push((mark, id, bar));
@@ -1062,7 +1087,7 @@ mod tests {
         // The quest target behind the player is held at the band's left end (T12e).
         assert!(c.iter().any(|m| *m == (Mark::Quest, -COMPASS_VISIBLE)));
         // A mark's node keeps the fraction.
-        assert_eq!(mark_left(Mark::Place, 0.25, false), COMPASS_HEADING + 0.25 - 2.0);
+        assert_eq!(mark_left(Mark::Place, 0.25, false, false), COMPASS_HEADING + 0.25 - 2.0);
     }
 
     /// T12e: a quest target off the band is held at the end on its side; inside, at its
@@ -1116,10 +1141,29 @@ mod tests {
         assert_eq!(far[1].1, COMPASS_VISIBLE);
         assert_eq!((rise_of(HEIGHT_STEP + 1.0), rise_of(-HEIGHT_STEP - 1.0), rise_of(HEIGHT_STEP)), (1, -1, 0));
         // The bar stands over the picture for above, under it for below, on its middle.
-        let (x, above) = rise_bar_at(100.0, 1);
-        let (_, below) = rise_bar_at(100.0, -1);
+        let (x, above) = rise_bar_at(100.0, 1, Mark::Quest, false);
+        let (_, below) = rise_bar_at(100.0, -1, Mark::Quest, false);
         assert!(above < LANDMARK_Y && below > LANDMARK_Y);
         assert!((x + RISE_BAR.x / 2.0 - (100.0 + LANDMARK_MIDDLE.x * LANDMARK_SIZE)).abs() < 1e-4);
+    }
+
+    /// While Sharp the place, quest, player and door marks stand with their shapes' tops a
+    /// line's width under the letters' baseline and their middles on the bearing; the
+    /// actors' ticks keep their box's top (`crate::vector_hud::mark_anchor`).
+    #[test]
+    fn the_vector_marks_stand_under_the_letters_on_their_bearing() {
+        let baseline = crate::vector_hud::LETTER_BASE;
+        for mark in [Mark::Place, Mark::Found, Mark::Quest, Mark::Player, Mark::Door] {
+            let left = mark_left(mark, 12.5, true, true);
+            let (x, top, _, _) = mark_box(mark, left, true);
+            let anchor = crate::vector_hud::mark_anchor(vector_shape(mark));
+            assert!((top + anchor.y - (baseline + 3.0 / crate::vector_hud::GRID)).abs() < 1e-4, "{mark:?}");
+            assert!((x + anchor.x - (COMPASS_HEADING + 12.5)).abs() < 1e-4, "{mark:?}");
+        }
+        let (_, top, _, _) = mark_box(Mark::Hostile, 0.0, true);
+        assert_eq!(top, TICK_TOP);
+        let (x, above) = rise_bar_at(100.0, 1, Mark::Quest, true);
+        assert!(above < crate::vector_hud::MARK_TOP && (x + RISE_BAR.x / 2.0 - (100.0 + 13.0 / crate::vector_hud::GRID)).abs() < 1e-4);
     }
 
     /// #3310: an actor's tick (neutral, hostile, companion) is drawn in the box the file
@@ -1130,8 +1174,8 @@ mod tests {
     fn an_actor_tick_stands_where_the_originals_box_puts_its_bar() {
         use crate::interface::units_at;
         for mark in [Mark::Actor, Mark::Hostile, Mark::Companion] {
-            let left = mark_left(mark, 12.5, true);
-            let (x, top, w, h) = mark_box(mark, left);
+            let left = mark_left(mark, 12.5, true, false);
+            let (x, top, w, h) = mark_box(mark, left, false);
             // The group's y 10 and the tick's -10; 32 x 32.
             assert_eq!((top, w, h), (0.0, 32.0, 32.0), "{mark:?}");
             let bar_end = top + TICK_BAR_ROWS / 32.0 * h;
@@ -1140,15 +1184,15 @@ mod tests {
             assert!((x + TICK_MIDDLE * w - (COMPASS_HEADING + 12.5)).abs() < 1e-4);
         }
         // The control: the map marker's box as before.
-        let place = mark_box(Mark::Place, 100.0);
+        let place = mark_box(Mark::Place, 100.0, false);
         assert_eq!(place, (100.0, LANDMARK_Y - LANDMARK_MIDDLE.y * LANDMARK_SIZE, LANDMARK_SIZE, LANDMARK_SIZE));
-        assert_eq!(mark_box(Mark::Quest, 100.0), place);
+        assert_eq!(mark_box(Mark::Quest, 100.0, false), place);
         // At two HUD scales the tick keeps its place in the window: its node's top and the
         // window's height scale together.
         for scale in [1.0, 1.5] {
             let _units = units_at(scale);
             let window = at(0.0, 0.0, crate::hud::COMPASS.x, crate::hud::COMPASS.y);
-            let (x, y, w, h) = mark_box(Mark::Hostile, 40.0);
+            let (x, y, w, h) = mark_box(Mark::Hostile, 40.0, false);
             let tick = at(x, y, w, h);
             let (Val::Vh(top), Val::Vh(height), Val::Vh(room)) = (tick.top, tick.height, window.height) else {
                 panic!("the HUD's nodes are in view heights");

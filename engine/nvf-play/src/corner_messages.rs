@@ -48,6 +48,17 @@ const LEADING: f32 = 2.0;
 /// The text is broken at what is left of the area's width [hypothesis: the screenshot's
 /// text breaks between 228 and 336 units, §4].
 pub(crate) const WRAP: f32 = AREA_WIDTH - TEXT_X;
+
+/// The width the text is broken at: [`WRAP`], or while Sharp what is left to where the
+/// vector bracket's line ends (`crate::vector_hud::MESSAGE_LINE_END`), so the text ends
+/// under it [design: owner 2026-11-27, "Yes, wrap at the line"].
+pub(crate) fn wrap(sharp: bool) -> f32 {
+    if sharp {
+        crate::vector_hud::MESSAGE_LINE_END - TEXT_X
+    } else {
+        WRAP
+    }
+}
 /// The bracket is drawn fainter than the icon and the text.
 pub(crate) const BRACKET_STRENGTH: f32 = 0.65;
 
@@ -161,7 +172,7 @@ impl CornerMessages {
 /// The text's lines, from the area's corner.
 pub fn layout(text: &str, font: &Font) -> Vec<Set> {
     let pitch = font.size + LEADING;
-    let lines = font.lines(text.trim(), Some(WRAP));
+    let lines = font.lines(text.trim(), Some(wrap(crate::vector_font::sharp())));
     lines.into_iter().enumerate().map(|(i, line)| Set { line, x: TEXT_X, base: TEXT_BASE + pitch * i as f32 }).collect()
 }
 

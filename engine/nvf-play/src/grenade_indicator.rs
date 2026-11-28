@@ -169,7 +169,9 @@ fn draw(
             commands
                 .spawn((Mark(i), Node { position_type: PositionType::Absolute, width: Val::Px(0.0), height: Val::Px(0.0), ..default() }, UiTransform::default(), Visibility::Hidden, GlobalZIndex(3), Pickable::IGNORE))
                 .with_children(|p| {
-                    p.spawn((picture, ImageNode { rect: Some(rect), color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }, Pickable::IGNORE));
+                    // In vector while Sharp (`crate::vector_hud`).
+                    let decor = crate::vector_hud::Decor::new(crate::vector_hud::Decoration::Grenade);
+                    p.spawn((picture, ImageNode { rect: Some(rect), color: colour, image_mode: NodeImageMode::Stretch, ..ImageNode::new(image.clone()) }, decor, Pickable::IGNORE));
                 });
         }
         info!("hud: grenade indicator read: {:.0} x {:.0} texels", texels.x, texels.y);

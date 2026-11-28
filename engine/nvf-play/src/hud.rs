@@ -1139,7 +1139,7 @@ fn sharp_bar(row: &mut ChildSpawnerCommands, places: &Places, fill: Entity) {
     row.spawn((at(places.cnd_x - M, places.cnd_y - M, size.x, size.y), ground, Decor::new(Decoration::ConditionGround), SharpOnly, Visibility::Hidden));
     let mut cut = at(places.cnd_x, places.cnd_y - M, CND_FILL_WIDTH, size.y);
     cut.overflow = Overflow::clip_x();
-    row.spawn((cut, SharpFill(fill), SharpOnly, Visibility::Hidden)).with_children(|c| {
+    row.spawn((cut, SharpFill(fill, CND_FILL_WIDTH), SharpOnly, Visibility::Hidden)).with_children(|c| {
         c.spawn((at(-M, 0.0, size.x, size.y), ImageNode::default(), Decor::new(Decoration::ConditionFill)));
     });
 }
@@ -1194,7 +1194,7 @@ fn spawn_hud(commands: &mut Commands, art: &mut Art, images: &mut Assets<Image>,
             info!("compass: heading at x {x} of {w}, the strip's N at {n}, fading from {f}", x = COMPASS_HEADING, w = COMPASS.x, n = STRIP_HEADING, f = STRIP_FADE.0);
             let mut window_node = at(COMPASS_AT.x, COMPASS_AT.y, COMPASS.x, COMPASS.y);
             window_node.overflow = Overflow::clip();
-            p.spawn(window_node).with_children(|w| match window {
+            p.spawn((CompassWindow, window_node)).with_children(|w| match window {
                 // One image of the window's strip, its right end faded
                 // (`crate::compass_strip`).
                 Some(window) => {
@@ -1315,6 +1315,25 @@ struct StripOriginal(Option<StripTexels>);
 #[derive(Component)]
 struct StripLetters;
 
+/// The compass window's node (the strip's clip): as wide as the window, which while Sharp
+/// ends where the HP decoration's lines end ([`crate::vector_hud::COMPASS_END`]).
+#[derive(Component)]
+struct CompassWindow;
+
+/// The compass window's nodes that take its width: the window and its marks' and ticks' layers.
+type CompassNodes = (Or<(With<CompassWindow>, With<CompassMarks>, With<CompassTicks>)>, Without<Strip>, Without<StripLetters>);
+
+/// The compass window's width: while Sharp from its left to where the HP decoration's lines
+/// end, so the rail and its letters end on their upright line [design: the owner's third
+/// review of the vector HUD]; the game's 345 otherwise.
+fn compass_width(sharp: bool) -> f32 {
+    if sharp {
+        crate::vector_hud::COMPASS_END - COMPASS_AT.x
+    } else {
+        COMPASS.x
+    }
+}
+
 /// The eight directions' letters [hypothesis: the strip's letters; the game's own words for
 /// them are not in its settings].
 const DIRECTIONS: [&str; 8] = ["N", "NE", "E", "SE", "S", "SW", "W", "NW"];
@@ -1349,6 +1368,7 @@ fn sharp_strip(
     mut images: ResMut<Assets<Image>>,
     mut strips: Query<(&mut Strip, &mut ImageNode, &mut Node, &ChildOf), Without<StripLetters>>,
     mut holders: Query<(Entity, &mut Node), (With<StripLetters>, Without<Strip>)>,
+    mut compass_nodes: Query<&mut Node, CompassNodes>,
     mut drawn: Local<Option<(bool, u32)>>,
 ) {
     let _hud = crate::interface::hud_units();
@@ -1366,14 +1386,19 @@ fn sharp_strip(
             commands.entity(e).despawn();
         }
         let face = if sharp { strip_face() } else { None };
+        // The window, its marks and its ticks as wide as the window is drawn.
+        let width = compass_width(sharp);
+        for mut node in &mut compass_nodes {
+            node.width = u(width);
+        }
         for (mut strip, mut image, mut node, parent) in &mut strips {
             let texels = if sharp {
-                let (w, _, rgba) = crate::vector_hud::draw(&crate::vector_hud::compass_rail(letter_halves(face.as_ref())), scale);
+                let (w, _, rgba) = crate::vector_hud::draw(&crate::vector_hud::compass_rail(letter_halves(face.as_ref()), scale), scale);
                 StripTexels::new(rgba, w)
             } else {
                 original.0.clone()
             };
-            let Some(baked) = texels.and_then(|t| StripWindow::new(t, COMPASS.x, view.heading, &mut images)) else { continue };
+            let Some(baked) = texels.and_then(|t| StripWindow::new(t, width, view.heading, &mut images)) else { continue };
             // The vector strip runs whole to the window's end.
             let baked = if sharp { baked.unfaded(&mut images) } else { baked };
             info!("compass: the strip drawn {} ({} x {} texels)", if sharp { "in vector" } else { "from the game's picture" }, baked.texels().0, baked.texels().1);

@@ -17,6 +17,10 @@
 //!   the breath is whole again [hypothesis].
 //! - **Where**: the menu file gives no place (the game's code sets it); centred high on the
 //!   screen, where the owner placed it ([`CENTRE_Y`]).
+//! - **In vector while Sharp** (`crate::vector_hud`, the Menu Font row): the sixteen ticks
+//!   drawn as lines round the middle with the HUD's glow and the word in the sharp font, in
+//!   place of the model's pictures, each lit as its tick is [design: the owner's vector HUD
+//!   workshop, approved 2026-11-28].
 //! - **With `[UI] TileMenus=HUDMainMenu`** the tile HUD draws `BreathMeter` from its tile
 //!   with this module's reading and pieces (`crate::tiles::model`, hud.md §14.12) and this
 //!   meter is hidden.
@@ -232,8 +236,38 @@ impl Plugin for HudBreathPlugin {
     }
 }
 
+/// A piece of the meter: its node's name (`Tick01` …, `O2`), and whether it is drawn while
+/// Sharp (the vector ring) or while Original (the model's pictures).
 #[derive(Component)]
-struct MeterPiece(String);
+struct MeterPiece(String, bool);
+
+/// The vector meter's word: "O" at this em and the "2" smaller, lower, both bold, centred
+/// across on [`WORD_MIDDLE`] with the "O" on [`WORD_BASE`] (units in the meter's box)
+/// [design: the workshop].
+const WORD_EM: (f32, f32) = (18.0, 11.0);
+const WORD_MIDDLE: f32 = 35.0 / crate::vector_hud::GRID;
+const WORD_BASE: f32 = 43.0 / crate::vector_hud::GRID;
+const WORD_DROP: f32 = 3.0;
+
+/// The vector meter while Sharp: each tick its line ([`crate::vector_hud::Decoration::BreathTick`])
+/// in a box [`crate::vector_hud::BREATH_MARGIN`] larger than the meter's, and the word.
+fn spawn_vector(p: &mut ChildSpawnerCommands, colour: Color) {
+    use crate::vector_hud::{Decor, Decoration, BREATH_MARGIN};
+    let m = BREATH_MARGIN;
+    for n in 1..=16u8 {
+        let node = crate::interface::at(-m, -m, BOX + 2.0 * m, BOX + 2.0 * m);
+        p.spawn((MeterPiece(format!("Tick{n:02}"), true), node, ImageNode { color: colour, ..default() }, Decor::new(Decoration::BreathTick(n)), Visibility::Hidden, Pickable::IGNORE));
+    }
+    let Some(metrics) = crate::vector_font::metrics() else { return };
+    let face = |em: f32| crate::vector_font::face_with(metrics, crate::vector_font::FONT_HANDLE, em, crate::vector_font::BOLD, em, false);
+    let (o, two) = (face(WORD_EM.0), face(WORD_EM.1));
+    let (Some(lo), Some(l2)) = (o.font.lines("O", None).into_iter().next(), two.font.lines("2", None).into_iter().next()) else { return };
+    let left = WORD_MIDDLE - (lo.width + l2.width) / 2.0;
+    p.spawn((MeterPiece("O2".into(), true), crate::interface::at(0.0, 0.0, BOX, BOX), Visibility::Hidden, Pickable::IGNORE)).with_children(|w| {
+        crate::interface::set_line(w, &o, &lo, left, WORD_BASE, colour);
+        crate::interface::set_line(w, &two, &l2, left + lo.width, WORD_BASE + WORD_DROP, colour);
+    });
+}
 
 /// What was read: the model, or why there is none (then the meter is not drawn).
 enum Read {
@@ -299,7 +333,8 @@ fn draw(
         // Tagged so the tile HUD hides it while it draws `BreathMeter` itself.
         commands.spawn((MeterRoot, root_node, Visibility::Hidden, Pickable::IGNORE)).with_children(|p| {
             let place = |piece: &Piece| place_in(piece, mid, Vec2::splat(BOX / 2.0), zoom);
-            spawn_pieces(p, &model, place, amber(255.0), &mut read_texture, |piece| MeterPiece(piece.node.clone()), |_| true);
+            spawn_pieces(p, &model, place, amber(255.0), &mut read_texture, |piece| MeterPiece(piece.node.clone(), false), |_| true);
+            spawn_vector(p, amber(255.0));
         });
         info!("hud: breath meter read: {} pieces, sequence {:.3} s", model.pieces.len(), model.length);
         *read = Some(Read::Model(model));
@@ -315,11 +350,12 @@ fn draw(
         return;
     }
     let t = time_at(b.share(), model.length);
+    let sharp = crate::vector_font::sharp();
     let mut lit = 0;
     for (piece, mut vis) in &mut pieces {
         let on = model.lit(&piece.0, t);
-        lit += usize::from(on && piece.0.starts_with("Tick"));
-        vis.set_if_neq(show(on));
+        lit += usize::from(on && piece.0.starts_with("Tick") && piece.1 == sharp);
+        vis.set_if_neq(show(on && piece.1 == sharp));
     }
     if *last != Some(lit) {
         debug!("hud: breath meter {lit} ticks lit (breath {:.1} of {:.1} s)", b.breath.left, b.rules.seconds);
